@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --color-lemon-50: #f7fee7;
+  --color-lemon-100: #ecfccb;
+  --color-lemon-200: #d9f99d;
+  --color-lemon-300: #bef264;
+  --color-lemon-400: #a3e635;
+  --color-lemon-500: #84cc16;
+  --color-lemon-600: #65a30d;
+  --color-lemon-700: #4d7c0f;
+  --color-lemon-800: #3f6212;
+  --color-lemon-900: #365314;
+
+  --color-ink-50: #f5f6fa;
+  --color-ink-100: #e9ebf3;
+  --color-ink-200: #cfd4e5;
+  --color-ink-300: #a6afcd;
+  --color-ink-400: #7683ad;
+  --color-ink-500: #556291;
+  --color-ink-600: #414c76;
+  --color-ink-700: #343d60;
+  --color-ink-800: #232a48;
+  --color-ink-900: #171d36;
+  --color-ink-950: #0e1226;
+
+  --font-sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-50);
+  color: var(--color-ink-900);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Compact scrollbars keep the console dense without feeling cramped. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-200);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-300);
+  background-clip: content-box;
+}

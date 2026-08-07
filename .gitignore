@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+next-env.d.ts
+*.tsbuildinfo
+.DS_Store
+.env*.local
+
+# Local Claude Code state (launch.json is intentionally tracked)
+.claude/settings.local.json
+.claude/*.lock

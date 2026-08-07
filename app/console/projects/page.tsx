@@ -1,0 +1,121 @@
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  PageHeader,
+  Table,
+  Td,
+  Th,
+  cx,
+} from "@/components/ui";
+import { IconPlus } from "@/components/icons";
+import {
+  buckets,
+  clusters,
+  databases,
+  functions,
+  instances,
+  money,
+  projects,
+  volumes,
+} from "@/lib/mock-data";
+
+const accents: Record<string, string> = {
+  lemon: "from-lemon-200 to-lemon-100",
+  sky: "from-sky-200 to-sky-100",
+  violet: "from-violet-200 to-violet-100",
+  amber: "from-amber-200 to-amber-100",
+};
+
+export default function ProjectsPage() {
+  return (
+    <>
+      <PageHeader
+        title="Projects"
+        description="Projects are the isolation boundary. Private networking, access policy, and cost attribution all follow the project."
+        action={
+          <Button>
+            <IconPlus className="h-4 w-4" />
+            Create project
+          </Button>
+        }
+      />
+
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {projects.map((p) => {
+          const counts = [
+            { label: "Instances", n: instances.filter((r) => r.projectId === p.id).length },
+            { label: "Volumes", n: volumes.filter((r) => r.projectId === p.id).length },
+            { label: "Databases", n: databases.filter((r) => r.projectId === p.id).length },
+            { label: "Buckets", n: buckets.filter((r) => r.projectId === p.id).length },
+            { label: "Clusters", n: clusters.filter((r) => r.projectId === p.id).length },
+            { label: "Functions", n: functions.filter((r) => r.projectId === p.id).length },
+          ];
+          return (
+            <Card key={p.id}>
+              <div className="flex items-start gap-3 p-5">
+                <span
+                  className={cx(
+                    "h-11 w-11 shrink-0 rounded-xl bg-gradient-to-br",
+                    accents[p.accent],
+                  )}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-sm font-semibold text-ink-900">
+                      {p.name}
+                    </h3>
+                    <Badge tone="lemon">{money(p.monthlySpend)}/mo</Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-ink-400">{p.description}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-px border-t border-ink-100 bg-ink-100">
+                {counts.map((c) => (
+                  <div key={c.label} className="bg-white px-3 py-2.5 text-center">
+                    <p className="text-sm font-semibold tabular-nums text-ink-900">
+                      {c.n}
+                    </p>
+                    <p className="text-[0.7rem] text-ink-400">{c.label}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card>
+        <CardHeader
+          title="All projects"
+          subtitle="Cost attribution is per project so bills stay explainable."
+        />
+        <Table>
+          <thead>
+            <tr>
+              <Th>Project</Th>
+              <Th>Created</Th>
+              <Th>Resources</Th>
+              <Th>Monthly spend</Th>
+              <Th>Description</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map((p) => (
+              <tr key={p.id}>
+                <Td className="font-medium text-ink-900">{p.name}</Td>
+                <Td className="text-ink-500">{p.createdAt}</Td>
+                <Td className="tabular-nums">{p.resourceCount}</Td>
+                <Td className="tabular-nums font-medium">
+                  {money(p.monthlySpend)}
+                </Td>
+                <Td className="text-ink-500">{p.description}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Card>
+    </>
+  );
+}
