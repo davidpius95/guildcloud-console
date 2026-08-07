@@ -66,8 +66,29 @@ catalogue or price — per §16, that requires its own step after this one.
 
 nodeA is already the tightest node in the cluster and also carries the most
 guests (mediastack, coolify, jellyfin, ingress). It should not receive new
-placements until either workloads are rebalanced or the pre-existing services
-on it are accounted for as permanent overhead rather than available capacity.
+placements until either workloads are rebalanced or migrated per the G-14
+policy below.
+
+## 4.1 Reclaimable vs. structural headroom (G-14, decided 2026-08-07)
+
+Per `docs/decisions/2026-08-07-g14-legacy-workload-policy.md`, the
+pre-existing non-GuildCloud workloads on nodeA/B (mediastack, coolify,
+pdm-datacenter, jellyfin, rabbitmq, irc, ingress — excludes `proxmox-mcp`,
+which is GuildCloud's own tooling) are **temporary occupants, not permanent
+overhead**:
+
+| | RAM |
+| --- | ---: |
+| Actual usage today | ~10.08 GB |
+| Configured ceiling | ~22.53 GB |
+
+This is not counted as a structural reduction to the 16.82 GB headroom
+figure above — it is **reclaimable** capacity, expected to be freed by
+migration before any real catalogue/pricing commitment is published (Phase
+9 or earlier). Until that migration happens, treat the *effective* usable
+headroom for planning purposes as tighter than 16.82 GB suggests, since
+these workloads are real and running today even though they're not
+permanent.
 
 ## 5. What this model deliberately does not do
 
@@ -75,10 +96,10 @@ on it are accounted for as permanent overhead rather than available capacity.
   capacity model to exist first, then a "capacity model and initial catalogue
   proposal" as a separate follow-on step — this document is the input to that
   step, not the step itself.
-- It does not account for the pre-existing, non-GuildCloud workloads
-  (mediastack, coolify, jellyfin, rabbitmq, irc, pdm-datacenter, ingress,
-  proxmox-mcp) as permanent or temporary. That is a product decision — see gap
-  register G-14 — not something this survey can resolve.
+- It does not include a second site, since only Guild-A exists (see
+  `site-inventory.md` §1).
+- It does not include benchmark-derived per-workload cost (CPU-seconds,
+  IOPS profile). Those require the load test explicitly deferred here.
 - It does not include a second site, since only Guild-A exists (see
   `site-inventory.md` §1).
 - It does not include benchmark-derived per-workload cost (CPU-seconds,

@@ -20,7 +20,7 @@ GuildCloud launched on this infrastructure exactly as found today.
 | **G-11** | EVPN SDN zone and two VNets are configured but zero guests use them — the tenancy mechanism is unvalidated | §16 "Tailscale tenancy model must be validated"; also the VLAN/IPAM half of that same decision | `sdn_list_zones` / `sdn_list_vnets` vs. guest network config | Medium |
 | **G-12** | No monitoring is wired to the cluster; an Uptime Kuma host exists on the tailnet but its relationship to Guild-A is unconfirmed | §10 Monitoring and alerts | No Proxmox-side integration found; `kuma` device present but unverified | Medium |
 | **G-13** | Only one site exists — every plan reference to multi-site (Warm Standby, "restore into a healthy site," §6 zones) has no second site to target | §3 Warm Standby tier; §8 restore | `pve_list_clusters` / inventory — single cluster | Medium (expected pre-launch, but blocks Warm Standby entirely) |
-| **G-14** | Non-GuildCloud workloads (mediastack, coolify, jellyfin, rabbitmq, irc, pdm-datacenter, ingress, proxmox-mcp) occupy real capacity on the same nodes with no stated policy on whether they stay, move, or get counted against customer capacity | §11 "plans and quotas are derived from measured real capacity" — this can't be answered until this is decided | Guest inventory cross-referenced against capacity model | High — blocks any real capacity number |
+| **G-14** | Non-GuildCloud workloads (mediastack, coolify, jellyfin, rabbitmq, irc, pdm-datacenter, ingress, proxmox-mcp) occupy real capacity on the same nodes. **Policy decided 2026-08-07**: temporary occupants, not permanent overhead — they stay running for now (no forced migration today) but must move to separate hardware before any real capacity/pricing commitment is published, or this decision gets explicitly revisited. Actual measured footprint: ~10.08 GB RAM used / ~22.53 GB configured (excl. `proxmox-mcp`). See `docs/decisions/2026-08-07-g14-legacy-workload-policy.md`. | §11 "plans and quotas are derived from measured real capacity" | Guest inventory cross-referenced against capacity model | Still **High** — stays open until migrated or the decision is revised; no longer *undecided*, which is the part that was blocking |
 | **G-15** | nodeC has half the RAM of every other node (8.21 GB vs 16.65 GB); nodeE contributes no Ceph OSD | §16 "measured mini-PC... capacity" | Node inventory | Low-Medium — a placement/scheduling input, not a blocker |
 | **G-16** | Physical switch (Cisco, per §6) was not reachable through any available API — its VLAN/port configuration is unverified | §6 physical site model; §16 network design prerequisite | Not observable via Proxmox or Tailscale APIs | Medium — blocks finishing G-11's VLAN design |
 | **G-17** | No performance benchmark has been run; all capacity numbers in `capacity-model.md` are configuration-time, not load-tested | §16 "measured provisioning and recovery performance on actual sites before any customer expectation is stated" | Explicit scope note in capacity-model.md | Medium |
@@ -37,7 +37,9 @@ In the order the Master Plan's own §17 lists them:
    cluster, not after. (G-03/HA re-scoped 2026-08-07 — the plan defers
    automatic failover past MVP; see `docs/decisions/2026-08-07-g03-ha-deferred.md`.
    No longer in this priority path.)
-4. **Resolve G-14** (what happens to the pre-existing workloads) — every later
-   capacity and pricing number depends on this answer.
+4. ~~**Resolve G-14**~~ — **decided 2026-08-07**: pre-existing workloads are
+   temporary, must migrate off before any real capacity/pricing commitment.
+   See `docs/decisions/2026-08-07-g14-legacy-workload-policy.md`. No
+   migration has happened yet — gap stays open until it does.
 5. Everything else in this register can be scheduled into Phase 1/2 planning
    normally; none of it blocks starting the control-plane work in G-04.
