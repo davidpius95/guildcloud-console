@@ -13,6 +13,10 @@
 // Master Plan references: §6 (zone table: Management/Tenant/Backup/Future
 // edge), §16 ("choose and document the Tailscale tenancy model"), §17
 // (same, as an explicit planning action).
+//
+// GitOps workflow verified end-to-end 2026-08-07: TS_OAUTH_CLIENT_ID and
+// TS_OAUTH_CLIENT_SECRET repo secrets confirmed set, this comment-only PR
+// exercises the "test" (validate) job, and merging it exercises "apply".
 
 {
 	"tagOwners": {
