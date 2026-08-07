@@ -1,0 +1,53 @@
+name: Tailscale ACL GitOps
+
+# Keeps infra/tailscale/policy.hujson as the single source of truth for the
+# Guild-A tailnet policy. Pull requests that touch the file get validated
+# against the live Tailscale API (no changes applied). Pushes to main that
+# touch the file get applied to the live tailnet.
+#
+# Setup required (one-time, in GitHub repo settings — Claude cannot create
+# these secrets, they must be added by a repo admin):
+#   Settings > Secrets and variables > Actions > New repository secret
+#     TS_OAUTH_CLIENT_ID     an OAuth client from https://login.tailscale.com/admin/settings/oauth
+#     TS_OAUTH_CLIENT_SECRET the matching secret
+#   The OAuth client needs the "Policy File" (acl) read+write scope.
+#
+# See infra/tailscale/README.md for the manual-apply fallback if this
+# workflow isn't wired up yet.
+
+on:
+  pull_request:
+    paths:
+      - "infra/tailscale/policy.hujson"
+  push:
+    branches: [main]
+    paths:
+      - "infra/tailscale/policy.hujson"
+
+jobs:
+  acl:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate policy (pull request)
+        if: github.event_name == 'pull_request'
+        uses: tailscale/gitops-acl-action@v3
+        with:
+          action: test
+          tailnet: "-"
+          api-key: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          api-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          policy-file: infra/tailscale/policy.hujson
+
+      - name: Apply policy (push to main)
+        if: github.event_name == 'push'
+        uses: tailscale/gitops-acl-action@v3
+        with:
+          action: apply
+          tailnet: "-"
+          api-key: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          api-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          policy-file: infra/tailscale/policy.hujson

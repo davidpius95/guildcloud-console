@@ -1,0 +1,130 @@
+// GuildCloud tailnet policy — Guild-A
+//
+// Source of truth. Do not edit this policy in the Tailscale admin console —
+// changes made there will be overwritten the next time this file is applied
+// and will not be reflected in git history.
+//
+// Managed via GitOps: .github/workflows/tailscale-acl.yml validates every
+// pull request that touches this file and applies it to the live tailnet on
+// merge to main. See docs/decisions/2026-08-07-tailscale-tenancy-model.md
+// for why this policy is shaped the way it is, and
+// infra/tailscale/README.md for setup and the manual-apply fallback.
+//
+// Master Plan references: §6 (zone table: Management/Tenant/Backup/Future
+// edge), §16 ("choose and document the Tailscale tenancy model"), §17
+// (same, as an explicit planning action).
+
+{
+	"tagOwners": {
+		// Pre-existing tag, unrelated to GuildCloud's zone model. Left as-is
+		// per an explicit 2026-08-07 decision — see the Decision Record.
+		"tag:gean-devnet": ["davidpius95@gmail.com"],
+
+		// GuildCloud zone tags, added 2026-08-07.
+		"tag:guildcloud-mgmt": ["davidpius95@gmail.com"],
+		"tag:operator":        ["davidpius95@gmail.com"],
+	},
+
+	"acls": [],
+
+	"grants": [
+		// --- Pre-existing owner-level access, kept unchanged ---
+		// This is what currently lets davidpius95@'s own devices reach
+		// personal/non-GuildCloud services (homeassistant, jellyfin,
+		// coolify, etc.) on this shared tailnet. Removing it today would
+		// break those services for no real security benefit, since this
+		// tailnet currently has only one real identity — GuildCloud has no
+		// customer devices enrolled yet (Phase 3 doesn't exist). Real
+		// per-project isolation is enforced by NOT granting future
+		// customer-tagged devices this same broad access — see the tenant
+		// tag note below.
+		{
+			"src": ["*", "autogroup:member"],
+			"dst": ["*", "autogroup:admin", "autogroup:member"],
+			"ip": ["*", "tcp:*", "ipv4:*"],
+		},
+		{
+			"src": ["*", "autogroup:member", "autogroup:shared", "autogroup:network-admin"],
+			"dst": ["*", "autogroup:member", "autogroup:it-admin", "autogroup:owner"],
+			"ip": ["*", "tcp:*", "ipv4:*"],
+		},
+
+		// --- New GuildCloud zone scaffolding, added 2026-08-07 ---
+		// Management zone (§6): "never customer reachable" — only
+		// tag:operator (davidpius95@'s own devices, explicitly) and other
+		// management-zone devices can reach it. When Phase 3 enrolls real
+		// customer devices as tag:guildcloud-tenant-<project> (not yet
+		// created — no real tenants exist), they will NOT match this grant,
+		// which is the actual isolation mechanism.
+		{
+			"src": ["tag:operator"],
+			"dst": ["tag:guildcloud-mgmt"],
+			"ip": ["*"],
+		},
+		{
+			"src": ["tag:guildcloud-mgmt"],
+			"dst": ["tag:guildcloud-mgmt"],
+			"ip": ["*"],
+		},
+
+		// Tenant zone (§6): intentionally absent. No tag:guildcloud-tenant-*
+		// grant exists yet because no real tenant/customer device has ever
+		// been enrolled — adding one now would be speculative. Add it in
+		// the same PR that builds Phase 3 device enrollment, scoped to a
+		// specific project tag, e.g.:
+		//   { "src": ["tag:guildcloud-tenant-<project>"],
+		//     "dst": ["tag:guildcloud-tenant-<project>"], "ip": ["*"] }
+
+		// Backup zone (§6): intentionally absent — no backup target exists
+		// yet (gap G-02). Add a tag:guildcloud-backup grant, reachable only
+		// from tag:guildcloud-mgmt, when a real backup target is stood up.
+	],
+
+	"ssh": [
+		// Pre-existing entries, kept exactly as-is per an explicit
+		// 2026-08-07 decision not to touch them in this change — see the
+		// Decision Record for the specific external-account grant this
+		// includes and why it was kept rather than removed.
+		{
+			"action": "accept",
+			"src": ["autogroup:member", "autogroup:admin", "autogroup:tagged"],
+			"dst": ["autogroup:self", "autogroup:tagged"],
+			"users": ["autogroup:nonroot", "root"],
+		},
+		{
+			"action": "accept",
+			"src": ["autogroup:member", "autogroup:admin", "davidpius95@gmail.com"],
+			"dst": ["autogroup:tagged", "davidpius95@gmail.com", "autogroup:self"],
+			"users": ["root", "autogroup:nonroot"],
+		},
+		{
+			"action": "accept",
+			"src": [
+				"manbankat@gmail.com",
+				"shaaibusuleiman9@gmail.com",
+				"itodosimonitodo1@gmail.com",
+				"dimkayilrit@gmail.com",
+				"kefasiceking@gmail.com",
+				"nodebridgeafric@gmail.com",
+				"developerlongs@gmail.com",
+			],
+			"dst": ["tag:gean-devnet"],
+			"users": ["root", "autogroup:nonroot"],
+		},
+
+		// New: operator SSH into the management zone.
+		{
+			"action": "accept",
+			"src": ["tag:operator"],
+			"dst": ["tag:guildcloud-mgmt"],
+			"users": ["autogroup:nonroot", "root"],
+		},
+	],
+
+	"nodeAttrs": [
+		{
+			"target": ["autogroup:member"],
+			"attr": ["funnel"],
+		},
+	],
+}
