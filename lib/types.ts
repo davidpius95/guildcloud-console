@@ -156,6 +156,93 @@ export type LedgerEntry = {
   reference: string;
 };
 
+export type PaymentProvider = "Paystack" | "Flutterwave";
+
+export type PaymentMethod = {
+  id: string;
+  provider: PaymentProvider;
+  label: string;
+  detail: string;
+  isDefault: boolean;
+  addedAt: string;
+};
+
+export type AutoReloadConfig = {
+  enabled: boolean;
+  amount: number;
+  threshold: number;
+  maxPerMonth: number;
+};
+
+export type Invoice = {
+  id: string;
+  period: string;
+  amount: number;
+  status: "paid" | "open";
+  issuedAt: string;
+};
+
+export type AccessResourceType =
+  | "instance"
+  | "database"
+  | "cluster"
+  | "bucket"
+  | "function";
+
+export type AccessPolicyRule = {
+  id: string;
+  projectId: string;
+  memberId: string;
+  resourceType: AccessResourceType | "all";
+  resourceId?: string;
+  createdAt: string;
+};
+
+export type StorageAccessKey = {
+  id: string;
+  label: string;
+  accessKeyId: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+
+export type FunctionEnvVar = {
+  key: string;
+  value: string;
+  secret: boolean;
+};
+
+export type FunctionLogLine = {
+  timestamp: string;
+  level: "info" | "warn" | "error";
+  message: string;
+};
+
+export type WebhookEvent =
+  | "payment.succeeded"
+  | "payment.failed"
+  | "wallet.low"
+  | "budget.warning"
+  | "invoice.issued";
+
+export type WebhookEndpoint = {
+  id: string;
+  url: string;
+  events: WebhookEvent[];
+  status: "active" | "disabled";
+  createdAt: string;
+};
+
+export type WebhookDelivery = {
+  id: string;
+  endpointId: string;
+  event: WebhookEvent;
+  status: "delivered" | "failed" | "retrying";
+  attempt: number;
+  statusCode: number | null;
+  occurredAt: string;
+};
+
 export type TeamMember = {
   id: string;
   name: string;

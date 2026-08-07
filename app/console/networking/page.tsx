@@ -10,7 +10,8 @@ import {
   Th,
 } from "@/components/ui";
 import { IconLock } from "@/components/icons";
-import { instances, projectName, sites, team } from "@/lib/mock-data";
+import { AccessPolicyCard } from "@/components/access-policy-card";
+import { accessPolicyRules, instances, projectName, sites, team } from "@/lib/mock-data";
 
 const zones = [
   {
@@ -58,6 +59,10 @@ export default function NetworkingPage() {
             </span>
           </span>
         </Note>
+      </div>
+
+      <div className="mb-4">
+        <AccessPolicyCard initialRules={accessPolicyRules} team={team} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -171,8 +176,12 @@ export default function NetworkingPage() {
       </Card>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button variant="secondary">Manage SSH keys</Button>
-        <Button variant="secondary">Invite teammate</Button>
+        <Button variant="secondary" href="/console/settings">
+          Manage SSH keys
+        </Button>
+        <Button variant="secondary" href="/console/settings">
+          Invite teammate
+        </Button>
         <Button variant="ghost">View access audit</Button>
       </div>
     </>

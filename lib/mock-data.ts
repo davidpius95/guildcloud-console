@@ -1,18 +1,26 @@
 import type {
+  AccessPolicyRule,
   Alert,
   Bucket,
   CatalogImage,
   CatalogPlan,
   Database,
+  FunctionEnvVar,
+  FunctionLogLine,
   FunctionResource,
   Instance,
+  Invoice,
   KubernetesCluster,
   LedgerEntry,
   Operation,
+  PaymentMethod,
   Project,
   Site,
+  StorageAccessKey,
   TeamMember,
   Volume,
+  WebhookDelivery,
+  WebhookEndpoint,
 } from "./types";
 
 export const organization = {
@@ -436,6 +444,61 @@ export const functions: FunctionResource[] = [
   },
 ];
 
+export const storageAccessKeys: StorageAccessKey[] = [
+  {
+    id: "sak_1",
+    label: "ingest-pipeline",
+    accessKeyId: "GC8N2K7XQJ4RZP1A",
+    createdAt: "2026-04-03",
+    lastUsedAt: "2026-08-07 06:10",
+  },
+  {
+    id: "sak_2",
+    label: "local dev (Saurabh)",
+    accessKeyId: "GC5T9M1WYB3HDC6E",
+    createdAt: "2026-05-19",
+    lastUsedAt: null,
+  },
+];
+
+export const functionEnvVars: Record<string, FunctionEnvVar[]> = {
+  fn_webhook: [
+    { key: "PAYSTACK_WEBHOOK_SECRET", value: "whsec_••••••••••••3f2a", secret: true },
+    { key: "LOG_LEVEL", value: "info", secret: false },
+  ],
+  fn_nightly: [
+    { key: "ROLLUP_TARGET_TABLE", value: "analytics.daily_rollup", secret: false },
+  ],
+  fn_thumb: [
+    { key: "MAX_DIMENSION_PX", value: "2048", secret: false },
+    { key: "SOURCE_BUCKET", value: "pipeline-raw", secret: false },
+  ],
+  fn_audit: [
+    { key: "AUDIT_STREAM_URL", value: "https://••••••••••••.internal/audit", secret: true },
+  ],
+};
+
+export const functionLogs: Record<string, FunctionLogLine[]> = {
+  fn_webhook: [
+    { timestamp: "2026-08-07 09:41:02", level: "info", message: "Received event checkout.session.completed" },
+    { timestamp: "2026-08-07 09:41:02", level: "info", message: "Signature verified, processing payload" },
+    { timestamp: "2026-08-07 09:41:03", level: "info", message: "Wallet credited: +$250.00 (ref ps_ref_8812f0)" },
+    { timestamp: "2026-08-07 09:38:47", level: "warn", message: "Retrying provider verification (attempt 2/3)" },
+  ],
+  fn_nightly: [
+    { timestamp: "2026-08-07 00:00:04", level: "info", message: "Rollup started for 2026-08-06" },
+    { timestamp: "2026-08-07 00:00:41", level: "info", message: "Rollup completed — 42,118 rows written" },
+  ],
+  fn_thumb: [
+    { timestamp: "2026-08-07 09:12:10", level: "error", message: "Unsupported input format: image/avif" },
+    { timestamp: "2026-08-07 09:10:02", level: "info", message: "Thumbnail generated for asset/8842.jpg" },
+    { timestamp: "2026-08-07 09:09:58", level: "error", message: "Timed out fetching source object (5.0s)" },
+  ],
+  fn_audit: [
+    { timestamp: "2026-08-07 09:00:00", level: "info", message: "Audit fanout delivered 12 events" },
+  ],
+};
+
 export const operations: Operation[] = [
   {
     id: "op_7781",
@@ -570,6 +633,71 @@ export const ledger: LedgerEntry[] = [
   },
 ];
 
+export const webhookEndpoints: WebhookEndpoint[] = [
+  {
+    id: "wh_1",
+    url: "https://hooks.northwindlabs.io/guildcloud",
+    events: ["payment.succeeded", "payment.failed", "wallet.low"],
+    status: "active",
+    createdAt: "2026-04-11",
+  },
+];
+
+export const webhookDeliveries: WebhookDelivery[] = [
+  {
+    id: "whd_1",
+    endpointId: "wh_1",
+    event: "payment.succeeded",
+    status: "delivered",
+    attempt: 1,
+    statusCode: 200,
+    occurredAt: "2026-08-05 09:14",
+  },
+  {
+    id: "whd_2",
+    endpointId: "wh_1",
+    event: "wallet.low",
+    status: "failed",
+    attempt: 3,
+    statusCode: 503,
+    occurredAt: "2026-08-03 22:02",
+  },
+  {
+    id: "whd_3",
+    endpointId: "wh_1",
+    event: "payment.succeeded",
+    status: "delivered",
+    attempt: 1,
+    statusCode: 200,
+    occurredAt: "2026-07-05 09:10",
+  },
+];
+
+export const paymentMethods: PaymentMethod[] = [
+  {
+    id: "pm_1",
+    provider: "Paystack",
+    label: "Card ending 4242",
+    detail: "Verified 2026-03-11",
+    isDefault: true,
+    addedAt: "2026-03-11",
+  },
+  {
+    id: "pm_2",
+    provider: "Flutterwave",
+    label: "Bank transfer — GTBank",
+    detail: "Verified 2026-05-02",
+    isDefault: false,
+    addedAt: "2026-05-02",
+  },
+];
+
+export const invoices: Invoice[] = [
+  { id: "inv_2026_07", period: "July 2026", amount: 214.6, status: "paid", issuedAt: "2026-08-01" },
+  { id: "inv_2026_06", period: "June 2026", amount: 198.2, status: "paid", issuedAt: "2026-07-01" },
+  { id: "inv_2026_05", period: "May 2026", amount: 176.4, status: "paid", issuedAt: "2026-06-01" },
+];
+
 export const team: TeamMember[] = [
   {
     id: "tm_1",
@@ -602,6 +730,33 @@ export const team: TeamMember[] = [
     role: "Billing",
     deviceEnrolled: false,
     lastActive: "2026-08-03 11:02",
+  },
+];
+
+export const accessPolicyRules: AccessPolicyRule[] = [
+  {
+    id: "apr_1",
+    projectId: "prj_core",
+    memberId: "tm_3",
+    resourceType: "instance",
+    resourceId: "gi_9a41",
+    createdAt: "2026-04-20",
+  },
+  {
+    id: "apr_2",
+    projectId: "prj_core",
+    memberId: "tm_3",
+    resourceType: "database",
+    resourceId: "db_pg1",
+    createdAt: "2026-04-20",
+  },
+  {
+    id: "apr_3",
+    projectId: "prj_data",
+    memberId: "tm_4",
+    resourceType: "bucket",
+    resourceId: "bkt_raw",
+    createdAt: "2026-05-03",
   },
 ];
 

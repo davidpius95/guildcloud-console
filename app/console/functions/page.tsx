@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Badge,
   Button,
@@ -55,7 +56,12 @@ export default function FunctionsPage() {
             {functions.map((f) => (
               <tr key={f.id} className="transition-colors hover:bg-ink-50">
                 <Td>
-                  <span className="font-medium text-ink-900">{f.name}</span>
+                  <Link
+                    href={`/console/functions/${f.id}`}
+                    className="font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                  >
+                    {f.name}
+                  </Link>
                   <p className="text-xs text-ink-400">{projectName(f.projectId)}</p>
                 </Td>
                 <Td>

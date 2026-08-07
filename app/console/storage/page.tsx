@@ -10,7 +10,8 @@ import {
   Th,
 } from "@/components/ui";
 import { IconPlus } from "@/components/icons";
-import { buckets, money, projectName, siteName } from "@/lib/mock-data";
+import { StorageKeysCard } from "@/components/storage-keys-card";
+import { buckets, money, projectName, siteName, storageAccessKeys } from "@/lib/mock-data";
 
 export default function StoragePage() {
   const totalGb = buckets.reduce((s, b) => s + b.usedGb, 0);
@@ -97,13 +98,15 @@ export default function StoragePage() {
         </Table>
       </Card>
 
-      <div className="mt-5">
+      <div className="my-5">
         <Note>
           Object versioning is how object storage participates in the protection
           tiers. An independent object copy in a third location is planned, not
           promised.
         </Note>
       </div>
+
+      <StorageKeysCard initialKeys={storageAccessKeys} />
     </>
   );
 }
