@@ -19,32 +19,29 @@ This is Tailscale's own documented GitOps pattern
 and matches how any other infra-as-code change in this repo should flow:
 propose in a PR, review the diff, merge, and the live state follows.
 
-## One-time setup (not yet done — required before the workflow can run)
+## Setup — done, 2026-08-07
 
-An OAuth client with policy-file (ACL) read+write scope, added as two GitHub
-repo secrets:
+`TS_OAUTH_CLIENT_ID` and `TS_OAUTH_CLIENT_SECRET` are set as GitHub repo
+secrets (OAuth client scoped to Policy File read+write). The workflow was
+verified end-to-end via PR #1: `test` passed on the pull request, `apply`
+passed on merge to `main`, and the live ACL was re-read afterward and
+confirmed to match the committed file exactly, comments included.
 
-1. Create an OAuth client at
-   <https://login.tailscale.com/admin/settings/oauth> with the **Policy
-   File** scope (read + write).
-2. In this repo's GitHub settings → Secrets and variables → Actions, add:
-   - `TS_OAUTH_CLIENT_ID`
-   - `TS_OAUTH_CLIENT_SECRET`
+The action is `tailscale/gitops-acl-action@v1` (not `v3` — that tag doesn't
+exist) with inputs `oauth-client-id` / `oauth-secret` (not `api-key` /
+`api-secret`) and `tailnet: tail345216.ts.net` (not a placeholder) — the
+first version of this workflow had all three wrong and failed on its first
+run; fixed and reverified before merging.
 
-This step needs a repo admin with access to both the Tailscale admin console
-and GitHub secret settings — it isn't something that can be done through the
-API survey/edit tools used elsewhere in this project.
+**Going forward, every ACL change is a PR against `policy.hujson`.** No
+direct API calls, no editing in the Tailscale admin console — both bypass
+git history and will be silently overwritten by the next PR-driven apply.
 
-## Until the workflow is wired up: manual apply
+## History
 
-The policy in this file was **bootstrapped directly** on 2026-08-07 (applied
-once via the Tailscale API, before this GitOps workflow existed, to close
-gap G-01 without waiting on GitHub secret setup). From that point forward,
-**any further change should go through a PR against this file**, not a
-direct API call — that's the entire point of putting it under GitOps. If the
-workflow isn't wired up yet when a change is needed, apply the file's exact
-content manually and note in the PR description that it was applied outside
-the workflow, so the drift is visible rather than silent.
+The policy was bootstrapped once via a direct API call on 2026-08-07, before
+this workflow existed, to close gap G-01 without waiting on secret setup.
+Every change since has gone through a PR.
 
 ## Why the policy is shaped the way it is
 
