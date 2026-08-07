@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CopyField } from "@/components/copy-field";
+import { InstanceActions, RecoveryConsoleButton } from "@/components/instance-actions";
 import { OperationTimeline } from "@/components/operation-timeline";
 import {
   Badge,
@@ -60,22 +61,7 @@ export default async function InstanceDetailPage({
       <PageHeader
         title={instance.name}
         description={`${projectName(instance.projectId)} · ${siteName(instance.siteId)} · created ${instance.createdAt}`}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm">
-              Resize
-            </Button>
-            <Button variant="secondary" size="sm">
-              Snapshot
-            </Button>
-            <Button variant="secondary" size="sm">
-              Restore
-            </Button>
-            <Button variant="danger" size="sm">
-              Delete
-            </Button>
-          </div>
-        }
+        action={<InstanceActions instance={instance} />}
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -118,9 +104,7 @@ export default async function InstanceDetailPage({
                 </span>
               </Note>
               <div className="flex gap-2">
-                <Button variant="secondary" size="sm">
-                  Open recovery console
-                </Button>
+                <RecoveryConsoleButton instance={instance} />
                 <Button variant="ghost" size="sm">
                   Manage SSH keys
                 </Button>

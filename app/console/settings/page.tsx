@@ -10,6 +10,7 @@ import {
   Th,
 } from "@/components/ui";
 import { IconPlus } from "@/components/icons";
+import { TeamAccessCard } from "@/components/team-access-card";
 import { currentUser, organization, quotas, team } from "@/lib/mock-data";
 
 export default function SettingsPage() {
@@ -21,59 +22,7 @@ export default function SettingsPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="min-w-0 lg:col-span-2">
-          <CardHeader
-            title="Team access"
-            subtitle="Roles control the console. Private network permission and server login are revoked together on removal."
-            action={
-              <Button size="sm">
-                <IconPlus className="h-3.5 w-3.5" />
-                Invite
-              </Button>
-            }
-          />
-          <Table>
-            <thead>
-              <tr>
-                <Th>Member</Th>
-                <Th>Role</Th>
-                <Th>Device</Th>
-                <Th>Last active</Th>
-                <Th />
-              </tr>
-            </thead>
-            <tbody>
-              {team.map((m) => (
-                <tr key={m.id}>
-                  <Td>
-                    <span className="font-medium text-ink-900">{m.name}</span>
-                    <p className="text-xs text-ink-400">{m.email}</p>
-                  </Td>
-                  <Td>
-                    <Badge tone={m.role === "Owner" ? "lemon" : "neutral"}>
-                      {m.role}
-                    </Badge>
-                  </Td>
-                  <Td>
-                    <Badge tone={m.deviceEnrolled ? "lemon" : "amber"}>
-                      {m.deviceEnrolled ? "Enrolled" : "Not enrolled"}
-                    </Badge>
-                  </Td>
-                  <Td className="whitespace-nowrap text-xs text-ink-500">
-                    {m.lastActive}
-                  </Td>
-                  <Td className="text-right">
-                    {m.role === "Owner" ? null : (
-                      <Button variant="ghost" size="sm">
-                        Remove
-                      </Button>
-                    )}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <TeamAccessCard initialTeam={team} />
 
         <div className="space-y-4">
           <Card>
