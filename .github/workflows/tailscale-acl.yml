@@ -12,6 +12,11 @@ name: Tailscale ACL GitOps
 #     TS_OAUTH_CLIENT_SECRET the matching secret
 #   The OAuth client needs the "Policy File" (acl) read+write scope.
 #
+# Action version and input names verified against
+# github.com/tailscale/gitops-acl-action's action.yml on 2026-08-07 — v1 is
+# the current major tag (v3 does not exist), and inputs are
+# oauth-client-id/oauth-secret, not api-key/api-secret.
+#
 # See infra/tailscale/README.md for the manual-apply fallback if this
 # workflow isn't wired up yet.
 
@@ -34,20 +39,20 @@ jobs:
 
       - name: Validate policy (pull request)
         if: github.event_name == 'pull_request'
-        uses: tailscale/gitops-acl-action@v3
+        uses: tailscale/gitops-acl-action@v1
         with:
           action: test
-          tailnet: "-"
-          api-key: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          api-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tailnet: "tail345216.ts.net"
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
           policy-file: infra/tailscale/policy.hujson
 
       - name: Apply policy (push to main)
         if: github.event_name == 'push'
-        uses: tailscale/gitops-acl-action@v3
+        uses: tailscale/gitops-acl-action@v1
         with:
           action: apply
-          tailnet: "-"
-          api-key: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          api-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tailnet: "tail345216.ts.net"
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
           policy-file: infra/tailscale/policy.hujson
