@@ -17,6 +17,7 @@ import {
   IconSettings,
   IconStore,
   IconSupport,
+  IconTransfer,
   IconWallet,
 } from "./icons";
 
@@ -55,6 +56,7 @@ const groups: Array<{ heading?: string; items: NavItem[] }> = [
       { href: "/console/networking", label: "Networking", icon: IconNetwork },
       { href: "/console/monitoring", label: "Monitoring", icon: IconPulse },
       { href: "/console/marketplace", label: "Marketplace", icon: IconStore },
+      { href: "/console/migration", label: "Migration", icon: IconTransfer },
     ],
   },
   {

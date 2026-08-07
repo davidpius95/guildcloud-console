@@ -288,7 +288,7 @@ export function Button({
 }) {
   const variants = {
     primary:
-      "bg-lemon-400 text-ink-900 hover:bg-lemon-300 ring-1 ring-inset ring-lemon-500/40 font-semibold",
+      "bg-lemon-400 text-[#171d36] hover:bg-lemon-300 ring-1 ring-inset ring-lemon-500/40 font-semibold",
     secondary:
       "bg-white text-ink-700 hover:bg-ink-50 ring-1 ring-inset ring-ink-200",
     ghost: "text-ink-500 hover:bg-ink-100 hover:text-ink-800",

@@ -58,7 +58,7 @@ function Section({
   return (
     <Card>
       <div className="flex items-start gap-3 border-b border-ink-100 px-5 py-4">
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ink-900 text-xs font-semibold text-lemon-400">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#171d36] text-xs font-semibold text-lemon-400">
           {step}
         </span>
         <div>
@@ -94,7 +94,7 @@ function Option({
         disabled
           ? "cursor-not-allowed bg-ink-50 text-ink-300 ring-ink-100"
           : selected
-            ? "bg-lemon-50 ring-2 ring-lemon-500"
+            ? "bg-lemon-50 text-[#171d36] ring-2 ring-lemon-500"
             : "bg-white ring-ink-200 hover:ring-ink-300",
       )}
     >
@@ -405,18 +405,18 @@ export function CreateInstanceWizard() {
 
           <div className="border-t border-ink-100 bg-lemon-50 px-5 py-4">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-ink-600">Hourly price</span>
-              <span className="text-lg font-semibold tabular-nums text-ink-900">
+              <span className="text-sm text-lemon-800">Hourly price</span>
+              <span className="text-lg font-semibold tabular-nums text-lemon-900">
                 ${cost.hourly.toFixed(3)}
               </span>
             </div>
             <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-sm text-ink-600">Monthly maximum</span>
+              <span className="text-sm text-lemon-800">Monthly maximum</span>
               <span className="text-2xl font-semibold tabular-nums text-lemon-800">
                 {money(cost.monthly)}
               </span>
             </div>
-            <p className="mt-2 text-xs text-ink-500">
+            <p className="mt-2 text-xs text-lemon-700">
               Billed hourly for actual use. The monthly maximum is the ceiling if
               the instance runs the whole month.
             </p>

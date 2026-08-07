@@ -13,7 +13,14 @@ import {
   StatePill,
   cx,
 } from "@/components/ui";
-import { IconArrowRight, IconPlus, IconShield } from "@/components/icons";
+import {
+  IconArrowRight,
+  IconCloud,
+  IconPlus,
+  IconShield,
+  IconSupport,
+  IconWallet,
+} from "@/components/icons";
 import {
   alerts,
   instances,
@@ -30,6 +37,13 @@ const accents: Record<string, string> = {
   sky: "from-sky-200 to-sky-100",
   violet: "from-violet-200 to-violet-100",
   amber: "from-amber-200 to-amber-100",
+};
+
+const accentIconTones: Record<string, string> = {
+  lemon: "text-lemon-700",
+  sky: "text-sky-700",
+  violet: "text-violet-700",
+  amber: "text-amber-700",
 };
 
 export default function DashboardPage() {
@@ -114,10 +128,12 @@ export default function DashboardPage() {
                 <div className="flex items-start gap-3 p-4">
                   <span
                     className={cx(
-                      "h-10 w-10 shrink-0 rounded-lg bg-gradient-to-br",
+                      "grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br",
                       accents[p.accent],
                     )}
-                  />
+                  >
+                    <IconCloud className={cx("h-5 w-5", accentIconTones[p.accent])} />
+                  </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-ink-900">
                       {p.name}
@@ -315,6 +331,48 @@ export default function DashboardPage() {
               Warm Standby is a premium add-on with limited capacity, offered
               only after full-site drills pass.
             </Note>
+          </div>
+        </Card>
+      </section>
+
+      <section className="mt-6 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <div className="flex items-start gap-4 p-5">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink-100 text-ink-600">
+              <IconSupport className="h-5 w-5" />
+            </span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-ink-900">
+                Help &amp; Support
+              </p>
+              <p className="mt-1 text-xs text-ink-400">
+                If you have a question or run into a problem, self-service
+                diagnosis comes first — the support team is right behind it.
+              </p>
+              <Button href="/console/support" variant="secondary" size="sm" className="mt-3">
+                Contact support
+              </Button>
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-start gap-4 p-5">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-lemon-100 text-lemon-700">
+              <IconWallet className="h-5 w-5" />
+            </span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-ink-900">
+                Billing &amp; Payments
+              </p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-ink-900">
+                {money(organization.walletBalance)}
+              </p>
+              <p className="text-xs text-ink-400">Total wallet balance</p>
+              <Button href="/console/billing" variant="secondary" size="sm" className="mt-3">
+                View invoices
+              </Button>
+            </div>
           </div>
         </Card>
       </section>

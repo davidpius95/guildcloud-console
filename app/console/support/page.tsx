@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Badge,
   Button,
@@ -5,8 +6,12 @@ import {
   CardHeader,
   Note,
   PageHeader,
+  Table,
+  Td,
+  Th,
 } from "@/components/ui";
-import { alerts } from "@/lib/mock-data";
+import { alerts, projectName, tickets } from "@/lib/mock-data";
+import type { TicketPriority, TicketStatus } from "@/lib/types";
 
 const selfService = [
   {
@@ -31,22 +36,122 @@ const selfService = [
   },
 ];
 
+const statusTone: Record<TicketStatus, "sky" | "amber" | "lemon" | "neutral"> = {
+  open: "sky",
+  pending: "amber",
+  resolved: "lemon",
+  closed: "neutral",
+};
+
+const statusLabel: Record<TicketStatus, string> = {
+  open: "Open",
+  pending: "Pending",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+const priorityTone: Record<TicketPriority, "rose" | "amber" | "sky" | "neutral"> = {
+  urgent: "rose",
+  high: "amber",
+  normal: "sky",
+  low: "neutral",
+};
+
 export default function SupportPage() {
+  const openCount = tickets.filter(
+    (t) => t.status === "open" || t.status === "pending",
+  ).length;
+
   return (
     <>
       <PageHeader
         title="Support"
         description="Self-service first, then an in-console request that carries safe diagnostics and operation context."
-        action={<Button>Open a support request</Button>}
+        action={<Button href="/console/support/new">Open a support request</Button>}
       />
 
       <div className="mb-5">
         <Note>
           GuildCloud does not publish formal response guarantees before support
-          performance is measured. Protected and Warm Standby customers receive
-          higher recovery attention.
+          performance is measured. The first-response targets below describe
+          our internal operating goal, not a contractual SLA — Protected and
+          Warm Standby customers receive higher recovery attention.
         </Note>
       </div>
+
+      <Card className="mb-6">
+        <CardHeader
+          title="Your tickets"
+          subtitle={`${openCount} open or pending · ${tickets.length} total`}
+        />
+        <Table>
+          <thead>
+            <tr>
+              <Th>Ticket</Th>
+              <Th>Status</Th>
+              <Th>Priority</Th>
+              <Th>Project</Th>
+              <Th>First response</Th>
+              <Th>Updated</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {tickets.map((t) => {
+              const targetHours = (t.firstResponseTargetMinutes / 60).toFixed(
+                t.firstResponseTargetMinutes % 60 === 0 ? 0 : 1,
+              );
+              return (
+                <tr
+                  key={t.id}
+                  className="cursor-pointer transition-colors hover:bg-ink-50"
+                >
+                  <Td>
+                    <Link
+                      href={`/console/support/tickets/${t.id}`}
+                      className="font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                    >
+                      {t.subject}
+                    </Link>
+                    <p className="font-mono text-xs text-ink-400">
+                      {t.id}
+                      {t.resource ? ` · ${t.resource}` : ""}
+                    </p>
+                  </Td>
+                  <Td>
+                    <Badge tone={statusTone[t.status]}>
+                      {statusLabel[t.status]}
+                    </Badge>
+                  </Td>
+                  <Td>
+                    <Badge tone={priorityTone[t.priority]}>{t.priority}</Badge>
+                  </Td>
+                  <Td className="text-ink-500">{projectName(t.projectId)}</Td>
+                  <Td className="text-xs">
+                    {t.firstResponseAt ? (
+                      <span className="text-ink-600">
+                        {t.firstResponseAt}
+                        <span className="block text-ink-400">
+                          target {targetHours}h
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="font-medium text-amber-600">
+                        Awaiting response
+                        <span className="block font-normal text-ink-400">
+                          target {targetHours}h
+                        </span>
+                      </span>
+                    )}
+                  </Td>
+                  <Td className="whitespace-nowrap text-xs text-ink-500">
+                    {t.updatedAt}
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="min-w-0 lg:col-span-2">

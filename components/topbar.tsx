@@ -4,11 +4,36 @@ import Link from "next/link";
 import { useState } from "react";
 import { alerts, currentUser, money, organization, projects } from "@/lib/mock-data";
 import { Button, cx } from "./ui";
-import { IconBell, IconChevron, IconGrid, IconPlus, IconWallet } from "./icons";
+import {
+  IconBell,
+  IconBucket,
+  IconChevron,
+  IconCube,
+  IconDatabase,
+  IconFunction,
+  IconGrid,
+  IconPlus,
+  IconServer,
+  IconStore,
+  IconSupport,
+  IconWallet,
+} from "./icons";
+import { ThemeToggle } from "./theme-toggle";
+
+const quickLaunch = [
+  { href: "/console/instances", label: "Guild Instances", icon: IconServer },
+  { href: "/console/kubernetes", label: "Kubernetes", icon: IconCube },
+  { href: "/console/databases", label: "PostgreSQL", icon: IconDatabase },
+  { href: "/console/storage", label: "Object Storage", icon: IconBucket },
+  { href: "/console/functions", label: "Functions", icon: IconFunction },
+  { href: "/console/marketplace", label: "Marketplace", icon: IconStore },
+  { href: "/console/support", label: "Support", icon: IconSupport },
+];
 
 export function Topbar() {
   const [projectOpen, setProjectOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [launchOpen, setLaunchOpen] = useState(false);
   const [activeProject, setActiveProject] = useState(projects[0]);
   const unread = alerts.filter((a) => !a.acknowledged).length;
 
@@ -16,7 +41,7 @@ export function Topbar() {
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-ink-100 bg-white/90 px-4 backdrop-blur sm:px-6">
       <Link href="/console" className="flex items-center gap-2 lg:hidden">
         <span className="grid h-7 w-7 place-items-center rounded-md bg-lemon-400">
-          <span className="h-3 w-3 rounded-[2px] bg-ink-950" />
+          <span className="h-3 w-3 rounded-[2px] bg-[#0e1226]" />
         </span>
       </Link>
 
@@ -26,6 +51,7 @@ export function Topbar() {
           onClick={() => {
             setProjectOpen((v) => !v);
             setNotifOpen(false);
+            setLaunchOpen(false);
           }}
           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ring-1 ring-inset ring-ink-200 transition-colors hover:bg-ink-50"
         >
@@ -47,7 +73,7 @@ export function Topbar() {
                 }}
                 className={cx(
                   "flex w-full flex-col items-start px-3 py-2 text-left transition-colors hover:bg-ink-50",
-                  p.id === activeProject.id && "bg-lemon-50",
+                  p.id === activeProject.id && "bg-ink-100",
                 )}
               >
                 <span className="text-sm font-medium text-ink-900">{p.name}</span>
@@ -75,8 +101,8 @@ export function Topbar() {
           className="hidden items-center gap-2 rounded-lg bg-lemon-50 px-3 py-1.5 text-sm ring-1 ring-inset ring-lemon-200 transition-colors hover:bg-lemon-100 sm:flex"
         >
           <IconWallet className="h-4 w-4 text-lemon-700" />
-          <span className="text-ink-500">Wallet</span>
-          <span className="font-semibold tabular-nums text-ink-900">
+          <span className="text-lemon-800">Wallet</span>
+          <span className="font-semibold tabular-nums text-lemon-900">
             {money(organization.walletBalance)}
           </span>
         </Link>
@@ -87,6 +113,7 @@ export function Topbar() {
             onClick={() => {
               setNotifOpen((v) => !v);
               setProjectOpen(false);
+              setLaunchOpen(false);
             }}
             aria-label="Notifications"
             className="relative grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
@@ -120,13 +147,42 @@ export function Topbar() {
           ) : null}
         </div>
 
-        <Link
-          href="/console/marketplace"
-          aria-label="Marketplace"
-          className="hidden h-9 w-9 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800 sm:grid"
-        >
-          <IconGrid className="h-4.5 w-4.5" />
-        </Link>
+        <ThemeToggle />
+
+        <div className="relative hidden sm:block">
+          <button
+            type="button"
+            onClick={() => {
+              setLaunchOpen((v) => !v);
+              setProjectOpen(false);
+              setNotifOpen(false);
+            }}
+            aria-label="Quick launch"
+            className="grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+          >
+            <IconGrid className="h-4.5 w-4.5" />
+          </button>
+          {launchOpen ? (
+            <div className="absolute right-0 top-11 grid w-72 grid-cols-2 gap-1 overflow-hidden rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
+              {quickLaunch.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setLaunchOpen(false)}
+                    className="flex flex-col items-start gap-2 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-ink-50"
+                  >
+                    <Icon className="h-4 w-4 text-lemon-700" />
+                    <span className="text-xs font-medium text-ink-800">
+                      {item.label}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
 
         <Button href="/console/instances/new" size="sm">
           <IconPlus className="h-3.5 w-3.5" />
@@ -137,7 +193,7 @@ export function Topbar() {
           href="/console/settings"
           className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-ink-50"
         >
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-ink-900 text-xs font-semibold text-lemon-400">
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-[#171d36] text-xs font-semibold text-lemon-400">
             {currentUser.name
               .split(" ")
               .map((n) => n[0])

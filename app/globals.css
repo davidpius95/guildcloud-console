@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-lemon-50: #f7fee7;
   --color-lemon-100: #ecfccb;
@@ -38,6 +40,7 @@ body {
   background: var(--color-ink-50);
   color: var(--color-ink-900);
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.15s ease;
 }
 
 /* Compact scrollbars keep the console dense without feeling cramped. */
@@ -54,4 +57,55 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-ink-300);
   background-clip: content-box;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-600);
+}
+
+/*
+ * Console dark theme: scoped to .console-root so the marketing landing page
+ * (which never mounts that wrapper) is unaffected by the toggle. Every
+ * bg-ink, text-ink, and border-ink utilities inside the console pick this up
+ * automatically because Tailwind utilities reference these custom
+ * properties directly — no per-component dark: variants needed.
+ *
+ * A few spots intentionally stay a fixed dark color regardless of theme
+ * (logo marks, primary-button text on the lemon accent) — those are pinned
+ * to literal hex values in their components rather than the ink-900/950
+ * tokens, since this block repurposes those tokens as adaptive text color.
+ *
+ * console-root also sets its own `color`, not just background — inherited
+ * `color` resolves custom properties at the ancestor that DECLARES the
+ * `color` rule, not at the element that inherits it. Elements below body
+ * would otherwise keep resolving text-ink-900 against body's un-scoped
+ * default even inside the scoped subtree, since body (not console-root)
+ * would be where `color` is declared.
+ */
+.console-root {
+  color: var(--color-ink-900);
+}
+
+.dark .console-root {
+  --color-ink-50: #0b0f20;
+  --color-ink-100: #232a48;
+  --color-ink-200: #2f3860;
+  --color-ink-300: #414c76;
+  --color-ink-400: #8b93bb;
+  --color-ink-500: #aab2d1;
+  --color-ink-600: #c7cce3;
+  --color-ink-700: #dfe2ef;
+  --color-ink-800: #eef0f7;
+  --color-ink-900: #ffffff;
+  --color-ink-950: #ffffff;
+  --color-surface: #171d36;
+}
+
+.dark .console-root .bg-white {
+  background-color: var(--color-surface);
+}
+.dark .console-root .bg-white\/90 {
+  background-color: color-mix(in srgb, var(--color-surface) 92%, transparent);
 }

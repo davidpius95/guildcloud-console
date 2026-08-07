@@ -176,6 +176,54 @@ export type CatalogPlan = {
   note?: string;
 };
 
+export type MigrationSource = "AWS" | "DigitalOcean" | "Hetzner" | "Other";
+
+export type DiscoveredWorkload = {
+  id: string;
+  name: string;
+  kind: "VM" | "Database" | "Object storage";
+  spec: string;
+  sizeGb: number;
+};
+
+export type MigrationJob = {
+  id: string;
+  name: string;
+  source: MigrationSource;
+  projectId: string;
+  status: "discovering" | "planning" | "migrating" | "completed" | "failed";
+  workloadCount: number;
+  startedAt: string;
+  completedAt: string | null;
+  stages: OperationStage[];
+};
+
+export type TicketStatus = "open" | "pending" | "resolved" | "closed";
+export type TicketPriority = "urgent" | "high" | "normal" | "low";
+
+export type TicketMessage = {
+  id: string;
+  author: string;
+  role: "customer" | "support";
+  body: string;
+  at: string;
+};
+
+export type SupportTicket = {
+  id: string;
+  subject: string;
+  projectId: string;
+  resource: string | null;
+  status: TicketStatus;
+  priority: TicketPriority;
+  protectionTier: ProtectionTier | null;
+  createdAt: string;
+  updatedAt: string;
+  firstResponseTargetMinutes: number;
+  firstResponseAt: string | null;
+  messages: TicketMessage[];
+};
+
 export type CatalogImage = {
   id: string;
   name: string;

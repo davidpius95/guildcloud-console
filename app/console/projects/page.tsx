@@ -9,7 +9,7 @@ import {
   Th,
   cx,
 } from "@/components/ui";
-import { IconPlus } from "@/components/icons";
+import { IconCloud, IconPlus } from "@/components/icons";
 import {
   buckets,
   clusters,
@@ -26,6 +26,13 @@ const accents: Record<string, string> = {
   sky: "from-sky-200 to-sky-100",
   violet: "from-violet-200 to-violet-100",
   amber: "from-amber-200 to-amber-100",
+};
+
+const accentIconTones: Record<string, string> = {
+  lemon: "text-lemon-700",
+  sky: "text-sky-700",
+  violet: "text-violet-700",
+  amber: "text-amber-700",
 };
 
 export default function ProjectsPage() {
@@ -57,10 +64,12 @@ export default function ProjectsPage() {
               <div className="flex items-start gap-3 p-5">
                 <span
                   className={cx(
-                    "h-11 w-11 shrink-0 rounded-xl bg-gradient-to-br",
+                    "grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br",
                     accents[p.accent],
                   )}
-                />
+                >
+                  <IconCloud className={cx("h-5 w-5", accentIconTones[p.accent])} />
+                </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-sm font-semibold text-ink-900">

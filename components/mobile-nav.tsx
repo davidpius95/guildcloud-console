@@ -16,6 +16,7 @@ const items = [
   { href: "/console/networking", label: "Networking" },
   { href: "/console/monitoring", label: "Monitoring" },
   { href: "/console/marketplace", label: "Marketplace" },
+  { href: "/console/migration", label: "Migration" },
   { href: "/console/billing", label: "Billing" },
   { href: "/console/settings", label: "Settings" },
   { href: "/console/support", label: "Support" },
@@ -38,7 +39,7 @@ export function MobileNav() {
                 className={cx(
                   "block whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors",
                   active
-                    ? "bg-ink-900 font-medium text-white"
+                    ? "bg-[#171d36] font-medium text-white"
                     : "text-ink-500 hover:bg-ink-100",
                 )}
               >

@@ -154,6 +154,20 @@ export const IconLock = ({ className }: IconProps) => (
   </svg>
 );
 
+export const IconTransfer = ({ className }: IconProps) => (
+  <svg {...base(className)}>
+    <path d="M12 3v12" />
+    <path d="m7 10 5 5 5-5" />
+    <path d="M4 19h16" />
+  </svg>
+);
+
+export const IconCloud = ({ className }: IconProps) => (
+  <svg {...base(className)} strokeWidth={1.5}>
+    <path d="M7.5 18a4.5 4.5 0 0 1-.4-8.98 5.5 5.5 0 0 1 10.6-1.9A4.5 4.5 0 0 1 17 18H7.5Z" />
+  </svg>
+);
+
 export const IconGrid = ({ className }: IconProps) => (
   <svg {...base(className)}>
     <rect x="4" y="4" width="6" height="6" rx="1" />
