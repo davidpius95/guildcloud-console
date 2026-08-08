@@ -142,8 +142,15 @@ exists until Phase 2's Proxmox integration.
 
 ## Helper functions (RLS support, not app-facing)
 
-- **`is_org_member(p_org_id uuid) returns boolean`** — `security definer stable`. True if `auth.uid()` has a membership row (with a non-null `user_id`) in that org.
-- **`has_org_role(p_org_id uuid, p_roles text[]) returns boolean`** — `security definer stable`. True if the caller's membership role in that org is in the given list.
+- **`is_org_member(p_org_id uuid) returns boolean`** — `security definer`. True if `auth.uid()` has a membership row (with a non-null `user_id`) in that org.
+- **`has_org_role(p_org_id uuid, p_roles text[]) returns boolean`** — `security definer`. True if the caller's membership role in that org is in the given list.
+
+Originally marked `stable`; changed to the default (volatile) via the
+`fix_rls_helper_volatility` migration — their result depends on the
+`memberships` table, which other statements (including AFTER triggers)
+can write to within the same transaction, so `stable`'s "same result for
+the whole statement" contract didn't actually hold. See the
+`RETURNING` + trigger caveat below.
 
 Both are `security definer` specifically to break RLS self-recursion: a
 `memberships` policy that queried `memberships` directly to check
@@ -154,6 +161,20 @@ only — `anon` cannot call either (see threat-model.md).
 
 - **`on_organization_created`** → `handle_new_organization()`, `security definer`. On `organizations` insert: creates the Owner `memberships` row for `owner_id` (looking up their email for the denormalized `memberships.email` column) and calls `log_audit_event` for `org.created`. `execute` revoked from `public` — this must only ever run as a trigger, never be RPC-callable directly.
 - **`link_pending_invites()`**, `security definer`, on `auth.users` insert: finds any `memberships` row with `user_id is null` and `invited_email` matching the new user's email, sets `user_id` and `email` on it.
+
+**`RETURNING` + `AFTER INSERT` trigger caveat (found live, 2026-08-08):**
+an `INSERT ... RETURNING` on `organizations` fails RLS even for a fully
+legitimate insert, because the `RETURNING` clause's implicit SELECT-policy
+check (`is_org_member(id)`) evaluates before `on_organization_created`'s
+membership row is visible to it — even though a separate follow-up
+statement in the same transaction sees that row fine. This is a same-
+command evaluation-order quirk, not a policy bug (`with_check` on the
+INSERT itself was independently verified to pass). **Any insert into a
+table whose SELECT policy depends on a same-statement `AFTER INSERT`
+trigger must avoid chaining `.select()` in the Supabase JS client** —
+generate the row's `id` client-side and insert it explicitly instead (see
+`completeOnboarding` in `api-contract.md`). Full repro and fix history in
+`docs/dev-log/2026-08-08-phase1-onboarding-rls-bug.md`.
 
 ## Deferred to later phases (explicitly, not silently)
 

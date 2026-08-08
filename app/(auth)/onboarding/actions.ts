@@ -32,24 +32,30 @@ export async function completeOnboarding(
   if (!user) return { error: "You must be signed in." };
 
   // handle_new_organization() trigger creates the Owner membership + the
-  // org.created audit entry atomically - see supabase/migrations.
-  const { data: org, error: orgError } = await supabase
+  // org.created audit entry atomically - see supabase/migrations. The id
+  // is generated here (not read back via .select()) because INSERT...
+  // RETURNING's implicit SELECT-policy check (is_org_member) evaluates
+  // before this same statement's AFTER INSERT trigger has made the new
+  // membership row visible to it, which fails RLS even though the insert
+  // itself is fully permitted - a same-command RLS/trigger ordering quirk,
+  // not a policy bug. A separate statement afterward sees the trigger's
+  // writes fine, which is what the project insert below relies on.
+  const orgId = crypto.randomUUID();
+  const { error: orgError } = await supabase
     .from("organizations")
-    .insert({ name: orgName, slug: slugify(orgName), owner_id: user.id })
-    .select("id")
-    .single();
-  if (orgError || !org) return { error: orgError?.message ?? "Could not create organization." };
+    .insert({ id: orgId, name: orgName, slug: slugify(orgName), owner_id: user.id });
+  if (orgError) return { error: orgError.message };
 
   const { data: project, error: projectError } = await supabase
     .from("projects")
-    .insert({ organization_id: org.id, name: projectName })
+    .insert({ organization_id: orgId, name: projectName })
     .select("id")
     .single();
   if (projectError) return { error: projectError.message };
 
   if (project) {
     await supabase.rpc("log_audit_event", {
-      p_organization_id: org.id,
+      p_organization_id: orgId,
       p_action: "project.created",
       p_project_id: project.id,
       p_target_type: "project",

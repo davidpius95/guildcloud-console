@@ -41,6 +41,7 @@ service-role key, because this session never obtained one (see
 ### `completeOnboarding(prevState, formData: { orgName, projectName })`
 - **Inputs:** org name, first project name (both required, per master plan §4's exact join sequence — verify email → create org → create first project, done as one combined step here since there's no reason to force two round-trips).
 - **RLS gate:** none needed on the org insert itself (any authenticated user may create an organization — there's no invite-only gate on org creation at Phase 1). The `on_organization_created` trigger creates the Owner membership row automatically; the project insert is then gated by `has_org_role(org_id, ['Owner','Admin'])`, which the caller trivially satisfies since they were just made Owner.
+- **Implementation note (found live, 2026-08-08):** the organization's `id` is generated client-side (`crypto.randomUUID()`) and inserted explicitly with no `.select()` chained onto that insert — chaining one triggers `INSERT ... RETURNING`, whose implicit SELECT-policy re-check doesn't see the same-statement trigger's membership insert and fails RLS on an otherwise-legitimate insert. See `data-model.md`'s trigger caveat and `docs/dev-log/2026-08-08-phase1-onboarding-rls-bug.md`.
 - **Audit events:** `org.created` (from the trigger), `project.created` (explicit `log_audit_event` RPC call after the project insert).
 - **Errors surfaced:** Postgres constraint violations bubble up as `{ error: string }` (e.g. slug collision — mitigated by a random suffix, not eliminated, so still handled).
 
