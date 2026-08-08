@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { Card, CardHeader, PageHeader, Badge, EmptyState } from "@/components/ui";
-import { money } from "@/lib/mock-data";
+import { formatDate, money } from "@/lib/mock-data";
 import { getProjectById } from "@/lib/supabase/queries";
 
 export default async function ProjectDetailPage({
@@ -23,7 +23,7 @@ export default async function ProjectDetailPage({
         <Card className="p-4">
           <p className="text-xs text-ink-400">Created</p>
           <p className="mt-1 text-sm font-medium text-ink-900">
-            {new Date(project.createdAt).toLocaleDateString()}
+            {formatDate(project.createdAt)}
           </p>
         </Card>
         <Card className="p-4">

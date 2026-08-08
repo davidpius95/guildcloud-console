@@ -11,7 +11,7 @@ import {
   cx,
 } from "@/components/ui";
 import { IconCloud, IconPlus } from "@/components/icons";
-import { buckets, clusters, databases, functions, instances, money, volumes } from "@/lib/mock-data";
+import { buckets, clusters, databases, formatDate, functions, instances, money, volumes } from "@/lib/mock-data";
 import { getCurrentUserOrg } from "@/lib/supabase/queries";
 import { getProjectsForOrg } from "@/lib/supabase/queries";
 
@@ -135,7 +135,7 @@ export default async function ProjectsPage() {
                     {p.name}
                   </Link>
                 </Td>
-                <Td className="text-ink-500">{new Date(p.createdAt).toLocaleDateString()}</Td>
+                <Td className="text-ink-500">{formatDate(p.createdAt)}</Td>
                 <Td className="tabular-nums">{p.resourceCount}</Td>
                 <Td className="tabular-nums font-medium">{money(p.monthlySpend)}</Td>
                 <Td className="text-ink-500">{p.description}</Td>

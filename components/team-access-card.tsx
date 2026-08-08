@@ -4,6 +4,7 @@ import { useActionState, useState, useTransition } from "react";
 import { Modal } from "./modal";
 import { Badge, Button, Card, CardHeader, Table, Td, Th, cx } from "./ui";
 import { IconPlus } from "./icons";
+import { formatDate } from "@/lib/mock-data";
 import type { Membership, MemberRole } from "@/lib/types";
 import {
   inviteMember,
@@ -89,7 +90,7 @@ export function TeamAccessCard({ members }: { members: Membership[] }) {
                     </Badge>
                   </Td>
                   <Td className="whitespace-nowrap text-xs text-ink-500">
-                    {m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : "—"}
+                    {m.joinedAt ? formatDate(m.joinedAt) : "—"}
                   </Td>
                   <Td className="text-right">
                     {m.role === "Owner" ? null : (

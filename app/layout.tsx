@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="font-sans">
         <Script id="theme-bootstrap" strategy="beforeInteractive">
           {THEME_BOOTSTRAP}

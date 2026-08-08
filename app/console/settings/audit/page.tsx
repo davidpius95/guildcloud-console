@@ -1,5 +1,6 @@
 import { Badge, Card, CardHeader, EmptyState, PageHeader, Table, Td, Th, Mono } from "@/components/ui";
 import { getCurrentUserOrg, getAuditLogForOrg } from "@/lib/supabase/queries";
+import { formatDateTime } from "@/lib/mock-data";
 
 const actionTones: Record<string, "lemon" | "amber" | "rose" | "sky" | "neutral"> = {
   "org.created": "lemon",
@@ -50,7 +51,7 @@ export default async function AuditLogPage() {
                     {e.targetType ? `${e.targetType}${e.targetId ? ` · ${e.targetId.slice(0, 8)}` : ""}` : "—"}
                   </Td>
                   <Td className="whitespace-nowrap text-xs text-ink-500">
-                    {new Date(e.createdAt).toLocaleString()}
+                    {formatDateTime(e.createdAt)}
                   </Td>
                   <Td>
                     <Mono>{JSON.stringify(e.metadata)}</Mono>
