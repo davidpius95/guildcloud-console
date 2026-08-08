@@ -1,8 +1,9 @@
 # Decision record: G-10 — expanding the template catalogue
 
 **Date:** 2026-08-08
-**Status:** Fedora template complete and verified. Rocky Linux and
-AlmaLinux downloading (bandwidth-limited connection, in progress).
+**Status:** complete. All three new templates built and verified —
+Fedora 43, Rocky Linux 10.2, AlmaLinux 10.2 (VMIDs 9003/9004/9005).
+Guild-A's catalogue now covers every OS named in plan §7.
 
 ## Context
 
@@ -53,18 +54,50 @@ image, tagged `{os},template,cloudinit`, disk imported onto `ceph-vm`
 6. Verified the final config matches the established pattern exactly —
    `template: 1`, correct storage, correct tags.
 
-## Rocky Linux 10.2 and AlmaLinux 10.2 — in progress
+## Rocky Linux 10.2 and AlmaLinux 10.2 — complete
 
-Both downloads running concurrently, competing for the same limited
-uplink bandwidth (this site's real-world throughput fluctuates 350KB/s–
-1.9MB/s per the download logs) — slower than Fedora's solo run. Will
-follow the identical VM-creation steps once each download completes.
-VMIDs reserved: 9004 (Rocky), 9005 (AlmaLinux) — confirmed free before
-starting.
+Both downloads ran concurrently, competing for the same limited uplink
+bandwidth (this site's real-world throughput fluctuated 350KB/s–1.9MB/s
+per the download logs, occasionally bursting higher). AlmaLinux finished
+first (547MB), Rocky shortly after (520MB). Both followed the identical
+VM-creation steps as Fedora: create VM with the shared base config,
+import the downloaded qcow2 into `ceph-vm` as `scsi0`, attach cloud-init,
+convert to template. Both verified via a fresh config read (`template: 1`,
+correct storage/tags) — not inferred from task exit status alone.
+
+## Final state — verified
+
+All 5 templates confirmed present via a live guest-list query:
+
+| VMID | Name | OS |
+| ---: | --- | --- |
+| 9000 | `ubuntu-2604-guildvm-template` | Ubuntu 26.04 |
+| 9001 | `debian-13-guildvm-template` | Debian 13 |
+| 9003 | `fedora-43-guildvm-template` | Fedora 43 |
+| 9004 | `rockylinux-10-guildvm-template` | Rocky Linux 10.2 |
+| 9005 | `almalinux-10-guildvm-template` | AlmaLinux 10.2 |
+
+Matches plan §7's catalogue exactly: "Ubuntu (recommended), Debian,
+Fedora, Rocky Linux, and AlmaLinux."
+
+## What this doesn't cover
+
+Per §7, every template also needs "a version, owner, security-update
+process, site synchronization procedure, private-access test, and
+deprecation policy" — none of that lifecycle tooling exists yet, for any
+of the 5 templates including the original Ubuntu/Debian ones. This work
+closes the *catalogue* gap (the images exist), not the *lifecycle
+management* gap (keeping them patched/current over time). Also scoped to
+Guild-A only — Guild-B's own template catalogue (if it needs one,
+depending on how Guild-B factors into the plan longer-term) wasn't
+touched.
 
 ## What changed
 
-- Live: VM 9003 created as a Fedora 43 template on Guild-A (`nodeD`),
-  verified working.
-- In progress: Rocky Linux and AlmaLinux images downloading to the same
-  node, to become VMIDs 9004/9005 once complete.
+- Live: VMs 9003 (Fedora), 9004 (Rocky Linux), 9005 (AlmaLinux) created
+  on Guild-A (`nodeD`) as verified templates, matching the existing
+  Ubuntu/Debian pattern exactly.
+- Live: downloaded install images now also sit in `nodeD`'s `local`
+  storage under `import/` (harmless residue from the import process, not
+  cleaned up — matches the existing Ubuntu image already there from the
+  original template build).
