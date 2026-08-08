@@ -44,11 +44,38 @@ reach the real site LAN gateway (`192.168.8.1`) or the public internet
 (`1.1.1.1`) — 100% packet loss on both, from both VNets. Traffic reaches
 the exit node (`nodeA`) but never gets NAT'd out to the physical network.
 This predates today's G-05 firewall work — that change used an explicit
-`ACCEPT` default policy, not a restriction, and the failure pattern
-(reaches the exit node, dies at the LAN boundary) points at a missing or
-inactive masquerade rule on `nodeA`, not a firewall block. Root cause not
-diagnosed further — this needs node-level netfilter/FRR inspection tooling
-this session doesn't have, not a guess-and-poke fix.
+`ACCEPT` default policy, not a restriction.
+
+**Follow-up investigation (same day, later session):** the Proxmox API's
+own field description for the subnet `snat` option reads *"enable
+masquerade for this subnet if pve-firewall"* — meaning SNAT is
+implemented via the Proxmox firewall service. This zone was built
+2026-08-07, before any node had its firewall enabled (G-05 turned it on
+for Guild-A only on 2026-08-08, later the same day as this investigation).
+Hypothesis: the masquerade rule is generated when SDN config is applied,
+and was never regenerated after the firewall came on.
+
+**Tested and ruled out**: confirmed no other pending SDN changes existed
+(zones/vnets/controllers all clean, no `state: new/changed` markers),
+then triggered a full SDN reload (`PUT /cluster/sdn`) — completed `OK`,
+cluster stayed quorate, Ceph stayed `HEALTH_OK`, all 5 nodes reachable
+afterward. Re-tested with a fresh throwaway VM on `vnet50`: **SNAT egress
+is still 100% broken** — identical symptom, gateway reachable, LAN and
+internet both 100% packet loss. The reload was not the fix. Test VM
+destroyed immediately after, confirmed via a clean guest-list read.
+
+**Honest status**: root cause is not diagnosed. The "stale config from
+before the firewall was enabled" hypothesis is ruled out. What remains is
+genuinely inspecting `nodeA`'s live netfilter/nftables rules and FRR
+routing state to see whether the masquerade rule exists at all, is
+present but not matching, or something else entirely is wrong (e.g. a
+route leak from the VRF to the default table is missing — the VRF's own
+routing table, checked via `nodes/nodeA/sdn/zones/evpn1/ip-vrf`, shows
+only the two connected subnets and no default route out, which is
+consistent with either explanation). This needs host shell access this
+session doesn't have — guest-agent exec only reaches guest VMs, not the
+Proxmox host itself. Flagged as a real, still-open technical gap, not
+guessed at further.
 
 ## Finding 3: the two VNets are not isolated from each other
 
