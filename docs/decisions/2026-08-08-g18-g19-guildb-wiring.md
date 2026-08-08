@@ -38,6 +38,13 @@ blocking guest workloads from reaching Proxmox management ports.
    stakes: k8s control plane, most guests). Verified reachability
    (`nodes/{node}/status`) and guest-agent responsiveness after each step
    before proceeding to the next.
+
+Same scope caveat as G-05: **this does not implement the full §6 zone
+model** (Management/Tenant/Backup as actually separated, enforced network
+zones). Guild-B is a flat, single-subnet network exactly like Guild-A —
+this closes the concrete lateral-movement risk (guest workloads reaching
+Proxmox management ports), not the zone-model gap, which stays blocked on
+G-16 (Cisco switch unreachable) for both clusters.
 5. Enabled the cluster-wide master switch. Re-verified `podB` immediately
    after, then all nodes again at the end (`cluster/status` → `quorate: 1`,
    all 4 online nodes reachable).
