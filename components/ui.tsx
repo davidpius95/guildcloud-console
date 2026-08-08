@@ -276,6 +276,7 @@ export function Button({
   className,
   onClick,
   disabled,
+  form,
 }: {
   children: React.ReactNode;
   href?: string;
@@ -285,6 +286,10 @@ export function Button({
   className?: string;
   onClick?: () => void;
   disabled?: boolean;
+  // Associates this button with a <form> elsewhere in the DOM by id -
+  // needed when a form's submit control lives outside the <form> tag
+  // itself, e.g. a Modal's separate footer slot.
+  form?: string;
 }) {
   const variants = {
     primary:
@@ -314,7 +319,7 @@ export function Button({
     );
   }
   return (
-    <button type={type} className={classes} onClick={onClick} disabled={disabled}>
+    <button type={type} form={form} className={classes} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   );

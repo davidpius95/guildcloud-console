@@ -243,13 +243,55 @@ export type WebhookDelivery = {
   occurredAt: string;
 };
 
+export type MemberRole = "Owner" | "Admin" | "Developer" | "Billing" | "Read-only";
+
 export type TeamMember = {
   id: string;
   name: string;
   email: string;
-  role: "Owner" | "Admin" | "Developer" | "Billing" | "Read-only";
+  role: MemberRole;
   deviceEnrolled: boolean;
   lastActive: string;
+};
+
+// Real (Supabase-backed) organization and membership types, distinct from
+// the TeamMember shape above (which is still used by mock-only pages).
+export type Organization = {
+  id: string;
+  name: string;
+  slug: string;
+  ownerId: string;
+  walletBalanceCents: number;
+  createdAt: string;
+};
+
+export type Membership = {
+  id: string;
+  organizationId: string;
+  // Null until the invited person actually signs up - see invitedEmail.
+  userId: string | null;
+  role: MemberRole;
+  deviceEnrolled: boolean;
+  invitedBy: string | null;
+  invitedAt: string | null;
+  invitedEmail: string | null;
+  joinedAt: string | null;
+  lastActiveAt: string | null;
+  createdAt: string;
+  // Joined from auth.users when listing members - not a DB column.
+  email?: string;
+};
+
+export type AuditLogEntry = {
+  id: number;
+  organizationId: string;
+  actorId: string | null;
+  projectId: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 };
 
 export type CatalogPlan = {

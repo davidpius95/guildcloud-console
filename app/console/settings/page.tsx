@@ -11,18 +11,27 @@ import {
 } from "@/components/ui";
 import { IconPlus } from "@/components/icons";
 import { TeamAccessCard } from "@/components/team-access-card";
-import { currentUser, organization, quotas, team } from "@/lib/mock-data";
+import { quotas } from "@/lib/mock-data";
+import { getCurrentUserOrg, getMembersForOrg } from "@/lib/supabase/queries";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const userOrg = await getCurrentUserOrg();
+  const members = userOrg ? await getMembersForOrg(userOrg.organization.id) : [];
+
   return (
     <>
       <PageHeader
         title="Settings"
         description="Organization, team access, quotas, and API credentials."
+        action={
+          <Button href="/console/settings/audit" variant="secondary">
+            View audit log
+          </Button>
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <TeamAccessCard initialTeam={team} />
+        <TeamAccessCard members={members} />
 
         <div className="space-y-4">
           <Card>
@@ -30,17 +39,19 @@ export default function SettingsPage() {
             <div className="divide-y divide-ink-100 text-sm">
               <div className="flex justify-between px-5 py-3">
                 <span className="text-ink-500">Name</span>
-                <span className="font-medium text-ink-900">{organization.name}</span>
+                <span className="font-medium text-ink-900">
+                  {userOrg?.organization.name ?? "—"}
+                </span>
               </div>
               <div className="flex justify-between px-5 py-3">
                 <span className="text-ink-500">Organization ID</span>
                 <span className="font-mono text-xs text-ink-700">
-                  {organization.id}
+                  {userOrg?.organization.id ?? "—"}
                 </span>
               </div>
               <div className="flex justify-between px-5 py-3">
                 <span className="text-ink-500">Your role</span>
-                <Badge tone="lemon">{currentUser.role}</Badge>
+                <Badge tone="lemon">{userOrg?.membership.role ?? "—"}</Badge>
               </div>
               <div className="flex justify-between px-5 py-3">
                 <span className="text-ink-500">Email verified</span>

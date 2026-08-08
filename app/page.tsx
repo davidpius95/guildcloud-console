@@ -110,13 +110,13 @@ export default function LandingPage() {
 
           <div className="ml-auto flex items-center gap-2 md:ml-0">
             <Link
-              href="/console"
+              href="/sign-in"
               className="rounded-lg px-3 py-2 text-sm text-ink-600 transition-colors hover:bg-ink-50 hover:text-ink-900"
             >
               Sign in
             </Link>
             <Link
-              href="/console"
+              href="/sign-up"
               className="rounded-lg bg-lemon-400 px-3.5 py-2 text-sm font-semibold text-ink-900 ring-1 ring-inset ring-lemon-500/40 transition-colors hover:bg-lemon-300"
             >
               Start building
@@ -153,7 +153,7 @@ export default function LandingPage() {
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/console"
+              href="/sign-up"
               className="inline-flex items-center gap-2 rounded-lg bg-lemon-400 px-5 py-3 text-sm font-semibold text-ink-900 ring-1 ring-inset ring-lemon-500/40 transition-colors hover:bg-lemon-300"
             >
               Start building
@@ -236,7 +236,7 @@ export default function LandingPage() {
 
           <div className="mt-6">
             <Link
-              href="/console"
+              href="/sign-up"
               className="inline-flex items-center gap-2 text-sm font-medium text-lemon-400 hover:text-lemon-300"
             >
               Explore the console
@@ -441,7 +441,7 @@ export default function LandingPage() {
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Link
-                href="/console"
+                href="/sign-up"
                 className="inline-flex items-center gap-2 rounded-lg bg-lemon-400 px-5 py-3 text-sm font-semibold text-ink-900 transition-colors hover:bg-lemon-300"
               >
                 Start building
