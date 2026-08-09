@@ -46,23 +46,23 @@ export async function completeOnboarding(
     .insert({ id: orgId, name: orgName, slug: slugify(orgName), owner_id: user.id });
   if (orgError) return { error: orgError.message };
 
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .insert({ organization_id: orgId, name: projectName })
-    .select("id")
-    .single();
+  const projectId = crypto.randomUUID();
+  const { error: projectError } = await supabase.from("projects").insert({
+    id: projectId,
+    organization_id: orgId,
+    name: projectName,
+    slug: `project-${projectId.slice(0, 8)}`,
+  });
   if (projectError) return { error: projectError.message };
 
-  if (project) {
-    await supabase.rpc("log_audit_event", {
-      p_organization_id: orgId,
-      p_action: "project.created",
-      p_project_id: project.id,
-      p_target_type: "project",
-      p_target_id: project.id,
-      p_metadata: { name: projectName },
-    });
-  }
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: orgId,
+    p_action: "project.created",
+    p_project_id: projectId,
+    p_target_type: "project",
+    p_target_id: projectId,
+    p_metadata: { name: projectName },
+  });
 
   redirect("/console");
 }

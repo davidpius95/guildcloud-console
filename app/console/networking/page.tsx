@@ -11,7 +11,9 @@ import {
 } from "@/components/ui";
 import { IconLock } from "@/components/icons";
 import { AccessPolicyCard } from "@/components/access-policy-card";
-import { accessPolicyRules, instances, projectName, sites, team } from "@/lib/mock-data";
+import { PrivateAddressTable } from "@/components/private-address-table";
+import { accessPolicyRules, sites, team } from "@/lib/mock-data";
+import { getCurrentUserOrg, getInstancesWithPrivateNetworkForOrg } from "@/lib/supabase/queries";
 
 const zones = [
   {
@@ -40,7 +42,12 @@ const zones = [
   },
 ];
 
-export default function NetworkingPage() {
+export default async function NetworkingPage() {
+  const userOrg = await getCurrentUserOrg();
+  const realInstances = userOrg
+    ? await getInstancesWithPrivateNetworkForOrg(userOrg.organization.id)
+    : [];
+
   return (
     <>
       <PageHeader
@@ -115,33 +122,7 @@ export default function NetworkingPage() {
         </Card>
       </div>
 
-      <Card className="mt-4">
-        <CardHeader title="Private address allocation" subtitle="One stable project IP and private DNS name per instance." />
-        <Table>
-          <thead>
-            <tr>
-              <Th>Instance</Th>
-              <Th>Project</Th>
-              <Th>Private IP</Th>
-              <Th>Private hostname</Th>
-              <Th>Public IP</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {instances.map((i) => (
-              <tr key={i.id}>
-                <Td className="font-medium text-ink-900">{i.name}</Td>
-                <Td className="text-ink-500">{projectName(i.projectId)}</Td>
-                <Td className="font-mono text-xs">{i.privateIp}</Td>
-                <Td className="font-mono text-xs">{i.privateHostname}</Td>
-                <Td>
-                  <Badge>None</Badge>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </Card>
+      <PrivateAddressTable instances={realInstances} />
 
       <Card className="mt-4">
         <CardHeader title="Site connectivity" subtitle="Sites connect outbound; no inbound public access is required." />

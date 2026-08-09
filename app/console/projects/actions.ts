@@ -23,29 +23,35 @@ export async function createProject(
   const supabase = await createClient();
   const accent = accentCycle[Math.floor(Math.random() * accentCycle.length)];
 
-  const { data: project, error } = await supabase
-    .from("projects")
-    .insert({
-      organization_id: userOrg.organization.id,
-      name,
-      description,
-      accent,
-    })
-    .select("id")
-    .single();
+  // id (and the slug derived from it) generated client-side so the real
+  // Tailscale tag name (tag:guildcloud-tenant-<slug>) is fixed at creation
+  // and never recomputed from the renamable `name` column - see
+  // docs/phase-3/data-model.md. tailscale_acl_state defaults to 'pending';
+  // the site worker picks it up and applies the real per-project ACL
+  // grant asynchronously, the same durable pattern createInstance already
+  // uses for provisioning.
+  const projectId = crypto.randomUUID();
+  const slug = `project-${projectId.slice(0, 8)}`;
+
+  const { error } = await supabase.from("projects").insert({
+    id: projectId,
+    organization_id: userOrg.organization.id,
+    name,
+    description,
+    accent,
+    slug,
+  });
 
   if (error) return { error: error.message };
 
-  if (project) {
-    await supabase.rpc("log_audit_event", {
-      p_organization_id: userOrg.organization.id,
-      p_action: "project.created",
-      p_project_id: project.id,
-      p_target_type: "project",
-      p_target_id: project.id,
-      p_metadata: { name },
-    });
-  }
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: userOrg.organization.id,
+    p_action: "project.created",
+    p_project_id: projectId,
+    p_target_type: "project",
+    p_target_id: projectId,
+    p_metadata: { name, slug },
+  });
 
   revalidatePath("/console/projects");
   redirect("/console/projects");

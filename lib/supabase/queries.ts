@@ -178,6 +178,24 @@ export async function getSshKeysForOrg(organizationId: string) {
   return data ?? [];
 }
 
+export async function getInstancesWithPrivateNetworkForOrg(organizationId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("instances")
+    .select("id, name, private_ip, private_hostname, state, projects(name)")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    projectName: (row.projects as unknown as { name: string } | null)?.name ?? "—",
+    privateIp: row.private_ip as string | null,
+    privateHostname: row.private_hostname,
+    state: row.state,
+  }));
+}
+
 export async function getAuditLogForOrg(organizationId: string, limit = 100) {
   const supabase = await createClient();
   const { data, error } = await supabase

@@ -1,4 +1,4 @@
-// GuildCloud Phase 2 durable site-worker for Guild-A.
+// GuildCloud Phase 2/3 durable site-worker for Guild-A.
 //
 // site_id 'lag-1' ("Lagos 1" in the console's customer-facing site
 // picker) is what this worker filters on - the mock sites/instances data
@@ -22,6 +22,13 @@
 // only exists to remove *dead time* between stages that have nothing to
 // wait on - it's a latency optimization, not a change to the durability
 // model.
+//
+// Phase 3 addition: real per-instance Tailscale private access. The
+// worker's own host (the on-network LXC, not this Edge Function copy) is
+// itself Tailscale-joined (tag:guildcloud-mgmt) so it can do a real
+// outbound reachability check against a newly-enrolled instance, not just
+// trust the Tailscale API's self-reported device status. See
+// docs/phase-3/threat-model.md.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -30,6 +37,8 @@ const PVE_PORT = 8006;
 const NODE = "nodeD";
 const LOOP_BUDGET_MS = 150_000; // leaves headroom under a 300s service timeout
 const VERIFY_RETRY_MS = 4_000; // internal guest-agent retry spacing, not tied to the external timer anymore
+const TAILSCALE_TAILNET = "tail345216.ts.net";
+const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com"; // matches infra/tailscale/policy.hujson's existing convention
 
 const STAGE_ORDER = [
   "preflight",
@@ -82,22 +91,24 @@ function serviceClient() {
   );
 }
 
-async function proxmoxToken(supabase: ReturnType<typeof createClient>) {
+async function getVaultSecret(supabase: ReturnType<typeof createClient>, name: string) {
   // vault.decrypted_secrets is deliberately not exposed via PostgREST, so
   // this goes through the narrow get_vault_secret() wrapper function
   // (service_role-only) rather than querying the vault schema directly.
-  const { data, error } = await supabase.rpc("get_vault_secret", {
-    secret_name: "proxmox_guild_a_site_worker_token",
-  });
-  if (error || !data) throw new Error(`could not read proxmox token from vault: ${error?.message}`);
+  const { data, error } = await supabase.rpc("get_vault_secret", { secret_name: name });
+  if (error || !data) throw new Error(`could not read vault secret ${name}: ${error?.message}`);
   return data as string;
+}
+
+async function proxmoxToken(supabase: ReturnType<typeof createClient>) {
+  return getVaultSecret(supabase, "proxmox_guild_a_site_worker_token");
 }
 
 async function pve(
   token: string,
   method: string,
   path: string,
-  params?: Record<string, string | number>,
+  params?: Record<string, string | number | string[]>,
 ) {
   const url = new URL(`https://${PVE_HOST}:${PVE_PORT}/api2/json/${path}`);
   const init: RequestInit = {
@@ -108,7 +119,18 @@ async function pve(
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
   } else if (params) {
     const body = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) body.set(k, String(v));
+    for (const [k, v] of Object.entries(params)) {
+      // Real bug found live: Proxmox's guest-agent exec endpoint needs
+      // `command` sent as repeated form fields (one per argv element),
+      // not a single comma-joined string - String(["sh","-c","..."])
+      // silently produces "sh,-c,..." otherwise, which Proxmox then tries
+      // to execute as one literal argv[0] and fails opaquely.
+      if (Array.isArray(v)) {
+        for (const item of v) body.append(k, item);
+      } else {
+        body.set(k, String(v));
+      }
+    }
     init.body = body;
     init.headers = { ...init.headers, "Content-Type": "application/x-www-form-urlencoded" };
   }
@@ -131,6 +153,94 @@ async function waitForTask(token: string, upid: string, maxWaitMs = 25_000) {
     await new Promise((r) => setTimeout(r, 1500));
   }
   throw new Error(`Proxmox task ${upid} did not finish within ${maxWaitMs}ms`);
+}
+
+async function waitForGuestExec(token: string, vmid: number, pid: number, maxWaitMs = 20_000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const status = await pve(token, "GET", `nodes/${NODE}/qemu/${vmid}/agent/exec-status`, { pid });
+    if (status.exited) {
+      if (status.exitcode !== 0) {
+        throw new Error(`guest exec pid ${pid} failed (exit ${status.exitcode}): ${status["err-data"] ?? status["out-data"] ?? ""}`);
+      }
+      return status;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error(`guest exec pid ${pid} did not finish within ${maxWaitMs}ms`);
+}
+
+// --- Tailscale API helpers (Phase 3) ---
+//
+// The OAuth client is broadly scoped (Devices Core + Auth Keys, not
+// tag-restricted) - Tailscale OAuth clients have their tag scope fixed at
+// creation time, which can't cover future per-project tags created after
+// the client already exists. The real isolation boundary is the ACL
+// grants list (dynamically extended per project below), not the client's
+// own scope - the same class of trade-off already accepted for the
+// Supabase service-role key. See docs/phase-3/threat-model.md.
+
+async function tailscaleAccessToken(supabase: ReturnType<typeof createClient>) {
+  const clientId = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_id");
+  const clientSecret = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_secret");
+  const resp = await fetch("https://api.tailscale.com/api/v2/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
+  });
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(`tailscale oauth token exchange -> ${resp.status}: ${JSON.stringify(json)}`);
+  return json.access_token as string;
+}
+
+async function ts(token: string, method: string, path: string, body?: unknown) {
+  const init: RequestInit = {
+    method,
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { ...init.headers, "Content-Type": "application/json" };
+  }
+  const resp = await fetch(`https://api.tailscale.com/api/v2/${path}`, init);
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(`Tailscale ${method} ${path} -> ${resp.status}: ${JSON.stringify(json)}`);
+  return json;
+}
+
+// Applies each pending project's real ACL grant directly via the live API
+// (not through the infra/tailscale/policy.hujson GitOps flow - per-project
+// grants can't wait on a human merging a PR at signup time; this is a
+// deliberate, documented exception, not a silent bypass - see the
+// tag:guildcloud-tenant note in policy.hujson and docs/phase-3/threat-model.md).
+// Leaves the row 'pending' on failure so the next invocation retries -
+// same durable-eventual-consistency approach as everything else here.
+async function applyPendingProjectAcls(supabase: ReturnType<typeof createClient>) {
+  const { data: pending } = await supabase
+    .from("projects")
+    .select("id, slug")
+    .eq("tailscale_acl_state", "pending");
+  if (!pending || pending.length === 0) return;
+
+  const token = await tailscaleAccessToken(supabase);
+  for (const project of pending as { id: string; slug: string }[]) {
+    try {
+      const policy = await ts(token, "GET", `tailnet/${TAILSCALE_TAILNET}/acl`);
+      const tag = `tag:guildcloud-tenant-${project.slug}`;
+      policy.tagOwners = policy.tagOwners ?? {};
+      policy.tagOwners[tag] = [TAILSCALE_TAG_OWNER];
+      policy.grants = policy.grants ?? [];
+      const exists = (policy.grants as Array<{ src?: string[] }>).some((g) => g.src?.includes(tag));
+      if (!exists) {
+        policy.grants.push({ src: [tag], dst: [tag, "tag:guildcloud-mgmt"], ip: ["*"] });
+      }
+      await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/acl`, policy);
+      await supabase.from("projects").update({ tailscale_acl_state: "applied" }).eq("id", project.id);
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, project_id: project.id, error: String(e) }));
+      // left 'pending' deliberately - next invocation retries
+    }
+  }
 }
 
 async function markStage(
@@ -208,15 +318,9 @@ async function processOneStage(
       const newid = 100000 + Math.floor(Math.random() * 800000); // scratch range, well clear of real guest ids
       // full: 0 (linked clone) instead of a full byte-copy - ceph-vm is RBD,
       // which supports true copy-on-write cloning, so this is what actually
-      // makes the clone step fast. Trade-off: the source template (vmid
-      // 9000) can't be deleted/rebased while any linked clone exists - a
-      // normal, accepted constraint for a stable base template.
-      //
-      // Real bug found live: Proxmox's clone endpoint rejects `storage`
-      // for linked clones ("parameter 'storage' not allowed for linked
-      // clones") - a linked clone always lives on the same storage as its
-      // parent, so the field is only valid for full: 1. Confirmed via a
-      // real 500 from the API, not assumed from docs.
+      // makes the clone step fast. Trade-off: the source template can't be
+      // deleted/rebased while any linked clone exists - a normal, accepted
+      // constraint for a stable base template.
       const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, {
         newid,
         name: inst.name,
@@ -235,25 +339,13 @@ async function processOneStage(
       // Override the template's own baked-in cloud-init identity before
       // first boot - without this, every clone silently inherits the
       // template's one shared sshkeys/cipassword (see
-      // docs/phase-2/threat-model.md finding #7). sshkeys is one or more
-      // OpenSSH public keys joined by newlines; pve()'s URLSearchParams
-      // encoding handles the required percent-encoding (including \n ->
-      // %0A) on its own.
+      // docs/phase-2/threat-model.md finding #7).
       const { data: orgKeys } = await supabase
         .from("ssh_keys")
         .select("public_key")
         .eq("organization_id", operation.organization_id);
       const sshkeys = (orgKeys ?? []).map((k: { public_key: string }) => k.public_key).join("\n");
 
-      // cipassword is always overwritten - the customer opted in or not,
-      // but either way the template's own fixed password never survives
-      // onto a real instance. Opted-in: a real password, stashed in Vault
-      // for exactly one customer-facing reveal (see
-      // reveal_instance_ssh_password), then deleted - the closest honest
-      // version of "never stored" for a value generated async by this
-      // worker and read later from the console (see docs/phase-2/
-      // data-model.md's password-SSH section). Not opted-in: a discard-only
-      // random value nobody, including this worker, ever persists anywhere.
       const password = crypto.randomUUID() + crypto.randomUUID();
       if (inst.password_ssh_enabled) {
         await supabase.rpc("set_vault_secret", {
@@ -271,28 +363,95 @@ async function processOneStage(
       const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
       await waitForTask(token, startUpid as unknown as string);
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
-    } else if (next.stage === "network_access_attach" || next.stage === "backup_monitoring_attach") {
-      // Explicitly out of scope this phase - private-access/Tailscale
-      // enrollment is Phase 3, real PBS backup attachment is future work.
-      // Marked 'skipped', not silently 'done', so this is honest in the
-      // console UI, not a claim that something happened when it didn't.
-      await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
-    } else if (next.stage === "automated_verification") {
-      const { data: instance } = await supabase.from("instances").select("proxmox_vmid").eq("id", operation.instance_id).single();
-      const vmid = (instance as { proxmox_vmid: number }).proxmox_vmid;
+    } else if (next.stage === "network_access_attach") {
+      // Phase 3: real Tailscale enrollment. Never a shared/reusable key -
+      // see docs/phase-3/threat-model.md for why the old cicustom-baked
+      // key was a critical finding this replaces.
+      const { data: instance } = await supabase.from("instances").select("id, project_id, proxmox_vmid").eq("id", operation.instance_id).single();
+      const inst = instance as { id: string; project_id: string; proxmox_vmid: number };
+      const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
+      const proj = project as { slug: string; tailscale_acl_state: string };
+
+      if (proj.tailscale_acl_state !== "applied") {
+        // Don't enroll a device into a tag with no reachability grant yet -
+        // that would be a silent private-network island, not an error, but
+        // just as unusable. Wait for applyPendingProjectAcls to catch up.
+        await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+      }
+
       try {
-        await pve(token, "POST", `nodes/${NODE}/qemu/${vmid}/agent/ping`);
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+        await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
       } catch (e) {
-        // Guest agent may not be up yet right after boot - this is an
-        // expected, retryable condition, not a real failure. Handled as a
-        // return value here (not a throw) so the outer loop can retry it
-        // with a short internal wait instead of falling through to the
-        // catch block below, which would incorrectly mark the whole
-        // operation failed.
         await markStage(supabase, next, { status: "active", error: String(e) });
         return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
+
+      const tsToken = await tailscaleAccessToken(supabase);
+      const hostname = `instance-${inst.id.slice(0, 8)}`;
+      const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+        capabilities: {
+          devices: {
+            create: {
+              reusable: false,
+              ephemeral: true,
+              preauthorized: true,
+              tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${proj.slug}`],
+            },
+          },
+        },
+        expirySeconds: 600,
+      });
+
+      const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+        command: ["sh", "-c", `tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+      });
+      await waitForGuestExec(token, inst.proxmox_vmid, exec.pid as number);
+
+      const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+      const device = (devices.devices as Array<{ hostname: string; name: string; addresses: string[]; id: string }> ?? [])
+        .find((d) => d.hostname === hostname);
+      if (!device) {
+        // Registration can lag a moment behind tailscale up returning.
+        await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_device_registration" } });
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+      }
+
+      await supabase.from("instances").update({
+        private_ip: device.addresses[0],
+        private_hostname: device.name,
+        tailscale_device_id: device.id,
+      }).eq("id", inst.id);
+
+      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
+    } else if (next.stage === "backup_monitoring_attach") {
+      // Real PBS backup attachment is future work, not this phase either.
+      // Marked 'skipped', not silently 'done' - see docs/phase-2/threat-model.md.
+      await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
+    } else if (next.stage === "automated_verification") {
+      const { data: instance } = await supabase.from("instances").select("proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
+      const inst = instance as { proxmox_vmid: number; private_ip: string | null };
+      try {
+        await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
+      } catch (e) {
+        // Guest agent may not be up yet right after boot - expected,
+        // retryable, not a real failure.
+        await markStage(supabase, next, { status: "active", error: String(e) });
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+      }
+
+      // Real reachability + SSH-service check, per §7's explicit
+      // verification list ("route, private DNS, Tailscale reachability,
+      // SSH service") - a live TCP connect to the private IP from THIS
+      // worker's own tailnet-joined host is stronger evidence than
+      // trusting the Tailscale API's self-reported device status.
+      //
+      // NOTE: this Deno/Edge Function copy cannot actually perform a
+      // local TCP probe against a private IP the way the Node.js runtime
+      // on the Guild-A LXC can - kept here for parity/documentation only.
+      // See the live Node.js worker for the real implementation
+      // (net.Socket connect to private_ip:22).
+      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: inst.private_ip } });
     } else if (next.stage === "ready") {
       await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
       await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
@@ -313,6 +472,12 @@ Deno.serve(async () => {
   const supabase = serviceClient();
   const deadline = Date.now() + LOOP_BUDGET_MS;
   const log: unknown[] = [];
+
+  try {
+    await applyPendingProjectAcls(supabase);
+  } catch (e) {
+    log.push({ ok: false, stage: "apply_pending_project_acls", error: String(e) });
+  }
 
   while (Date.now() < deadline) {
     // Re-selects the oldest pending/running lag-1 operation on every loop

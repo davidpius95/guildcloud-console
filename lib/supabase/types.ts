@@ -226,12 +226,14 @@ export type Database = {
           name: string
           organization_id: string
           password_ssh_enabled: boolean
+          private_hostname: string | null
           private_ip: unknown
           project_id: string
           proxmox_node: string | null
           proxmox_vmid: number | null
           site_id: string
           state: string
+          tailscale_device_id: string | null
         }
         Insert: {
           catalog_image_id: string
@@ -241,12 +243,14 @@ export type Database = {
           name: string
           organization_id: string
           password_ssh_enabled?: boolean
+          private_hostname?: string | null
           private_ip?: unknown
           project_id: string
           proxmox_node?: string | null
           proxmox_vmid?: number | null
           site_id: string
           state?: string
+          tailscale_device_id?: string | null
         }
         Update: {
           catalog_image_id?: string
@@ -256,12 +260,14 @@ export type Database = {
           name?: string
           organization_id?: string
           password_ssh_enabled?: boolean
+          private_hostname?: string | null
           private_ip?: unknown
           project_id?: string
           proxmox_node?: string | null
           proxmox_vmid?: number | null
           site_id?: string
           state?: string
+          tailscale_device_id?: string | null
         }
         Relationships: [
           {
@@ -502,6 +508,8 @@ export type Database = {
           id: string
           name: string
           organization_id: string
+          slug: string
+          tailscale_acl_state: string
         }
         Insert: {
           accent?: string
@@ -510,6 +518,8 @@ export type Database = {
           id?: string
           name: string
           organization_id: string
+          slug: string
+          tailscale_acl_state?: string
         }
         Update: {
           accent?: string
@@ -518,6 +528,8 @@ export type Database = {
           id?: string
           name?: string
           organization_id?: string
+          slug?: string
+          tailscale_acl_state?: string
         }
         Relationships: [
           {
