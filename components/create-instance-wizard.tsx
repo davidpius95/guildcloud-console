@@ -6,7 +6,6 @@ import {
   images,
   money,
   plans,
-  projects,
   sites,
 } from "@/lib/mock-data";
 import type { ProtectionTier } from "@/lib/types";
@@ -104,9 +103,17 @@ function Option({
   );
 }
 
-export function CreateInstanceWizard() {
+export function CreateInstanceWizard({
+  projects,
+}: {
+  // Real projects (uuid ids) for the signed-in org - createInstance
+  // writes project_id into a real uuid column, so this can never be the
+  // mock lib/mock-data.ts Project[] (fictional ids like "prj_core") the
+  // way site/image/plan selection still is. See docs/phase-2/api-contract.md.
+  projects: { id: string; name: string }[];
+}) {
   const [siteId, setSiteId] = useState(sites[0].id);
-  const [projectId, setProjectId] = useState(projects[0].id);
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [imageId, setImageId] = useState("ubuntu-2404");
   const [planId, setPlanId] = useState("std-2");
   const [protection, setProtection] = useState<ProtectionTier>("standard");
