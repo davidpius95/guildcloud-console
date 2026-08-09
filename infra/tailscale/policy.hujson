@@ -27,6 +27,20 @@
 		// GuildCloud zone tags, added 2026-08-07.
 		"tag:guildcloud-mgmt": ["davidpius95@gmail.com"],
 		"tag:operator":        ["davidpius95@gmail.com"],
+
+		// Phase 3 tenant umbrella tag, added 2026-08-09. Every real customer
+		// instance and, later, every enrolled customer device carries this
+		// tag. Per-project tags (tag:guildcloud-tenant-<slug>) are declared
+		// dynamically by the site worker itself via the Tailscale API at
+		// project-creation time, NOT here — see the Decision Record addendum
+		// and docs/phase-3/threat-model.md for why: they can't wait on a
+		// human merging a PR, and there's no bounded set to enumerate ahead
+		// of time. This file stays the source of truth for the STATIC tags
+		// and grants (this one, mgmt, operator, backup); the worker's
+		// direct-API per-project additions are an accepted, documented
+		// exception to the "no direct API calls" rule below, not a silent
+		// bypass of it.
+		"tag:guildcloud-tenant": ["davidpius95@gmail.com"],
 	},
 
 	"acls": [],
@@ -71,13 +85,17 @@
 			"ip": ["*"],
 		},
 
-		// Tenant zone (§6): intentionally absent. No tag:guildcloud-tenant-*
-		// grant exists yet because no real tenant/customer device has ever
-		// been enrolled — adding one now would be speculative. Add it in
-		// the same PR that builds Phase 3 device enrollment, scoped to a
-		// specific project tag, e.g.:
-		//   { "src": ["tag:guildcloud-tenant-<project>"],
-		//     "dst": ["tag:guildcloud-tenant-<project>"], "ip": ["*"] }
+		// Tenant zone (§6): per-project grants (one entry per real project,
+		// scoped to that project's own tag) are added dynamically by the
+		// site worker via the live Tailscale API when a project is created,
+		// not committed here — see the tag:guildcloud-tenant note above.
+		// This file will drift from the live grants list for that reason;
+		// a periodic sync-back job (not yet built) is meant to read the
+		// live policy and commit it here for audit, on a schedule, not as
+		// enforcement. Shape of what the worker adds, for reference:
+		//   { "src": ["tag:guildcloud-tenant-<slug>"],
+		//     "dst": ["tag:guildcloud-tenant-<slug>", "tag:guildcloud-mgmt"],
+		//     "ip": ["*"] }
 
 		// Backup zone (§6): intentionally absent — no backup target exists
 		// yet (gap G-02). Add a tag:guildcloud-backup grant, reachable only
