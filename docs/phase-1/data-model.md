@@ -126,14 +126,31 @@ reconciling the two lists.
 
 Schema + simple state only, per the plan's explicit Phase 1 scope.
 
+**Correction (found during Phase 2 work, 2026-08-08):** this table's real
+columns were `id`, `organization_id`, `project_id`, `kind` (text, not
+null), `resource_name` (text, not null), `state`, `stages` (jsonb),
+`started_at` (timestamptz, not null, default `now()` — there is no
+`created_at` column on this table, `started_at` serves that role) and
+`ended_at` (timestamptz, nullable). This doc originally omitted `kind`,
+`resource_name`, `started_at`, and `ended_at` entirely and incorrectly
+listed a `created_at` column that never existed — caught only by querying
+`information_schema.columns` directly before writing Phase 2's insert
+logic, not from this doc. See `docs/phase-2/data-model.md` for the
+Phase 2 additions (`idempotency_key`, `instance_id`, `site_id`,
+`current_stage`, `failure_reason`, `updated_at`) layered on top of the
+corrected list below.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid, pk | |
 | `organization_id` | uuid → `organizations` | |
 | `project_id` | uuid → `projects`, nullable | |
+| `kind` | text, not null | e.g. `instance.create` — what kind of operation this is |
+| `resource_name` | text, not null | human-readable label for the thing being operated on |
 | `state` | text, check ∈ `running, succeeded, failed` | |
-| `stages` | jsonb | |
-| `created_at` | timestamptz | |
+| `stages` | jsonb, not null, default `[]` | |
+| `started_at` | timestamptz, not null, default `now()` | |
+| `ended_at` | timestamptz, nullable | |
 
 **Explicitly deferred to Phase 2, documented in the migration file itself:**
 idempotency keys, retry/backoff logic, and any actual worker execution.

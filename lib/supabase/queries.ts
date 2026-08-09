@@ -133,6 +133,51 @@ export async function getMembersForOrg(organizationId: string) {
   return (data ?? []).map((row) => toMembership(row));
 }
 
+/**
+ * A real (Phase 2) instance and its most recent operation + stage rows,
+ * or null if `id` isn't a real instance - the caller falls back to
+ * lib/mock-data.ts's Instance[] in that case (see app/console/instances/
+ * [id]/page.tsx), since mock instances and real ones share the same
+ * route/id shape for now.
+ */
+export async function getInstanceWithOperation(instanceId: string) {
+  const supabase = await createClient();
+  const { data: instance } = await supabase
+    .from("instances")
+    .select("*")
+    .eq("id", instanceId)
+    .maybeSingle();
+  if (!instance) return null;
+
+  const { data: operation } = await supabase
+    .from("operations")
+    .select("*")
+    .eq("instance_id", instanceId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: stages } = operation
+    ? await supabase
+        .from("operation_stages")
+        .select("*")
+        .eq("operation_id", operation.id)
+    : { data: [] };
+
+  return { instance, operation, stages: stages ?? [] };
+}
+
+export async function getSshKeysForOrg(organizationId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ssh_keys")
+    .select("id, name, public_key, created_at")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function getAuditLogForOrg(organizationId: string, limit = 100) {
   const supabase = await createClient();
   const { data, error } = await supabase

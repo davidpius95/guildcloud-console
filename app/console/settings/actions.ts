@@ -87,3 +87,59 @@ export async function removeMember(membershipId: string) {
 
   revalidatePath("/console/settings");
 }
+
+// The public key this org's real instances actually get injected with -
+// see the "template_cloud_init" stage in supabase/functions/
+// site-worker-guild-a. Before this table existed, every clone silently
+// inherited the Guild-A template's one shared, fixed key - see
+// docs/phase-2/threat-model.md finding #7.
+export async function addSshKey(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const name = String(formData.get("name") ?? "").trim();
+  const publicKey = String(formData.get("publicKey") ?? "").trim();
+  if (!name) return { error: "A label for this key is required." };
+  if (!/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+) /.test(publicKey)) {
+    return { error: "Doesn't look like a public key (must start with ssh-ed25519, ssh-rsa, or ecdsa-sha2-...)." };
+  }
+
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return { error: "No organization found." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("ssh_keys").insert({
+    organization_id: userOrg.organization.id,
+    name,
+    public_key: publicKey,
+  });
+  if (error) return { error: error.message };
+
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: userOrg.organization.id,
+    p_action: "ssh_key.added",
+    p_target_type: "ssh_key",
+    p_metadata: { name },
+  });
+
+  revalidatePath("/console/settings");
+  return { error: null };
+}
+
+export async function removeSshKey(id: string) {
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return;
+  const supabase = await createClient();
+
+  const { error } = await supabase.from("ssh_keys").delete().eq("id", id);
+  if (error) return;
+
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: userOrg.organization.id,
+    p_action: "ssh_key.removed",
+    p_target_type: "ssh_key",
+    p_target_id: id,
+  });
+
+  revalidatePath("/console/settings");
+}

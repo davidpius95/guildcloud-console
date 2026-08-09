@@ -69,6 +69,85 @@ export type Database = {
           },
         ]
       }
+      capacity_reservations: {
+        Row: {
+          created_at: string
+          disk_gb: number
+          expires_at: string
+          id: string
+          memory_gb: number
+          node: string
+          operation_id: string
+          site_id: string
+          state: string
+          vcpu: number
+        }
+        Insert: {
+          created_at?: string
+          disk_gb: number
+          expires_at?: string
+          id?: string
+          memory_gb: number
+          node: string
+          operation_id: string
+          site_id: string
+          state?: string
+          vcpu: number
+        }
+        Update: {
+          created_at?: string
+          disk_gb?: number
+          expires_at?: string
+          id?: string
+          memory_gb?: number
+          node?: string
+          operation_id?: string
+          site_id?: string
+          state?: string
+          vcpu?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "capacity_reservations_operation_id_fkey"
+            columns: ["operation_id"]
+            isOneToOne: false
+            referencedRelation: "operations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_image_site_templates: {
+        Row: {
+          catalog_image_id: string
+          proxmox_node: string
+          proxmox_storage: string
+          proxmox_vmid: number
+          site_id: string
+        }
+        Insert: {
+          catalog_image_id: string
+          proxmox_node: string
+          proxmox_storage: string
+          proxmox_vmid: number
+          site_id: string
+        }
+        Update: {
+          catalog_image_id?: string
+          proxmox_node?: string
+          proxmox_storage?: string
+          proxmox_vmid?: number
+          site_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_image_site_templates_catalog_image_id_fkey"
+            columns: ["catalog_image_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_images"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       catalog_images: {
         Row: {
           available_sites: string[]
@@ -138,6 +217,83 @@ export type Database = {
         }
         Relationships: []
       }
+      instances: {
+        Row: {
+          catalog_image_id: string
+          catalog_plan_id: string
+          created_at: string
+          id: string
+          name: string
+          organization_id: string
+          password_ssh_enabled: boolean
+          private_ip: unknown
+          project_id: string
+          proxmox_node: string | null
+          proxmox_vmid: number | null
+          site_id: string
+          state: string
+        }
+        Insert: {
+          catalog_image_id: string
+          catalog_plan_id: string
+          created_at?: string
+          id?: string
+          name: string
+          organization_id: string
+          password_ssh_enabled?: boolean
+          private_ip?: unknown
+          project_id: string
+          proxmox_node?: string | null
+          proxmox_vmid?: number | null
+          site_id: string
+          state?: string
+        }
+        Update: {
+          catalog_image_id?: string
+          catalog_plan_id?: string
+          created_at?: string
+          id?: string
+          name?: string
+          organization_id?: string
+          password_ssh_enabled?: boolean
+          private_ip?: unknown
+          project_id?: string
+          proxmox_node?: string | null
+          proxmox_vmid?: number | null
+          site_id?: string
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instances_catalog_image_id_fkey"
+            columns: ["catalog_image_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_images"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instances_catalog_plan_id_fkey"
+            columns: ["catalog_plan_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instances_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instances_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -191,41 +347,110 @@ export type Database = {
           },
         ]
       }
+      operation_stages: {
+        Row: {
+          attempt: number
+          detail: Json
+          error: string | null
+          finished_at: string | null
+          id: string
+          operation_id: string
+          stage: string
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          attempt?: number
+          detail?: Json
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          operation_id: string
+          stage: string
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          attempt?: number
+          detail?: Json
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          operation_id?: string
+          stage?: string
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operation_stages_operation_id_fkey"
+            columns: ["operation_id"]
+            isOneToOne: false
+            referencedRelation: "operations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       operations: {
         Row: {
+          current_stage: string | null
           ended_at: string | null
+          failure_reason: string | null
           id: string
+          idempotency_key: string
+          instance_id: string | null
           kind: string
           organization_id: string
           project_id: string | null
           resource_name: string
+          site_id: string
           stages: Json
           started_at: string
           state: string
+          updated_at: string
         }
         Insert: {
+          current_stage?: string | null
           ended_at?: string | null
+          failure_reason?: string | null
           id?: string
+          idempotency_key?: string
+          instance_id?: string | null
           kind: string
           organization_id: string
           project_id?: string | null
           resource_name: string
+          site_id?: string
           stages?: Json
           started_at?: string
           state?: string
+          updated_at?: string
         }
         Update: {
+          current_stage?: string | null
           ended_at?: string | null
+          failure_reason?: string | null
           id?: string
+          idempotency_key?: string
+          instance_id?: string | null
           kind?: string
           organization_id?: string
           project_id?: string | null
           resource_name?: string
+          site_id?: string
           stages?: Json
           started_at?: string
           state?: string
+          updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "operations_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "instances"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "operations_organization_id_fkey"
             columns: ["organization_id"]
@@ -304,11 +529,44 @@ export type Database = {
           },
         ]
       }
+      ssh_keys: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          organization_id: string
+          public_key: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          organization_id: string
+          public_key: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          organization_id?: string
+          public_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ssh_keys_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      get_vault_secret: { Args: { secret_name: string }; Returns: string }
       has_org_role: {
         Args: { p_org_id: string; p_roles: string[] }
         Returns: boolean
@@ -324,6 +582,14 @@ export type Database = {
           p_target_type?: string
         }
         Returns: number
+      }
+      reveal_instance_ssh_password: {
+        Args: { p_instance_id: string }
+        Returns: string
+      }
+      set_vault_secret: {
+        Args: { p_secret_name: string; p_secret_value: string }
+        Returns: undefined
       }
     }
     Enums: {

@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { CopyField } from "@/components/copy-field";
 import { InstanceActions, RecoveryConsoleButton } from "@/components/instance-actions";
 import { OperationTimeline } from "@/components/operation-timeline";
+import { OperationProgress } from "@/components/operation-progress";
+import { RevealPasswordButton } from "@/components/reveal-password-button";
+import { getInstanceWithOperation } from "@/lib/supabase/queries";
 import {
   Badge,
   Button,
@@ -42,6 +45,79 @@ export default async function InstanceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+
+  // Real (Phase 2) instances are created with a crypto.randomUUID() id via
+  // createInstance and never appear in lib/mock-data.ts's Instance[] -
+  // check the real table first and render the provisioning-progress view
+  // for those, falling back to the existing all-mock rendering below for
+  // every id that came from mock-data.
+  const real = await getInstanceWithOperation(id);
+  if (real) {
+    const { instance: realInstance, operation, stages } = real;
+    return (
+      <>
+        <nav className="mb-4 text-xs text-ink-400">
+          <Link href="/console/instances" className="hover:text-ink-700 hover:underline">
+            Guild Instances
+          </Link>
+          <span className="mx-1.5">/</span>
+          <span className="text-ink-600">{realInstance.name}</span>
+        </nav>
+
+        <PageHeader
+          title={realInstance.name}
+          description={`${realInstance.site_id} · ${realInstance.catalog_image_id} · ${realInstance.catalog_plan_id}`}
+        />
+
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <Badge tone={realInstance.state === "ready" ? "lemon" : realInstance.state === "failed" ? "rose" : "sky"}>
+            {realInstance.state}
+          </Badge>
+          {realInstance.proxmox_vmid ? (
+            <Badge tone="neutral">Proxmox VMID {realInstance.proxmox_vmid}</Badge>
+          ) : null}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="min-w-0 space-y-4 lg:col-span-2">
+            {operation ? (
+              <OperationProgress operation={operation} stages={stages} />
+            ) : (
+              <Note tone="warning">No operation found for this instance yet.</Note>
+            )}
+          </div>
+          <div className="space-y-4">
+            <Card>
+              <CardHeader title="Connect" subtitle="Available once the instance reaches Ready." />
+              <div className="space-y-3 px-5 py-4">
+                <Note>
+                  <span className="inline-flex items-start gap-2">
+                    <IconLock className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" />
+                    <span>
+                      Private networking and access enrollment are explicitly
+                      out of scope for this provisioning slice — see
+                      docs/phase-2/data-model.md.
+                    </span>
+                  </span>
+                </Note>
+                {realInstance.password_ssh_enabled ? (
+                  realInstance.state === "ready" ? (
+                    <RevealPasswordButton instanceId={realInstance.id} />
+                  ) : (
+                    <p className="text-xs text-ink-400">
+                      Password SSH is enabled — the password can be revealed
+                      once this instance reaches Ready.
+                    </p>
+                  )
+                ) : null}
+              </div>
+            </Card>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   const instance = instances.find((i) => i.id === id);
   if (!instance) notFound();
 
@@ -105,7 +181,7 @@ export default async function InstanceDetailPage({
               </Note>
               <div className="flex gap-2">
                 <RecoveryConsoleButton instance={instance} />
-                <Button variant="ghost" size="sm">
+                <Button href="/console/settings" variant="ghost" size="sm">
                   Manage SSH keys
                 </Button>
               </div>

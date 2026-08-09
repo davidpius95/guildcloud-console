@@ -45,6 +45,13 @@ export const currentUser = {
   deviceEnrolled: true,
 };
 
+// Site ids here are customer-facing display names only ("Lagos 1", etc.)
+// and were never mapped to the real infrastructure's own naming (Guild-A,
+// Guild-B Proxmox clusters) until Phase 2. lag-1 is the default/primary
+// site and the one Phase 2's real provisioning slice treats as backed by
+// actual Guild-A hardware - see catalog_image_site_templates and
+// supabase/functions/site-worker-guild-a. abj-1/ams-1 stay purely
+// fictional until a second real site exists (blocked on gap G-13).
 export const sites: Site[] = [
   {
     id: "lag-1",

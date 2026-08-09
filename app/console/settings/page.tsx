@@ -9,14 +9,19 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { IconPlus } from "@/components/icons";
 import { TeamAccessCard } from "@/components/team-access-card";
+import { SshKeysCard } from "@/components/ssh-keys-card";
 import { quotas } from "@/lib/mock-data";
-import { getCurrentUserOrg, getMembersForOrg } from "@/lib/supabase/queries";
+import {
+  getCurrentUserOrg,
+  getMembersForOrg,
+  getSshKeysForOrg,
+} from "@/lib/supabase/queries";
 
 export default async function SettingsPage() {
   const userOrg = await getCurrentUserOrg();
   const members = userOrg ? await getMembersForOrg(userOrg.organization.id) : [];
+  const sshKeys = userOrg ? await getSshKeysForOrg(userOrg.organization.id) : [];
 
   return (
     <>
@@ -92,31 +97,7 @@ export default async function SettingsPage() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="SSH keys" subtitle="Keys are enabled by default on every instance." />
-          <div className="divide-y divide-ink-100 text-sm">
-            {[
-              ["saurabh@macbook", "ed25519 · added 2026-03-11"],
-              ["amara@thinkpad", "ed25519 · added 2026-04-02"],
-            ].map(([name, meta]) => (
-              <div key={name} className="flex items-center justify-between px-5 py-3">
-                <div>
-                  <p className="font-medium text-ink-900">{name}</p>
-                  <p className="text-xs text-ink-400">{meta}</p>
-                </div>
-                <Button variant="ghost" size="sm">
-                  Remove
-                </Button>
-              </div>
-            ))}
-          </div>
-          <div className="px-5 py-3">
-            <Button variant="secondary" size="sm">
-              <IconPlus className="h-3.5 w-3.5" />
-              Add key
-            </Button>
-          </div>
-        </Card>
+        <SshKeysCard keys={sshKeys} />
 
         <Card>
           <CardHeader title="Support access" subtitle="There is no standing support access to your servers." />

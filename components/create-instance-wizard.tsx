@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   images,
@@ -10,6 +10,7 @@ import {
   sites,
 } from "@/lib/mock-data";
 import type { ProtectionTier } from "@/lib/types";
+import { createInstance } from "@/app/console/instances/actions";
 import { Badge, Button, Card, CardHeader, Note, cx } from "./ui";
 import { IconLock, IconShield } from "./icons";
 
@@ -113,6 +114,13 @@ export function CreateInstanceWizard() {
   const [passwordSsh, setPasswordSsh] = useState(false);
   const [name, setName] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  // Generated once at render, not per submit, so a double-click or a
+  // client retry reuses the same key - see the unique index on
+  // operations.idempotency_key.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [actionState, formAction, pending] = useActionState(createInstance, {
+    error: null,
+  });
 
   const site = sites.find((s) => s.id === siteId)!;
   const plan = plans.find((p) => p.id === planId)!;
@@ -133,6 +141,11 @@ export function CreateInstanceWizard() {
 
   const imageAvailable = image.availableSites.includes(siteId);
   const canCreate = site.acceptingNewWork && imageAvailable && name.trim().length > 0;
+  // Only Guild-A (lag-1) + ubuntu-2404 has a real Proxmox template mapped
+  // in catalog_image_site_templates today - every other combination stays
+  // the honest mock note below rather than reaching a worker that would
+  // just fail to find a template. See docs/phase-2/data-model.md.
+  const isReal = siteId === "lag-1" && imageId === "ubuntu-2404";
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -435,7 +448,7 @@ export function CreateInstanceWizard() {
               </Note>
             ) : null}
 
-            {submitted ? (
+            {submitted && !isReal ? (
               <Note>
                 This is a mock console — no operation was created. In the real
                 control plane this would open a durable, retry-safe operation and
@@ -443,14 +456,29 @@ export function CreateInstanceWizard() {
               </Note>
             ) : null}
 
+            {actionState.error ? <Note tone="warning">{actionState.error}</Note> : null}
+
+            {isReal ? (
+              <form id="create-instance-form" action={formAction}>
+                <input type="hidden" name="name" value={name} />
+                <input type="hidden" name="projectId" value={projectId} />
+                <input type="hidden" name="catalogImageId" value={imageId} />
+                <input type="hidden" name="catalogPlanId" value={planId} />
+                <input type="hidden" name="siteId" value={siteId} />
+                <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+                <input type="hidden" name="passwordSsh" value={passwordSsh ? "on" : "off"} />
+              </form>
+            ) : null}
+
             <Button
               className="w-full"
-              type="button"
+              type={isReal ? "submit" : "button"}
+              form={isReal ? "create-instance-form" : undefined}
               variant="primary"
-              disabled={!canCreate}
-              onClick={() => setSubmitted(true)}
+              disabled={!canCreate || pending}
+              onClick={isReal ? undefined : () => setSubmitted(true)}
             >
-              Create instance
+              {pending ? "Creating…" : "Create instance"}
             </Button>
 
             <div className="flex items-start gap-2 text-xs text-ink-400">
