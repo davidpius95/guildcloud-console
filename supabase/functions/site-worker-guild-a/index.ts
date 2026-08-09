@@ -248,7 +248,15 @@ async function markStage(
   stage: StageRow,
   patch: Record<string, unknown>,
 ) {
-  await supabase.from("operation_stages").update(patch).eq("id", stage.id);
+  // Real bug found live: this is a partial Postgres update, so a stage
+  // that succeeds after an earlier retry_wait (which recorded an `error`)
+  // kept the stale error text forever - the success patch never touched
+  // that column. Clear it by default whenever a stage completes, unless
+  // the caller explicitly sets one (the failure path does).
+  const finalPatch = (patch.status === "done" || patch.status === "skipped") && !("error" in patch)
+    ? { ...patch, error: null }
+    : patch;
+  await supabase.from("operation_stages").update(finalPatch).eq("id", stage.id);
 }
 
 async function processOneStage(

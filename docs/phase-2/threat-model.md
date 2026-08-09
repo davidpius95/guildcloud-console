@@ -274,3 +274,38 @@ roughly 2x faster. The remaining ~74s is genuine kernel/systemd/cloud-init
 boot time on this hardware/image — not something a template change alone
 can shrink further; a pre-warmed pool would be the next lever if faster
 still matters.
+
+## 10. `capacity_reservations` are never released on success — found running a broader "test every phase" pass, 2026-08-09
+
+**Threat:** `select * from capacity_reservations where state = 'held'`
+turned up a reservation (4 vCPU/GB, tied to the long-succeeded `test`
+operation from this instance's original provisioning) still `held` well
+past its own `expires_at`. Nothing in the worker's `ready`-stage handling
+(or anywhere else) transitions a reservation to `released` when its
+operation succeeds — the only place `capacity_reservations` gets cleared
+today is the earlier-session manual `delete` used to unblock a preflight
+check. Every successful real instance created so far is silently holding
+its capacity forever, which will eventually make `preflight`'s
+available-capacity math wrong for real (it already did once this
+session — see the manual cleanup in the 2026-08-09 Phase 3 dev-log entry).
+
+**Not fixed this pass** — this is real capacity-accounting logic, not a
+one-line worker patch, and deserves its own deliberate change rather than
+a rushed fix bundled into a Phase 3 testing pass. Flagged as a concrete
+follow-up: the `ready` stage (or a scheduled sweep) needs to transition
+`held` → `released` on operation success, and independently expire stale
+`held` rows past `expires_at` regardless of outcome.
+
+## 11. Two real orphaned `instances` rows with no `operations` row at all — found the same pass
+
+`test2` (vmid 356151) and `try` both show `state = provisioning` /
+`Assigning…` in the console with **no matching row in `operations`
+at all** — meaning the worker has nothing to advance and they will sit
+in "Assigning…" forever. The underlying Proxmox VM for `test2` is real,
+running, and oddly still carries Proxmox's own `template` tag. These
+don't match the shape `createInstance` produces (which always inserts an
+`operations` row in the same transaction) — most likely leftover manual
+test artifacts from earlier direct-SQL work this session, not a defect in
+the real creation path. **Left untouched** rather than guessed at and
+deleted, since ownership/intent is unclear; flagging for the user to
+either clean up or explain.

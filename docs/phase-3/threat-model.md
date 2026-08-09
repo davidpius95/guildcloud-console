@@ -144,7 +144,28 @@ infrastructure, not by reading code:
    the guest-exec command now runs `systemctl enable --now tailscaled &&
    tailscale up ...` as one command — starting the disabled-by-design
    daemon is now an explicit, per-enrollment step, not an assumption. Fixed
-   in `supabase/functions/site-worker-guild-a/index.ts`; the live
-   `/opt/guildcloud-worker/index.js` on the Guild-A LXC still needs the same
-   one-line change pasted in before the next real customer instance goes
-   through this path.
+   in `supabase/functions/site-worker-guild-a/index.ts`. **Reproduced a
+   second time** on 2026-08-09 during a fresh, independent real
+   end-to-end test (`phase-test-2`, operation `abb11549-...`) — confirming
+   the live `/opt/guildcloud-worker/index.js` on the Guild-A LXC still has
+   the old command and still needs this same one-line change pasted in
+   before the next real customer instance goes through this path.
+
+## 9. Stale `error` text survives a successful retry — found during the second real end-to-end test
+
+`markStage()` does a partial Postgres `update(patch)`. Every stage that
+records an `error` during a `retry_wait` cycle and then succeeds on a
+later attempt never explicitly clears that column on the success patch,
+so the stale error text from the earlier failed attempt stays on the row
+forever — even though the stage is `status: done`. Caught live: the
+second test instance's `automated_verification` stage showed
+`status: done` with `error: "ssh reachability check failed: ... timed
+out"` still attached from the first (failed) attempt, even though the
+retry actually succeeded. Not a functional bug (the operation still
+reached `ready` correctly) but a real observability hazard — a support
+engineer reading that row later would reasonably conclude verification
+never actually passed. **Fix:** `markStage()` now clears `error: null` by
+default whenever a stage transitions to `done`/`skipped`, unless the
+caller explicitly sets one. Fixed in
+`supabase/functions/site-worker-guild-a/index.ts`; same fix still needs
+porting to the live `/opt/guildcloud-worker/index.js`.
