@@ -106,13 +106,25 @@ export async function createInstance(
         .single();
       if (winner?.instance_id) redirect(`/console/instances/${winner.instance_id}`);
     }
+    // Real bug found live: these are separate inserts, not one transaction.
+    // Returning here without cleaning up the instance row already written
+    // above left permanently orphaned "provisioning" instances with no
+    // operation to ever advance them (found two of these in the wild -
+    // see docs/phase-2/threat-model.md finding #11). Compensate by
+    // deleting what we just created so a failure here is invisible rather
+    // than a silent stuck instance.
+    await supabase.from("instances").delete().eq("id", instanceId);
     return { error: operationError.message };
   }
 
   const { error: stagesError } = await supabase
     .from("operation_stages")
     .insert(OPERATION_STAGES.map((stage) => ({ operation_id: operationId, stage })));
-  if (stagesError) return { error: stagesError.message };
+  if (stagesError) {
+    await supabase.from("operations").delete().eq("id", operationId);
+    await supabase.from("instances").delete().eq("id", instanceId);
+    return { error: stagesError.message };
+  }
 
   await supabase.rpc("log_audit_event", {
     p_organization_id: userOrg.organization.id,

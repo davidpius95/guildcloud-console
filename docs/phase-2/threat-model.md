@@ -296,16 +296,33 @@ follow-up: the `ready` stage (or a scheduled sweep) needs to transition
 `held` → `released` on operation success, and independently expire stale
 `held` rows past `expires_at` regardless of outcome.
 
-## 11. Two real orphaned `instances` rows with no `operations` row at all — found the same pass
+## 11. Two real orphaned `instances` rows with no `operations` row — root cause found and fixed
 
-`test2` (vmid 356151) and `try` both show `state = provisioning` /
-`Assigning…` in the console with **no matching row in `operations`
-at all** — meaning the worker has nothing to advance and they will sit
-in "Assigning…" forever. The underlying Proxmox VM for `test2` is real,
-running, and oddly still carries Proxmox's own `template` tag. These
-don't match the shape `createInstance` produces (which always inserts an
-`operations` row in the same transaction) — most likely leftover manual
-test artifacts from earlier direct-SQL work this session, not a defect in
-the real creation path. **Left untouched** rather than guessed at and
-deleted, since ownership/intent is unclear; flagging for the user to
-either clean up or explain.
+`test2` (vmid 356151) and `try` (vmid `null`) both showed `state =
+provisioning` / "Assigning…" in the console with **no matching row in
+`operations` at all** — the worker had nothing to advance, so they'd sit
+like that forever. Originally assumed to be leftover manual test
+artifacts; that assumption was wrong.
+
+**Real root cause, found reading `app/console/instances/actions.ts`:**
+`createInstance` is **not atomic** — it inserts into `instances`, then
+`operations`, then `operation_stages` as three separate Supabase calls,
+not one transaction. If the `operations` insert (or the `operation_stages`
+insert) fails for *any* reason after the `instances` insert already
+succeeded, the function returned the error to the user but never cleaned
+up the `instances` row it had just written. The wizard's own copy says
+"Nothing is created until you confirm" — this was false whenever the
+second or third insert failed. `try`'s name reads exactly like what
+someone types after a submission that appeared to fail with no visible
+instance created (the row silently existed, just permanently stuck).
+
+**Fix:** both failure branches now delete the rows already inserted
+before returning the error — `operationError` deletes the `instances` row;
+`stagesError` deletes both the `operations` and `instances` rows. A
+failed submission is now either fully rolled back or never started what
+it can't finish, matching the copy's actual promise.
+
+**Not yet done:** deleting the two existing orphaned rows themselves
+(`test2`, `try`) — flagged to the user rather than deleted unilaterally,
+since `test2`'s underlying Proxmox VM (356151) is real and running and
+its disposition isn't this session's call to make alone.
