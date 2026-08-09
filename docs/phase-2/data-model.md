@@ -118,11 +118,18 @@ Primary key `(catalog_image_id, site_id)`. Public-read RLS policy — the
 wizard needs to check "is there a tested template at this site for this
 image" for every visitor, not just signed-in org members.
 
-**Seeded exactly one row this phase:** `('ubuntu-2404', 'lag-1', 9000,
-'nodeD', 'ceph-vm')`. The catalog-image-id/real-template version mismatch
-(24.04 vs. the real 26.04 template, vmid 9000) is accepted the same way
-Phase 1 accepted the images/plans version mismatch — noted here, not
-silently renamed. No other catalog image has a row yet; the wizard's
+**Seeded exactly one row this phase:** originally `('ubuntu-2404', 'lag-1',
+9000, 'nodeD', 'ceph-vm')`, **updated 2026-08-09 to `proxmox_vmid = 9010`**
+— a rebuilt template (`ubuntu-2604-guildvm-template-fast`) with no
+cloud-init vendor-data step, built after a real speed investigation found
+the original template's vendor snippet ran a synchronous `apt-get update`
++ Tailscale install on every clone's first boot (see
+`threat-model.md` findings #8–#9 for the full story, including a critical
+exposed-credential finding in that same snippet). The original template
+(`9000`) is untouched, kept as rollback. The catalog-image-id/real-template
+version mismatch (24.04 vs. the real 26.04-based template) is accepted the
+same way Phase 1 accepted the images/plans version mismatch — noted here,
+not silently renamed. No other catalog image has a row yet; the wizard's
 existing "No tested template at {site}" copy is exactly what drives that for
 every other combination once this table is the source of truth for it.
 

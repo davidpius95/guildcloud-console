@@ -203,16 +203,74 @@ SSH attempts at the guest OS level (master plan §10 calls for this) —
 that's a guest-side configuration concern, not something this worker
 layer controls, and remains open.
 
-## 8. `cicustom` vendor snippet (`tailscale-vendor.yaml`) — scope unreviewed
+## 8. `cicustom` vendor snippet — CONFIRMED CRITICAL, exposed reusable Tailscale auth key (found and mitigated this session)
 
-**Threat:** the template's `cicustom` field points at a vendor cloud-init
-snippet that appears to auto-enroll every cloned VM into Tailscale at first
-boot. If it uses a reusable, unscoped pre-auth key, every clone could land
-on the tailnet with default (currently fully-open, per Phase 0 gap G-01)
-ACL exposure automatically, with no per-customer control.
+**Threat, confirmed not speculative:** read the actual rendered vendor-data
+from inside a live clone (`cat /var/lib/cloud/instance/vendor-data.txt`).
+The Guild-A template's `tailscale-vendor.yaml` contained:
 
-**Status:** not reviewed this session — found in passing while answering a
-design question, not audited. **Should be reviewed before Phase 3 (private
-access) is built on top of this template**, since it's plausible this
-snippet is already doing informal work that Phase 3 is supposed to do
-deliberately and per-customer.
+```yaml
+runcmd:
+  - [ sh, -c, "tailscale up --auth-key=tskey-auth-kHNZ...4nwHbx6Rv3 --ssh --hostname=$(hostname) --accept-dns=true || true" ]
+```
+
+A **hardcoded, reusable, plaintext Tailscale auth key**, baked into the
+shared template, applied to **every single clone ever made from it**
+(including real customer instances already created this session). Combined
+with the already-known fully-open tailnet ACL (Phase 0 gap G-01), this
+meant every instance auto-joined the tailnet with full network access, and
+anyone who ever extracted this key could enroll a rogue device with the
+same access. **This key is now also exposed in this session's chat
+transcript** — compromised twice over, not hypothetically.
+
+**Immediate action required, not yet confirmed done:** revoke this key in
+the Tailscale admin console. This is independent of and more urgent than
+the template/speed work below — rotating the template does not revoke the
+key; old clones and anyone who captured it can still use it until it's
+revoked at the source.
+
+**Mitigation shipped this session (see finding #9):** the new
+speed-optimized template (`vmid 9010`) has no `cicustom` vendor reference
+at all — new instances no longer auto-enroll in Tailscale using this key,
+by construction. This is a side effect of the speed fix, not a substitute
+for revoking the key — the old template (`vmid 9000`) is untouched and
+still contains it.
+
+**Explicitly deferred, not solved:** real per-customer Tailscale
+enrollment (a distinct, scoped key or better mechanism per customer, not
+a shared reusable one) is Phase 3 work. Until then, new instances have no
+private-network/Tailscale access at all — a real capability gap, but a
+safe default compared to what existed before.
+
+## 9. Guild-A template rebuilt for speed — a real, measured provisioning-time fix
+
+**Problem, found live:** a real customer instance took ~8.5 minutes to
+provision (later reduced to ~3m17s by the worker-loop fix — see the
+2026-08-09 dev-log). Root-caused by reading the guest's own boot state
+(`systemctl list-jobs`, `ps aux`) mid-provision: `cloud-final.service` was
+blocked on `apt-get update`, an `appstreamcli refresh`, and a full
+`curl | sh` internet install of Tailscale — all running synchronously on
+every single clone's first boot, none of it customer-facing value.
+
+**Fix:** cloned the template to a new vmid (`9010`,
+`ubuntu-2604-guildvm-template-fast`), cleared its `cicustom` vendor
+reference entirely (removing the `package_update`, `packages:`, and
+Tailscale `runcmd` block in one step — also the fix for finding #8 above),
+converted it to a template, and repointed
+`catalog_image_site_templates` at it. The original template (`9000`) is
+untouched, kept as rollback.
+
+**A real permission gap found immediately retesting:** the scoped worker
+token's ACL for `/vms/9000` (`propagate: false`) didn't cover the new
+`/vms/9010` — cloning failed with a real 403 (`VM.Clone`) until a matching
+ACL was added for the new vmid. Least-privilege scoping needs updating
+every time a new template vmid enters rotation; not something to forget
+next time.
+
+**Verified live, with real numbers:** administrative+clone+config stages
+dropped from ~24.5s to ~16.3s; the dominant guest-boot-to-agent-ready phase
+dropped from ~131s to ~74s. Total real provisioning time: **~197s → ~91s**,
+roughly 2x faster. The remaining ~74s is genuine kernel/systemd/cloud-init
+boot time on this hardware/image — not something a template change alone
+can shrink further; a pre-warmed pool would be the next lever if faster
+still matters.
