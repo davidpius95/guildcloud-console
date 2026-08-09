@@ -404,7 +404,10 @@ async function processOneStage(
       });
 
       const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-        command: ["sh", "-c", `tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+        // tailscaled ships disabled on the template (vmid 9011) so every
+        // clone starts with no bled-through node identity - it must be
+        // started here, on first real enrollment, not assumed running.
+        command: ["sh", "-c", `systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
       });
       await waitForGuestExec(token, inst.proxmox_vmid, exec.pid as number);
 

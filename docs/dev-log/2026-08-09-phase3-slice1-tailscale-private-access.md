@@ -91,12 +91,44 @@ against any instance it might enroll.
   mid-upgrade risks a broken package database on what becomes a
   permanent template).
 
+## Real end-to-end proof — completed 2026-08-09
+
+Created a real test project + instance, drove operation
+`7ee55e24-5ae3-4863-8958-4aae4d2e9f6e` through every stage to `ready`.
+Hit two more real, live-only blockers along the way (neither visible from
+reading code — see `threat-model.md` finding #8 for full detail):
+
+1. `GuildCloudSiteWorker`'s Proxmox role had guest-agent audit/ping rights
+   but not `VM.GuestAgent.Unrestricted`, so the first real `agent/exec`
+   (needed for `tailscale up`) 403'd. Fixed live on the cluster.
+2. `tailscaled` ships disabled on template `9011` by design (no baked-in
+   node identity) — `network_access_attach` assumed it was running.
+   Started it manually on the test guest to unblock the proof, and fixed
+   the assumption in `supabase/functions/site-worker-guild-a/index.ts`
+   (now `systemctl enable --now tailscaled && tailscale up ...`). **The
+   live Node.js worker on the Guild-A LXC still needs this same one-line
+   fix pasted in before the next real customer instance hits this path.**
+
+Once both were fixed, the operation reached `ready` for real:
+`network_access_attach` minted a real ephemeral key, enrolled the guest,
+and wrote `private_ip=100.100.219.91`,
+`private_hostname=instance-4f1d652b.tail345216.ts.net`. Independently
+verified from this session (not just the worker's self-report) via
+`list_devices`: the device was live, authorized, with the exact IP and
+both expected tags (`tag:guildcloud-tenant`,
+`tag:guildcloud-tenant-project-5e81b859`). The console's real "Private
+address allocation" table showed the same IP/hostname. Cleaned up: deleted
+the Proxmox VM and the test DB rows; the Tailscale device itself
+(`instance-4f1d652b`) still needs manual deletion in the admin console —
+`manage_keys`-class device deletion requires an admin risk level this
+session doesn't have.
+
 ## Explicitly not done this pass
 
-- The real end-to-end proof (create an instance through the actual
-  console, watch `network_access_attach` mint a key and enroll it for
-  real, independently verify reachability, clean up) — pending the
-  updated worker script actually being deployed to the live LXC.
+- Pasting the `tailscaled`-enable fix into the live
+  `/opt/guildcloud-worker/index.js` — the Deno source is fixed, the live
+  copy isn't yet.
+- Deleting the leftover Tailscale device from the real end-to-end test.
 - Customer device self-enrollment (Slice 2) — `memberships.device_enrolled`
   stays unwired, deliberately out of scope for this slice.
 - Real instance deletion still doesn't exist — this phase makes the

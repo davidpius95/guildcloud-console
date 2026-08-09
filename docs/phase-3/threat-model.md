@@ -33,12 +33,15 @@ The real isolation boundary is the **ACL grants list**, which does support
 dynamic per-project entries (confirmed technically works via the live
 API), not the client's own scope.
 
-**Verification pending:** the client was created by the user in the
-Tailscale admin console and its id/secret stored in Vault
-(`tailscale_guildcloud_worker_oauth_client_id`/`_secret`). Whether the
-OAuth-token-exchange → key-creation → device-registration chain works
-end-to-end has not yet been proven with a real instance as of this
-writing — that's the pending real end-to-end test.
+**Verified 2026-08-09:** real end-to-end test (operation
+`7ee55e24-5ae3-4863-8958-4aae4d2e9f6e`, instance `phase3-e2e-test-1`)
+reached `ready`. The OAuth-token-exchange → key-creation →
+`tailscale up` → device-registration chain worked for real, independently
+confirmed via `list_devices` from this session (not just the worker's own
+self-report): device `instance-4f1d652b`, IP `100.100.219.91`, tags
+`tag:guildcloud-tenant` + `tag:guildcloud-tenant-project-5e81b859` — both
+correct. Console's real "Private address allocation" table showed the
+same IP/hostname.
 
 ## 3. Per-project ACL grants bypass the GitOps-only rule — a deliberate, user-approved exception
 
@@ -111,7 +114,37 @@ by nobody.
 using the existing `retry_wait` mechanism to wait rather than enroll
 speculatively.
 
-**Verification:** pending the real end-to-end test — this exact gate is
-what should visibly hold a fresh project's first instance at
-`network_access_attach` until `applyPendingProjectAcls()` catches up on a
-subsequent invocation.
+**Verification:** confirmed live 2026-08-09 — all 3 real projects showed
+`tailscale_acl_state = applied` before the test instance's
+`network_access_attach` was allowed to mint a key, and the real ACL policy
+(`manage_acl get`) contained the matching grant before enrollment proceeded.
+
+## 8. Two real, live-only blockers found during the actual end-to-end test — not caught by design review
+
+Both were only discoverable by actually running the flow against real
+infrastructure, not by reading code:
+
+1. **The worker's own Proxmox token lacked `VM.GuestAgent.Unrestricted`.**
+   `GuildCloudSiteWorker`'s role had `VM.GuestAgent.Audit` (ping only,
+   inherited from before this phase, when the worker only ever polled
+   guest-agent readiness) but not the separate privilege `agent/exec`
+   requires. First real enrollment attempt got a live 403: `Permission
+   check failed (/vms/591904, VM.GuestAgent.Unrestricted)`. **Fix:** added
+   `VM.GuestAgent.Unrestricted` to the role live via the Proxmox API (`PUT
+   /access/roles/GuildCloudSiteWorker`). A real, accepted privilege
+   expansion for the worker's existing credential — it already had
+   `VM.PowerMgmt`/`VM.Clone` etc. on every guest it manages, so this is not
+   a new blast-radius category, just a missing grant within the same trust
+   boundary.
+2. **`tailscaled` ships disabled on template `9011`** (deliberately, per
+   `data-model.md`, to avoid any risk of a baked-in node identity) — but
+   `network_access_attach` assumed the daemon was already running and just
+   called `tailscale up` directly. First real attempt failed: `failed to
+   connect to local tailscaled; it doesn't appear to be running`. **Fix:**
+   the guest-exec command now runs `systemctl enable --now tailscaled &&
+   tailscale up ...` as one command — starting the disabled-by-design
+   daemon is now an explicit, per-enrollment step, not an assumption. Fixed
+   in `supabase/functions/site-worker-guild-a/index.ts`; the live
+   `/opt/guildcloud-worker/index.js` on the Guild-A LXC still needs the same
+   one-line change pasted in before the next real customer instance goes
+   through this path.
