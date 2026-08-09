@@ -75,20 +75,47 @@ reference; its `pg_cron` schedule has been unscheduled and must stay that
 way (see `threat-model.md` finding #1 for the state-corruption bug that
 running both caused).
 
-Each invocation does exactly **one bounded unit of work**, never a loop
-through multiple stages:
+**Update — loops internally now, not one stage per invocation.** The
+original one-stage-per-run design meant every stage, including the four
+purely administrative ones with nothing to actually wait on, still paid
+the full ~20s external timer cadence — a real customer waited minutes for
+work that took milliseconds. Found live: a real submission sat at
+`operation_created` (a no-op stage) for over 8 minutes total end-to-end.
+Fixed by having each invocation loop through as many stages/operations as
+it can within a bounded time budget (`LOOP_BUDGET_MS`, 150s), stopping only
+when a stage genuinely has nothing left to do (`no_pending_stage`), the
+queue is empty, or a stage needs a short internal retry (currently just
+`automated_verification` waiting on the guest agent, retried every 4s
+in-process rather than falling back to the external timer). The systemd
+timer still exists as a crash-resume safety net — on the happy path it now
+rarely needs to fire more than once.
+
+Per invocation, each stage step is still exactly:
 
 1. Claim the oldest `lag-1` operation with `state in ('pending','running')`.
 2. Find the first `operation_stages` row that isn't `done`/`skipped` for it.
 3. Execute only that stage against Guild-A's real Proxmox REST API.
 4. Write the stage result back (`status`, `detail`, `error`), update
-   `operations.current_stage`/`updated_at`, return.
+   `operations.current_stage`/`updated_at`.
+5. Loop immediately if there's more work; otherwise stop.
 
 This is what makes it durable and retry-safe: state lives in Postgres
 between every stage, so any invocation dying mid-way (timeout, crash,
 network blip) is safely replaced by the next scheduled tick resuming from
-the last `done` stage — not because any process stays alive. Verified live,
-not just designed: a real operation advanced through every stage against
+the last `done` stage — not because any process stays alive. This
+guarantee is unchanged by the loop; only the *dead time between* stages
+changed.
+
+**Real measured improvement:** a timing-verification run showed the eight
+administrative/clone/config stages (`preflight` through
+`backup_monitoring_attach`) completing in **~24.5 seconds total**, down
+from minutes of pure tick-wait before. The remaining time
+(`automated_verification` waiting for the guest agent) is real guest-OS
+boot time — ~2m11s in that same run, which is slower than typical for a
+lightweight cloud image and worth investigating separately; it's not
+something this worker's own timing controls.
+
+Verified live, not just designed: a real operation advanced through every stage against
 real Proxmox, survived two real bugs found and fixed mid-run without
 redoing any already-`done` stage, and reached `ready` on a real,
 subsequently-deleted VM.

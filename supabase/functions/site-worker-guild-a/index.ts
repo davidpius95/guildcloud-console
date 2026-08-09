@@ -7,34 +7,42 @@
 // treated as backed by real Guild-A hardware. See the comment on the
 // `sites` array in lib/mock-data.ts.
 //
-// Invoked on a schedule (pg_cron -> net.http_post, ~every 20s). Each
-// invocation does exactly ONE bounded unit of work: claim the oldest
-// pending/running lag-1 (Guild-A) operation, find its first non-done/
-// skipped stage, execute only that stage against the real Proxmox REST
-// API, and return. It never loops through multiple stages in one call -
-// that's what makes it durable and retry-safe: if this invocation dies
-// mid-way (timeout, cold start, crash), the next cron tick resumes from
-// whatever was last committed to Postgres, never from scratch.
+// Kept in source for reference/parity - the actual runtime is a Node.js
+// port on a Guild-A-resident LXC (see docs/phase-2/threat-model.md finding
+// #1). This Edge Function's pg_cron schedule is permanently unscheduled;
+// do not re-add it (running it alongside the real worker caused a real
+// state-corruption bug from two unlocked pollers racing).
 //
-// Auth: verify_jwt stays true (the recommended default) - the cron job
-// calls this with the publishable/anon key as a normal, validly-signed
-// Supabase JWT, which is enough to pass verify_jwt without needing the
-// service-role key in the invocation itself. All actual database writes
-// inside this function use SUPABASE_SERVICE_ROLE_KEY, which the Supabase
-// platform injects automatically into every deployed Edge Function - no
-// separate secret-management step was needed for that credential.
-//
-// The Proxmox API token IS a separately-managed secret (created
-// specifically for this worker, scoped to nodeD/pool guildcloud-guild-a/
-// the source template only - see docs/phase-2/threat-model.md), stored in
-// Supabase Vault rather than as a function env var, since no tool in this
-// session's toolset can set Edge Function secrets directly.
+// Loops internally, advancing through as many stages/operations as it can
+// within a bounded time budget, rather than doing exactly one stage per
+// invocation. The durability/retry-safety guarantee is unchanged: state
+// still commits to Postgres after every single stage, so a crash mid-loop
+// (timeout, cold start, process kill) loses nothing - the next invocation
+// resumes from whatever was last committed, never from scratch. The loop
+// only exists to remove *dead time* between stages that have nothing to
+// wait on - it's a latency optimization, not a change to the durability
+// model.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const PVE_HOST = "192.168.8.195"; // nodeD, where the real templates live
 const PVE_PORT = 8006;
 const NODE = "nodeD";
+const LOOP_BUDGET_MS = 150_000; // leaves headroom under a 300s service timeout
+const VERIFY_RETRY_MS = 4_000; // internal guest-agent retry spacing, not tied to the external timer anymore
+
+const STAGE_ORDER = [
+  "preflight",
+  "capacity_reservation",
+  "operation_created",
+  "site_worker_dispatch",
+  "proxmox_api_call",
+  "template_cloud_init",
+  "network_access_attach",
+  "backup_monitoring_attach",
+  "automated_verification",
+  "ready",
+];
 
 type StageRow = {
   id: string;
@@ -59,6 +67,13 @@ type InstanceRow = {
   catalog_image_id: string;
   catalog_plan_id: string;
 };
+
+type StageOutcome =
+  | { status: "advanced" }
+  | { status: "operation_succeeded" }
+  | { status: "operation_failed" }
+  | { status: "retry_wait"; waitMs: number }
+  | { status: "no_pending_stage" };
 
 function serviceClient() {
   return createClient(
@@ -126,57 +141,20 @@ async function markStage(
   await supabase.from("operation_stages").update(patch).eq("id", stage.id);
 }
 
-Deno.serve(async () => {
-  const supabase = serviceClient();
-
-  // Claim the oldest not-yet-finished Guild-A operation. `for update skip
-  // locked` (via a plain select here since supabase-js has no native lock
-  // hint - see the accompanying advisory-lock guard below) prevents two
-  // overlapping invocations from grabbing the same operation.
-  const { data: ops } = await supabase
-    .from("operations")
-    .select("id, organization_id, instance_id, site_id")
-    .eq("site_id", "lag-1")
-    .in("state", ["pending", "running"])
-    .order("started_at", { ascending: true })
-    .limit(1);
-
-  const operation = (ops as OperationRow[] | null)?.[0];
-  if (!operation) {
-    return new Response(JSON.stringify({ ok: true, message: "no pending operations" }), { status: 200 });
-  }
-
-  // Note on concurrency: this phase runs a single pg_cron schedule (one
-  // invocation at a time in practice), not a fleet of concurrent workers,
-  // so an explicit advisory lock isn't load-bearing here yet. The
-  // `status='active'`/`attempt` bump below still gives each stage a
-  // single-writer marker; real multi-worker fan-out with proper locking
-  // is future work once there's an actual reason to run more than one
-  // scheduled invocation at a time.
+async function processOneStage(
+  supabase: ReturnType<typeof createClient>,
+  operation: OperationRow,
+): Promise<StageOutcome> {
   const { data: stages } = await supabase
     .from("operation_stages")
     .select("id, operation_id, stage, status, attempt, detail")
     .eq("operation_id", operation.id)
     .order("stage");
 
-  const stageOrder = [
-    "preflight",
-    "capacity_reservation",
-    "operation_created",
-    "site_worker_dispatch",
-    "proxmox_api_call",
-    "template_cloud_init",
-    "network_access_attach",
-    "backup_monitoring_attach",
-    "automated_verification",
-    "ready",
-  ];
   const byStage = new Map((stages as StageRow[]).map((s) => [s.stage, s]));
-  const next = stageOrder.map((s) => byStage.get(s)!).find((s) => s.status === "pending" || s.status === "active");
+  const next = STAGE_ORDER.map((s) => byStage.get(s)!).find((s) => s && (s.status === "pending" || s.status === "active"));
 
-  if (!next) {
-    return new Response(JSON.stringify({ ok: true, message: "operation has no pending stages" }), { status: 200 });
-  }
+  if (!next) return { status: "no_pending_stage" };
 
   await supabase.from("operations").update({ state: "running", current_stage: next.stage, updated_at: new Date().toISOString() }).eq("id", operation.id);
   await markStage(supabase, next, { status: "active", started_at: new Date().toISOString(), attempt: next.attempt + 1 });
@@ -303,33 +281,68 @@ Deno.serve(async () => {
       const { data: instance } = await supabase.from("instances").select("proxmox_vmid").eq("id", operation.instance_id).single();
       const vmid = (instance as { proxmox_vmid: number }).proxmox_vmid;
       try {
-        const ping = await pve(token, "POST", `nodes/${NODE}/qemu/${vmid}/agent/ping`);
-        void ping;
+        await pve(token, "POST", `nodes/${NODE}/qemu/${vmid}/agent/ping`);
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } catch (e) {
-        // Guest agent may not be up yet right after boot - leave this
-        // stage 'active' so the next cron tick retries it, rather than
-        // failing the whole operation on a guest that just needs more
-        // boot time. Genuinely retry-safe, not a silent failure.
+        // Guest agent may not be up yet right after boot - this is an
+        // expected, retryable condition, not a real failure. Handled as a
+        // return value here (not a throw) so the outer loop can retry it
+        // with a short internal wait instead of falling through to the
+        // catch block below, which would incorrectly mark the whole
+        // operation failed.
         await markStage(supabase, next, { status: "active", error: String(e) });
-        throw e;
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
     } else if (next.stage === "ready") {
       await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
       await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      return { status: "operation_succeeded" };
     }
 
-    return new Response(JSON.stringify({ ok: true, operation_id: operation.id, stage: next.stage }), { status: 200 });
+    return { status: "advanced" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (next.stage !== "automated_verification") {
-      // automated_verification's own catch block already left the stage
-      // 'active' for retry above; every other stage failing is a real
-      // failure, not a transient retry case.
-      await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
-      await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
-    }
-    return new Response(JSON.stringify({ ok: false, error: message }), { status: 200 });
+    await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
+    await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
+    return { status: "operation_failed" };
   }
+}
+
+Deno.serve(async () => {
+  const supabase = serviceClient();
+  const deadline = Date.now() + LOOP_BUDGET_MS;
+  const log: unknown[] = [];
+
+  while (Date.now() < deadline) {
+    // Re-selects the oldest pending/running lag-1 operation on every loop
+    // iteration, not cached - if the current operation just terminated,
+    // this naturally moves on to the next queued one within the same
+    // invocation, still one operation at a time, oldest-first.
+    const { data: ops } = await supabase
+      .from("operations")
+      .select("id, organization_id, instance_id, site_id")
+      .eq("site_id", "lag-1")
+      .in("state", ["pending", "running"])
+      .order("started_at", { ascending: true })
+      .limit(1);
+
+    const operation = (ops as OperationRow[] | null)?.[0];
+    if (!operation) {
+      log.push({ ok: true, message: "no pending operations" });
+      break;
+    }
+
+    const outcome = await processOneStage(supabase, operation);
+    log.push({ operation_id: operation.id, ...outcome });
+
+    if (outcome.status === "no_pending_stage") break; // inconsistent state - don't spin on it
+    if (outcome.status === "retry_wait") {
+      await new Promise((r) => setTimeout(r, outcome.waitMs));
+    }
+    // "advanced", "operation_succeeded", "operation_failed": loop
+    // immediately, no wait - there may be more work ready right now.
+  }
+
+  return new Response(JSON.stringify({ ok: true, log }), { status: 200 });
 });

@@ -15,13 +15,26 @@ reach Guild-A's private LAN at all, and running it alongside the real
 worker caused a real state-corruption bug (see `threat-model.md` finding
 #1). **Do not re-schedule it.**
 
-Driven by a systemd timer, one bounded stage per run:
+Driven by a systemd timer (`guildcloud-worker.timer`, `OnUnitActiveSec=20s`)
+as a crash-resume safety net, but **each run loops internally** through as
+many stages/operations as it can within ~150s rather than doing exactly
+one stage per run — found live that one-stage-per-run meant even no-op
+administrative stages paid the full external tick cadence, so a real
+submission sat idle for over 8 minutes total. The service unit's
+`TimeoutStartSec` was raised from systemd's 90s default to `300` to give
+the loop room to run without being killed mid-provision.
 
 ```bash
 systemctl status guildcloud-worker.timer   # confirm it's active
 systemctl status guildcloud-worker.service # last run's exit status
 journalctl -u guildcloud-worker.service -n 50 --no-pager
 ```
+
+Real measured timing after this fix: the eight administrative/clone/config
+stages complete in ~24.5s total; the dominant remaining cost is real guest
+boot time (`automated_verification` waiting for the QEMU guest agent —
+~2m11s in one observed run), which is a guest-image question, not
+something this worker's timing controls.
 
 Credential: `/etc/guildcloud/worker.env` on the LXC holds
 `SUPABASE_SERVICE_ROLE_KEY` (root-only, `chmod 600`). This is a stated
