@@ -122,6 +122,14 @@ export async function addSshKey(
     p_metadata: { name },
   });
 
+  // Real bug fixed: a newly-added key previously only reached instances
+  // created AFTER this point - cloud-init only injects ssh_keys once, at
+  // creation. Flag existing ready instances for the worker's real
+  // authorized_keys re-sync (processPendingSshKeySyncs).
+  await supabase.rpc("mark_org_instances_ssh_dirty", {
+    p_organization_id: userOrg.organization.id,
+  });
+
   revalidatePath("/console/settings");
   return { error: null };
 }
@@ -139,6 +147,13 @@ export async function removeSshKey(id: string) {
     p_action: "ssh_key.removed",
     p_target_type: "ssh_key",
     p_target_id: id,
+  });
+
+  // Same real-sync fix as addSshKey - a removed key must actually stop
+  // working on already-running instances, not just disappear from this
+  // table (that's the security-relevant half of this fix).
+  await supabase.rpc("mark_org_instances_ssh_dirty", {
+    p_organization_id: userOrg.organization.id,
   });
 
   revalidatePath("/console/settings");

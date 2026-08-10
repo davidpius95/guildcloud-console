@@ -208,6 +208,41 @@ async function ts(token: string, method: string, path: string, body?: unknown) {
   return json;
 }
 
+// Real bug fixed: ssh_keys only ever reached a VM's cloud-init once, at
+// creation - adding or removing an org key later did nothing for
+// already-running instances, including revocation. Writes the org's
+// current full key set directly into the guest's authorized_keys via
+// agent/exec whenever mark_org_instances_ssh_dirty flags an instance
+// dirty. See deploy/site-worker-guild-a/index.js for the real, live copy.
+async function processPendingSshKeySyncs(supabase: ReturnType<typeof createClient>) {
+  const { data: pending, error } = await supabase
+    .from("instances")
+    .select("id, organization_id, proxmox_vmid")
+    .eq("ssh_keys_sync_pending", true)
+    .eq("state", "ready");
+  if (error) {
+    console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs_select", error: error.message }));
+    return;
+  }
+  if (!pending || pending.length === 0) return;
+
+  const token = await proxmoxToken(supabase);
+  for (const inst of pending as { id: string; organization_id: string; proxmox_vmid: number }[]) {
+    try {
+      const { data: keys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
+      const content = (keys ?? []).map((k: { public_key: string }) => k.public_key).join("\n");
+      const script = `mkdir -p /home/guildvm/.ssh && printf '%s\\n' ${JSON.stringify(content)} > /home/guildvm/.ssh/authorized_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
+      const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+        command: ["sh", "-c", script],
+      });
+      await waitForGuestExec(token, inst.proxmox_vmid, exec.pid as number);
+      await supabase.from("instances").update({ ssh_keys_sync_pending: false }).eq("id", inst.id);
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs", instance_id: inst.id, error: String(e) }));
+    }
+  }
+}
+
 // Applies each pending project's real ACL grant directly via the live API
 // (not through the infra/tailscale/policy.hujson GitOps flow - per-project
 // grants can't wait on a human merging a PR at signup time; this is a
@@ -564,6 +599,12 @@ Deno.serve(async () => {
     await processPendingInstanceDeletions(supabase);
   } catch (e) {
     log.push({ ok: false, stage: "process_pending_instance_deletions", error: String(e) });
+  }
+
+  try {
+    await processPendingSshKeySyncs(supabase);
+  } catch (e) {
+    log.push({ ok: false, stage: "process_pending_ssh_key_syncs", error: String(e) });
   }
 
   while (Date.now() < deadline) {

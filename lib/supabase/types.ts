@@ -232,6 +232,7 @@ export type Database = {
           proxmox_node: string | null
           proxmox_vmid: number | null
           site_id: string
+          ssh_keys_sync_pending: boolean
           state: string
           tailscale_device_id: string | null
         }
@@ -249,6 +250,7 @@ export type Database = {
           proxmox_node?: string | null
           proxmox_vmid?: number | null
           site_id: string
+          ssh_keys_sync_pending?: boolean
           state?: string
           tailscale_device_id?: string | null
         }
@@ -266,6 +268,7 @@ export type Database = {
           proxmox_node?: string | null
           proxmox_vmid?: number | null
           site_id?: string
+          ssh_keys_sync_pending?: boolean
           state?: string
           tailscale_device_id?: string | null
         }
@@ -594,6 +597,10 @@ export type Database = {
           p_target_type?: string
         }
         Returns: number
+      }
+      mark_org_instances_ssh_dirty: {
+        Args: { p_organization_id: string }
+        Returns: undefined
       }
       request_instance_deletion: {
         Args: { p_instance_id: string }

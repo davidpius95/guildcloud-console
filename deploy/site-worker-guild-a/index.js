@@ -182,6 +182,46 @@ async function processPendingInstanceDeletions(supabase) {
   }
 }
 
+// Real bug fixed: ssh_keys only ever reached a VM's cloud-init once, at
+// creation (template_cloud_init sets Proxmox's `sshkeys` config param,
+// which only applies at first boot). Adding or removing an org key later
+// did nothing for already-running instances - including revocation, the
+// security-relevant half. This writes the org's current full key set
+// directly into the guest's authorized_keys via agent/exec whenever
+// mark_org_instances_ssh_dirty (called from addSshKey/removeSshKey)
+// flags an instance dirty. An empty key set still overwrites the file to
+// empty - a removed key must actually stop working, not just vanish
+// from the table.
+async function processPendingSshKeySyncs(supabase) {
+  const { data: pending, error } = await supabase
+    .from("instances")
+    .select("id, organization_id, proxmox_vmid")
+    .eq("ssh_keys_sync_pending", true)
+    .eq("state", "ready");
+  if (error) {
+    console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs_select", error: error.message }));
+    return;
+  }
+  if (!pending || pending.length === 0) return;
+
+  const token = await proxmoxToken(supabase);
+  for (const inst of pending) {
+    try {
+      const { data: keys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
+      const content = (keys ?? []).map((k) => k.public_key).join("\n");
+      const script = `mkdir -p /home/guildvm/.ssh && printf '%s\\n' ${JSON.stringify(content)} > /home/guildvm/.ssh/authorized_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
+      const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+        command: ["sh", "-c", script],
+      });
+      await waitForGuestExec(token, inst.proxmox_vmid, exec.pid);
+      await supabase.from("instances").update({ ssh_keys_sync_pending: false }).eq("id", inst.id);
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs", instance_id: inst.id, error: String(e) }));
+      // left pending - next invocation retries
+    }
+  }
+}
+
 async function applyPendingProjectAcls(supabase) {
   const { data: pending } = await supabase.from("projects").select("id, slug").eq("tailscale_acl_state", "pending");
   if (!pending || pending.length === 0) return;
@@ -358,6 +398,12 @@ async function run() {
     await processPendingInstanceDeletions(supabase);
   } catch (e) {
     console.log(JSON.stringify({ ok: false, stage: "process_pending_instance_deletions", error: String(e) }));
+  }
+
+  try {
+    await processPendingSshKeySyncs(supabase);
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, stage: "process_pending_ssh_key_syncs", error: String(e) }));
   }
 
   while (Date.now() < deadline) {
