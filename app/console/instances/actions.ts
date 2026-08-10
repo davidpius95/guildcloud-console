@@ -163,13 +163,21 @@ export async function createInstance(
 // instance always returns null, never the same password twice. The RPC
 // has its own internal Owner/Admin authorization check, so this action
 // doesn't need to re-check membership itself.
-export async function revealInstancePassword(instanceId: string): Promise<string | null> {
+export async function revealInstancePassword(
+  instanceId: string,
+): Promise<{ value: string | null; error: string | null }> {
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("reveal_instance_ssh_password", {
     p_instance_id: instanceId,
   });
-  if (error) return null;
-  return data;
+  // Real bug found live: this used to collapse every RPC error into the
+  // same "already revealed" response as a genuinely empty result -
+  // vault.delete_secret(uuid) didn't exist in this project's Vault
+  // version, so every real reveal attempt silently failed this way and
+  // no one ever actually saw a password. Surface real errors distinctly
+  // now instead of guessing they mean "already consumed."
+  if (error) return { value: null, error: error.message };
+  return { value: data, error: null };
 }
 
 // Marks the instance for teardown and returns immediately - the real work

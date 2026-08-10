@@ -127,7 +127,7 @@ export default async function InstanceDetailPage({
                       label="SSH command"
                       value={`ssh guildvm@${realInstance.private_hostname}`}
                     />
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-4">
                       <CopyField label="Private hostname" value={realInstance.private_hostname} />
                       <CopyField
                         label="Private project IP"
