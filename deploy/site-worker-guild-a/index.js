@@ -319,7 +319,8 @@ async function processOneStage(supabase, operation) {
       const { data: inst } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled").eq("id", operation.instance_id).single();
       const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
       const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
-      const sshkeys = (orgKeys ?? []).map((k) => k.public_key).join("\n");
+      const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
+      const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
       const password = crypto.randomUUID() + crypto.randomUUID();
       if (inst.password_ssh_enabled) {
         await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });

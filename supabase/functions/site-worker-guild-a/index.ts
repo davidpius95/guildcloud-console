@@ -457,7 +457,8 @@ async function processOneStage(
         .from("ssh_keys")
         .select("public_key")
         .eq("organization_id", operation.organization_id);
-      const sshkeys = (orgKeys ?? []).map((k: { public_key: string }) => k.public_key).join("\n");
+      const sshkeysRaw = (orgKeys ?? []).map((k: { public_key: string }) => k.public_key).join("\n");
+      const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
 
       const password = crypto.randomUUID() + crypto.randomUUID();
       if (inst.password_ssh_enabled) {
