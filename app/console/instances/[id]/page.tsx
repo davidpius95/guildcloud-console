@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CopyField } from "@/components/copy-field";
 import { InstanceActions, RecoveryConsoleButton } from "@/components/instance-actions";
+import { DeleteInstanceButton } from "@/components/delete-instance-button";
 import { OperationTimeline } from "@/components/operation-timeline";
 import { OperationProgress } from "@/components/operation-progress";
 import { RevealPasswordButton } from "@/components/reveal-password-button";
@@ -67,16 +68,39 @@ export default async function InstanceDetailPage({
         <PageHeader
           title={realInstance.name}
           description={`${realInstance.site_id} · ${realInstance.catalog_image_id} · ${realInstance.catalog_plan_id}`}
+          action={
+            realInstance.state === "deleting" ? undefined : (
+              <DeleteInstanceButton instanceId={realInstance.id} instanceName={realInstance.name} />
+            )
+          }
         />
 
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          <Badge tone={realInstance.state === "ready" ? "lemon" : realInstance.state === "failed" ? "rose" : "sky"}>
+          <Badge
+            tone={
+              realInstance.state === "ready"
+                ? "lemon"
+                : realInstance.state === "failed" || realInstance.state === "deleting"
+                  ? "rose"
+                  : "sky"
+            }
+          >
             {realInstance.state}
           </Badge>
           {realInstance.proxmox_vmid ? (
             <Badge tone="neutral">Proxmox VMID {realInstance.proxmox_vmid}</Badge>
           ) : null}
         </div>
+
+        {realInstance.state === "deleting" ? (
+          <div className="mb-6">
+            <Note tone="warning">
+              Deletion is in progress — the site worker is tearing down the
+              real Proxmox VM and Tailscale device. This page will 404 once
+              that finishes and the row is removed.
+            </Note>
+          </div>
+        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="min-w-0 space-y-4 lg:col-span-2">
@@ -88,15 +112,49 @@ export default async function InstanceDetailPage({
           </div>
           <div className="space-y-4">
             <Card>
-              <CardHeader title="Connect" subtitle="Available once the instance reaches Ready." />
-              <div className="space-y-3 px-5 py-4">
+              <CardHeader
+                title="Connect"
+                subtitle={
+                  realInstance.private_hostname
+                    ? "Reachable only from your enrolled devices over the private overlay."
+                    : "Private networking enrolls once the instance reaches Ready."
+                }
+              />
+              <div className="space-y-4 px-5 py-4">
+                {realInstance.private_hostname ? (
+                  <>
+                    <CopyField
+                      label="SSH command"
+                      value={`ssh guildvm@${realInstance.private_hostname}`}
+                    />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <CopyField label="Private hostname" value={realInstance.private_hostname} />
+                      <CopyField
+                        label="Private project IP"
+                        value={realInstance.private_ip ? String(realInstance.private_ip) : "—"}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <Note>
+                    <span className="inline-flex items-start gap-2">
+                      <IconLock className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" />
+                      <span>
+                        A private IP and hostname are assigned once this
+                        instance reaches the network step in the progress
+                        timeline — SSH connection details will appear here
+                        automatically.
+                      </span>
+                    </span>
+                  </Note>
+                )}
                 <Note>
                   <span className="inline-flex items-start gap-2">
                     <IconLock className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" />
                     <span>
-                      Private networking and access enrollment are explicitly
-                      out of scope for this provisioning slice — see
-                      docs/phase-2/data-model.md.
+                      There is no public SSH route to this instance. If your
+                      device is not enrolled on the private overlay, the
+                      connection will fail before it reaches the server.
                     </span>
                   </span>
                 </Note>

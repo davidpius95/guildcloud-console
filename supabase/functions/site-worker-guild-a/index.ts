@@ -243,6 +243,61 @@ async function applyPendingProjectAcls(supabase: ReturnType<typeof createClient>
   }
 }
 
+// Real instance deletion, closing a gap flagged repeatedly across
+// docs/phase-2/threat-model.md and docs/phase-3/threat-model.md: there was
+// no way to actually remove the Proxmox VM or the enrolled Tailscale
+// device a real instance leaves behind. `deleteInstance` (the console
+// Server Action) only ever sets `instances.state = 'deleting'` - this is
+// the async worker side that does the real teardown, same
+// pending-row-picked-up-by-the-worker pattern as `applyPendingProjectAcls`.
+// Runs once per invocation, before the stage loop.
+async function processPendingInstanceDeletions(supabase: ReturnType<typeof createClient>) {
+  const { data: pending, error } = await supabase
+    .from("instances")
+    .select("id, proxmox_vmid, tailscale_device_id")
+    .eq("state", "deleting");
+  if (error) {
+    console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions_select", error: error.message }));
+    return;
+  }
+  if (!pending || pending.length === 0) return;
+
+  const token = await proxmoxToken(supabase);
+  const tsToken = await tailscaleAccessToken(supabase);
+
+  for (const inst of pending as { id: string; proxmox_vmid: number | null; tailscale_device_id: string | null }[]) {
+    try {
+      if (inst.proxmox_vmid) {
+        // Stop before delete - Proxmox refuses to destroy a running VM.
+        // Best-effort: a VM that's already stopped 500s harmlessly here.
+        try {
+          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/stop`);
+          await new Promise((r) => setTimeout(r, 3000));
+        } catch (_e) {
+          // already stopped, or stopping - proceed to delete either way
+        }
+        await pve(token, "DELETE", `nodes/${NODE}/qemu/${inst.proxmox_vmid}`);
+      }
+      if (inst.tailscale_device_id) {
+        // Best-effort, not blocking: a device that fails to delete here
+        // is a hygiene gap (an inert, tagged registration), not a live
+        // credential leak - keys are already ephemeral/single-use. Don't
+        // let a Tailscale-side failure leave the Proxmox VM undeleted or
+        // the instance row stuck.
+        try {
+          await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`);
+        } catch (e) {
+          console.log(JSON.stringify({ ok: false, where: "ts_device_delete", instance_id: inst.id, error: String(e) }));
+        }
+      }
+      await supabase.from("instances").delete().eq("id", inst.id);
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions", instance_id: inst.id, error: String(e) }));
+      // left 'deleting' deliberately - next invocation retries
+    }
+  }
+}
+
 async function markStage(
   supabase: ReturnType<typeof createClient>,
   stage: StageRow,
@@ -466,6 +521,15 @@ async function processOneStage(
     } else if (next.stage === "ready") {
       await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
       await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
+      // Real bug found live: this reservation was never released on
+      // success, so it stayed 'held' (and counted against preflight) for
+      // its full 15-minute expiry even though Proxmox's own live memory
+      // stats already reflect the now-real VM's usage - double-counting
+      // the same capacity twice and causing spurious preflight failures
+      // for anything created in that window (see
+      // docs/phase-2/threat-model.md finding #10). The reservation only
+      // needs to cover the window before the VM actually exists.
+      await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       return { status: "operation_succeeded" };
     }
@@ -473,6 +537,12 @@ async function processOneStage(
     return { status: "advanced" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Same reasoning as the 'ready' path: whatever real Proxmox usage
+    // exists from a partially-completed operation is already reflected
+    // in the node's own live memory stats, so this bookkeeping row is
+    // redundant either way - release it rather than let it double-count
+    // capacity for a failed operation too.
+    await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
     await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
     await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
     return { status: "operation_failed" };
@@ -488,6 +558,12 @@ Deno.serve(async () => {
     await applyPendingProjectAcls(supabase);
   } catch (e) {
     log.push({ ok: false, stage: "apply_pending_project_acls", error: String(e) });
+  }
+
+  try {
+    await processPendingInstanceDeletions(supabase);
+  } catch (e) {
+    log.push({ ok: false, stage: "process_pending_instance_deletions", error: String(e) });
   }
 
   while (Date.now() < deadline) {

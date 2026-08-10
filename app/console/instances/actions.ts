@@ -153,3 +153,50 @@ export async function revealInstancePassword(instanceId: string): Promise<string
   if (error) return null;
   return data;
 }
+
+// Marks the instance for teardown and returns immediately - the real work
+// (stopping/destroying the Proxmox VM, deleting the Tailscale device) needs
+// the site worker's own LAN access to Proxmox, which this server action
+// doesn't have, so it can't happen synchronously here. Same deferred-work
+// pattern createInstance already established: this action only ever writes
+// state, processPendingInstanceDeletions() in the site worker does the real
+// teardown and removes the row once it's actually gone.
+export async function deleteInstance(instanceId: string): Promise<{ error: string | null }> {
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return { error: "No organization found." };
+
+  const supabase = await createClient();
+
+  const { data: instance } = await supabase
+    .from("instances")
+    .select("id, name, project_id, state")
+    .eq("id", instanceId)
+    .eq("organization_id", userOrg.organization.id)
+    .maybeSingle();
+  if (!instance) return { error: "Instance not found." };
+  if (instance.state === "deleting") return { error: null };
+
+  // Real bug found live: instances has no UPDATE RLS policy for regular
+  // authenticated users (only SELECT and the site worker's own service-role
+  // policy) - a plain .update() here matched zero rows under RLS and
+  // returned no error, so this button appeared to work while doing
+  // nothing. Fixed via a SECURITY DEFINER RPC that does its own internal
+  // Owner/Admin check instead - see the request_instance_deletion migration.
+  const { error } = await supabase.rpc("request_instance_deletion", {
+    p_instance_id: instanceId,
+  });
+  if (error) return { error: error.message };
+
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: userOrg.organization.id,
+    p_action: "instance.delete_requested",
+    p_project_id: instance.project_id,
+    p_target_type: "instance",
+    p_target_id: instanceId,
+    p_metadata: { name: instance.name },
+  });
+
+  revalidatePath(`/console/instances/${instanceId}`);
+  revalidatePath("/console/instances");
+  return { error: null };
+}

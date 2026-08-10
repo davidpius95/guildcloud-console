@@ -595,6 +595,10 @@ export type Database = {
         }
         Returns: number
       }
+      request_instance_deletion: {
+        Args: { p_instance_id: string }
+        Returns: undefined
+      }
       reveal_instance_ssh_password: {
         Args: { p_instance_id: string }
         Returns: string
