@@ -189,9 +189,20 @@ async function processPendingInstanceDeletions(supabase) {
 // security-relevant half. This writes the org's current full key set
 // directly into the guest's authorized_keys via agent/exec whenever
 // mark_org_instances_ssh_dirty (called from addSshKey/removeSshKey)
-// flags an instance dirty. An empty key set still overwrites the file to
-// empty - a removed key must actually stop working, not just vanish
+// flags an instance dirty. An empty key set still clears the managed
+// block - a removed key must actually stop working, not just vanish
 // from the table.
+//
+// Real bug found live: a naive overwrite of the whole file silently
+// deleted a pre-existing, intentional operator key baked into the
+// template (proxmox-cluster-guild-a) that predates this feature and
+// isn't tracked in ssh_keys at all. Fixed by only ever replacing content
+// between marker comments - anything outside the managed block (an
+// operator's own key, or anything else already there) is preserved
+// byte-for-byte.
+const SSH_SYNC_BEGIN_MARKER = "# BEGIN GUILDCLOUD MANAGED KEYS - do not edit this block by hand, it is overwritten on every sync";
+const SSH_SYNC_END_MARKER = "# END GUILDCLOUD MANAGED KEYS";
+
 async function processPendingSshKeySyncs(supabase) {
   const { data: pending, error } = await supabase
     .from("instances")
@@ -209,7 +220,11 @@ async function processPendingSshKeySyncs(supabase) {
     try {
       const { data: keys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
       const content = (keys ?? []).map((k) => k.public_key).join("\n");
-      const script = `mkdir -p /home/guildvm/.ssh && printf '%s\\n' ${JSON.stringify(content)} > /home/guildvm/.ssh/authorized_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
+      const managedBlock = `${SSH_SYNC_BEGIN_MARKER}\n${content}\n${SSH_SYNC_END_MARKER}`;
+      // Strip any previous managed block (awk, marker-delimited) from
+      // whatever's already there, then append the fresh one - everything
+      // else in the file (an operator's own key, etc.) is untouched.
+      const script = `mkdir -p /home/guildvm/.ssh && touch /home/guildvm/.ssh/authorized_keys && awk '/^${SSH_SYNC_BEGIN_MARKER}$/{skip=1} /^${SSH_SYNC_END_MARKER}$/{skip=0; next} !skip' /home/guildvm/.ssh/authorized_keys > /tmp/gc_preserved_keys && cat /tmp/gc_preserved_keys > /home/guildvm/.ssh/authorized_keys && printf '%s\\n' ${JSON.stringify(managedBlock)} >> /home/guildvm/.ssh/authorized_keys && rm -f /tmp/gc_preserved_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
       const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
         command: ["sh", "-c", script],
       });
