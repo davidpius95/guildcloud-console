@@ -12,6 +12,7 @@ import type { ProtectionTier } from "@/lib/types";
 import { createInstance } from "@/app/console/instances/actions";
 import { Badge, Button, Card, CardHeader, Note, cx } from "./ui";
 import { IconLock, IconShield } from "./icons";
+import { AddSshKeyModal } from "./add-ssh-key-modal";
 
 const protectionOptions: Array<{
   id: ProtectionTier;
@@ -106,6 +107,7 @@ function Option({
 export function CreateInstanceWizard({
   projects,
   sshKeyCount,
+  templateAvailability,
 }: {
   // Real projects (uuid ids) for the signed-in org - createInstance
   // writes project_id into a real uuid column, so this can never be the
@@ -119,6 +121,13 @@ export function CreateInstanceWizard({
   // lets the wizard force the only working access method on instead of
   // creating an unreachable instance.
   sshKeyCount: number;
+  // Real bug found live: image availability was computed from
+  // lib/mock-data.ts's fictional `availableSites` field, which claims
+  // most images are available at Lagos 1 when only ubuntu-2404 actually
+  // has a real Proxmox template anywhere - every other combination would
+  // pass the wizard's own gate and fail server-side. This is the real
+  // catalog_image_site_templates data instead.
+  templateAvailability: { catalogImageId: string; siteId: string }[];
 }) {
   const [siteId, setSiteId] = useState(sites[0].id);
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
@@ -126,7 +135,12 @@ export function CreateInstanceWizard({
   const [planId, setPlanId] = useState("std-2");
   const [protection, setProtection] = useState<ProtectionTier>("standard");
   const [volumeGb, setVolumeGb] = useState(0);
-  const noKeysRegistered = sshKeyCount === 0;
+  // Optimistic local count so adding a key via the inline modal below
+  // unlocks the password-SSH checkbox immediately, without a full page
+  // reload - the server-fetched sshKeyCount prop is just the starting value.
+  const [liveSshKeyCount, setLiveSshKeyCount] = useState(sshKeyCount);
+  const [addKeyModalOpen, setAddKeyModalOpen] = useState(false);
+  const noKeysRegistered = liveSshKeyCount === 0;
   const [passwordSsh, setPasswordSsh] = useState(noKeysRegistered);
   const [name, setName] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -155,11 +169,13 @@ export function CreateInstanceWizard({
     };
   }, [plan, tier, volumeGb]);
 
-  const imageAvailable = image.availableSites.includes(siteId);
+  const imageAvailable = templateAvailability.some(
+    (t) => t.catalogImageId === imageId && t.siteId === siteId,
+  );
   const canCreate = site.acceptingNewWork && imageAvailable && name.trim().length > 0;
   // Only Guild-A (lag-1) + ubuntu-2404 has a real Proxmox template mapped
   // in catalog_image_site_templates today - every other combination stays
-  // the honest mock note below rather than reaching a worker that would
+  // the honest warning note below rather than reaching a worker that would
   // just fail to find a template. See docs/phase-2/data-model.md.
   const isReal = siteId === "lag-1" && imageId === "ubuntu-2404";
 
@@ -222,7 +238,9 @@ export function CreateInstanceWizard({
             {images
               .filter((i) => i.family === "os")
               .map((i) => {
-                const available = i.availableSites.includes(siteId);
+                const available = templateAvailability.some(
+                  (t) => t.catalogImageId === i.id && t.siteId === siteId,
+                );
                 return (
                   <Option
                     key={i.id}
@@ -252,7 +270,9 @@ export function CreateInstanceWizard({
             {images
               .filter((i) => i.family === "solution")
               .map((i) => {
-                const available = i.availableSites.includes(siteId);
+                const available = templateAvailability.some(
+                  (t) => t.catalogImageId === i.id && t.siteId === siteId,
+                );
                 return (
                   <Option
                     key={i.id}
@@ -262,6 +282,11 @@ export function CreateInstanceWizard({
                   >
                     <p className="text-sm font-medium">{i.name}</p>
                     <p className="mt-0.5 text-xs opacity-70">{i.version}</p>
+                    {!available ? (
+                      <p className="mt-1 text-xs text-ink-400">
+                        No tested template at {site.name}
+                      </p>
+                    ) : null}
                   </Option>
                 );
               })}
@@ -395,20 +420,38 @@ export function CreateInstanceWizard({
               </Badge>
             </div>
             {noKeysRegistered ? (
-              <p className="mt-2 text-xs text-ink-500">
-                <Link
-                  href="/console/settings"
-                  target="_blank"
-                  className="font-medium text-lemon-700 underline hover:text-lemon-800"
+              <div className="mt-2">
+                <p className="text-xs text-ink-500">
+                  This instance is already using password SSH below so
+                  you're never locked out, but a key is faster and more
+                  secure — add one now, right here.
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setAddKeyModalOpen(true)}
                 >
-                  Add an SSH key in Settings
-                </Link>{" "}
-                — future instances will pick it up automatically. This one
-                is already using password SSH below so you're never locked
-                out.
-              </p>
-            ) : null}
+                  Add an SSH key
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAddKeyModalOpen(true)}
+                className="mt-2 text-xs font-medium text-lemon-700 underline hover:text-lemon-800"
+              >
+                Add another key
+              </button>
+            )}
           </div>
+
+          <AddSshKeyModal
+            open={addKeyModalOpen}
+            onClose={() => setAddKeyModalOpen(false)}
+            onKeyAdded={() => setLiveSshKeyCount((c) => c + 1)}
+          />
 
           <label
             className={cx(

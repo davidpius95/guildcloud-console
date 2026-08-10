@@ -140,6 +140,20 @@ export async function getMembersForOrg(organizationId: string) {
  * [id]/page.tsx), since mock instances and real ones share the same
  * route/id shape for now.
  */
+// Real bug found live: the create-instance wizard's image-availability
+// check used lib/mock-data.ts's fictional `availableSites` field, which
+// claims Debian/Fedora/Rocky/AlmaLinux/Docker/WordPress are all available
+// at Lagos 1 - none of them have a real Proxmox template mapped anywhere.
+// Only ubuntu-2404/lag-1 does. This is the real source of truth instead.
+export async function getCatalogTemplateAvailability() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("catalog_image_site_templates")
+    .select("catalog_image_id, site_id");
+  if (error) throw error;
+  return (data ?? []).map((row) => ({ catalogImageId: row.catalog_image_id, siteId: row.site_id }));
+}
+
 export async function getInstancesForOrg(organizationId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
