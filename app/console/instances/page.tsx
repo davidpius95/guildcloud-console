@@ -1,10 +1,8 @@
 import Link from "next/link";
 import {
-  Badge,
   Button,
   Card,
   CardHeader,
-  Meter,
   Note,
   PageHeader,
   StatePill,
@@ -13,16 +11,16 @@ import {
   Th,
 } from "@/components/ui";
 import { IconLock, IconPlus } from "@/components/icons";
-import { instances, money, projectName, siteName } from "@/lib/mock-data";
+import { formatDate } from "@/lib/mock-data";
+import { getCurrentUserOrg, getInstancesForOrg } from "@/lib/supabase/queries";
+import type { ResourceState } from "@/lib/types";
 
-const protectionLabel = {
-  standard: "Standard",
-  protected: "Protected",
-  "warm-standby": "Warm Standby",
-} as const;
+const money = (value: number) => `$${value.toFixed(2)}`;
 
-export default function InstancesPage() {
-  const totalMonthly = instances.reduce((sum, i) => sum + i.monthlyMax, 0);
+export default async function InstancesPage() {
+  const userOrg = await getCurrentUserOrg();
+  const instances = userOrg ? await getInstancesForOrg(userOrg.organization.id) : [];
+  const totalMonthly = instances.reduce((sum, i) => sum + (i.plan?.monthly_max ?? 0), 0);
 
   return (
     <>
@@ -50,93 +48,84 @@ export default function InstancesPage() {
 
       <Card>
         <CardHeader
-          title={`${instances.length} instances`}
-          subtitle={`Combined monthly maximum ${money(totalMonthly)} · billed hourly for actual use`}
+          title={`${instances.length} instance${instances.length === 1 ? "" : "s"}`}
+          subtitle={
+            instances.length
+              ? `Combined monthly maximum ${money(totalMonthly)} · billed hourly for actual use`
+              : undefined
+          }
         />
-        <Table>
-          <thead>
-            <tr>
-              <Th>Name</Th>
-              <Th>State</Th>
-              <Th>Plan</Th>
-              <Th>Image</Th>
-              <Th>Site</Th>
-              <Th>Private hostname</Th>
-              <Th>Protection</Th>
-              <Th className="text-right">Monthly max</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {instances.map((i) => (
-              <tr key={i.id} className="transition-colors hover:bg-ink-50">
-                <Td>
-                  <Link
-                    href={`/console/instances/${i.id}`}
-                    className="font-medium text-ink-900 hover:text-lemon-700 hover:underline"
-                  >
-                    {i.name}
-                  </Link>
-                  <p className="text-xs text-ink-400">{projectName(i.projectId)}</p>
-                </Td>
-                <Td>
-                  <StatePill state={i.state} />
-                </Td>
-                <Td>
-                  <span className="whitespace-nowrap">{i.plan}</span>
-                  <p className="text-xs text-ink-400">
-                    {i.vcpu} vCPU · {i.memoryGb} GB · {i.diskGb} GB
-                  </p>
-                </Td>
-                <Td className="whitespace-nowrap text-ink-500">{i.image}</Td>
-                <Td className="whitespace-nowrap text-ink-500">
-                  {siteName(i.siteId)}
-                </Td>
-                <Td>
-                  <span className="font-mono text-xs text-ink-600">
-                    {i.privateHostname}
-                  </span>
-                  <p className="font-mono text-xs text-ink-400">{i.privateIp}</p>
-                </Td>
-                <Td>
-                  <Badge tone={i.protection === "standard" ? "neutral" : "lemon"}>
-                    {protectionLabel[i.protection]}
-                  </Badge>
-                </Td>
-                <Td className="text-right tabular-nums font-medium">
-                  {money(i.monthlyMax)}
-                </Td>
+        {instances.length === 0 ? (
+          <div className="px-5 py-10 text-center">
+            <p className="text-sm text-ink-500">No instances yet.</p>
+            <p className="mt-1 text-xs text-ink-400">
+              Create one to get a real Proxmox VM with a private IP and
+              hostname enrolled over Tailscale.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Name</Th>
+                <Th>State</Th>
+                <Th>Plan</Th>
+                <Th>Image</Th>
+                <Th>Site</Th>
+                <Th>Private hostname</Th>
+                <Th>Created</Th>
+                <Th className="text-right">Monthly max</Th>
               </tr>
-            ))}
-          </tbody>
-        </Table>
+            </thead>
+            <tbody>
+              {instances.map((i) => (
+                <tr key={i.id} className="transition-colors hover:bg-ink-50">
+                  <Td>
+                    <Link
+                      href={`/console/instances/${i.id}`}
+                      className="font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                    >
+                      {i.name}
+                    </Link>
+                    <p className="text-xs text-ink-400">{i.projectName}</p>
+                  </Td>
+                  <Td>
+                    <StatePill state={i.state as ResourceState} />
+                  </Td>
+                  <Td>
+                    <span className="whitespace-nowrap">{i.plan?.name ?? "—"}</span>
+                    {i.plan ? (
+                      <p className="text-xs text-ink-400">
+                        {i.plan.vcpu} vCPU · {i.plan.memory_gb} GB · {i.plan.disk_gb} GB
+                      </p>
+                    ) : null}
+                  </Td>
+                  <Td className="whitespace-nowrap text-ink-500">{i.imageLabel}</Td>
+                  <Td className="whitespace-nowrap text-ink-500">{i.siteId}</Td>
+                  <Td>
+                    {i.privateHostname ? (
+                      <>
+                        <span className="font-mono text-xs text-ink-600">
+                          {i.privateHostname}
+                        </span>
+                        <p className="font-mono text-xs text-ink-400">{i.privateIp ?? "—"}</p>
+                      </>
+                    ) : (
+                      <span className="text-xs text-ink-400">Assigning…</span>
+                    )}
+                  </Td>
+                  <Td className="whitespace-nowrap text-ink-500">{formatDate(i.createdAt)}</Td>
+                  <Td className="text-right tabular-nums font-medium">
+                    {i.plan ? money(i.plan.monthly_max) : "—"}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
       </Card>
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="Resource pressure" subtitle="Live utilisation for running instances." />
-          <div className="space-y-4 px-5 py-4">
-            {instances
-              .filter((i) => i.state === "ready" || i.state === "degraded")
-              .map((i) => (
-                <div key={i.id}>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="text-sm font-medium text-ink-800">
-                      {i.name}
-                    </span>
-                    <span className="text-xs text-ink-400">
-                      CPU {i.cpuPct}% · MEM {i.memoryPct}% · DISK {i.diskPct}%
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Meter value={i.cpuPct} />
-                    <Meter value={i.memoryPct} />
-                    <Meter value={i.diskPct} />
-                  </div>
-                </div>
-              ))}
-          </div>
-        </Card>
-
+      <div className="mt-6">
         <Card>
           <CardHeader title="Lifecycle boundaries" subtitle="What the MVP does and does not promise." />
           <div className="divide-y divide-ink-100 text-sm">
@@ -144,8 +133,8 @@ export default function InstancesPage() {
               ["CPU and memory resize", "Up or down, with restart or migration warnings before you confirm."],
               ["Disk expansion", "Supported. Disk shrinking is not offered in the MVP."],
               ["Snapshots and restore", "Restores never silently overwrite a live workload."],
-              ["Deletion", "A documented recovery window applies before permanent deletion."],
-              ["Password SSH", "Opt-in, private route only, never stored by GuildCloud, rate-limited and audited."],
+              ["Deletion", "Stops and permanently destroys the underlying server — see the Delete button on each instance's page."],
+              ["Password SSH", "Opt-in, private route only, revealed once and never stored long-term, rate-limited and audited."],
             ].map(([title, detail]) => (
               <div key={title} className="px-5 py-3">
                 <p className="font-medium text-ink-900">{title}</p>

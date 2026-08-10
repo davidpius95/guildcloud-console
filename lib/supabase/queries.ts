@@ -140,6 +140,51 @@ export async function getMembersForOrg(organizationId: string) {
  * [id]/page.tsx), since mock instances and real ones share the same
  * route/id shape for now.
  */
+export async function getInstancesForOrg(organizationId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("instances")
+    .select(
+      "id, name, state, site_id, private_ip, private_hostname, created_at, projects(name), catalog_images(name, version), catalog_plans(name, vcpu, memory_gb, disk_gb, hourly_price, monthly_max)",
+    )
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+
+  type Row = {
+    id: string;
+    name: string;
+    state: string;
+    site_id: string;
+    private_ip: unknown;
+    private_hostname: string | null;
+    created_at: string;
+    projects: { name: string } | null;
+    catalog_images: { name: string; version: string } | null;
+    catalog_plans: {
+      name: string;
+      vcpu: number;
+      memory_gb: number;
+      disk_gb: number;
+      hourly_price: number;
+      monthly_max: number;
+    } | null;
+  };
+
+  return ((data ?? []) as unknown as Row[]).map((row) => ({
+    id: row.id,
+    name: row.name,
+    state: row.state,
+    siteId: row.site_id,
+    privateIp: row.private_ip ? String(row.private_ip) : null,
+    privateHostname: row.private_hostname,
+    createdAt: row.created_at,
+    projectName: row.projects?.name ?? "—",
+    imageLabel: row.catalog_images ? `${row.catalog_images.name} ${row.catalog_images.version}` : "—",
+    plan: row.catalog_plans,
+  }));
+}
+
 export async function getInstanceWithOperation(instanceId: string) {
   const supabase = await createClient();
   const { data: instance } = await supabase
