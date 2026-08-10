@@ -25,6 +25,26 @@ CREATE POLICY "Users can view snapshots in their org"
     )
   );
 
+-- Insert policy: Org members can create snapshots in their org
+CREATE POLICY "Users can insert snapshots in their org"
+  ON public.instance_snapshots
+  FOR INSERT
+  WITH CHECK (
+    organization_id IN (
+      SELECT organization_id FROM public.memberships WHERE user_id = auth.uid()
+    )
+  );
+
+-- Update policy: Org members can update snapshots in their org
+CREATE POLICY "Users can update snapshots in their org"
+  ON public.instance_snapshots
+  FOR UPDATE
+  USING (
+    organization_id IN (
+      SELECT organization_id FROM public.memberships WHERE user_id = auth.uid()
+    )
+  );
+
 -- Delete policy: Org members can delete snapshots in their org
 CREATE POLICY "Users can delete snapshots in their org"
   ON public.instance_snapshots
