@@ -474,7 +474,7 @@ async function run() {
   while (Date.now() < deadline) {
     const { data: ops } = await supabase
       .from("operations")
-      .select("id, organization_id, instance_id, site_id")
+      .select("id, organization_id, instance_id, site_id, kind, stages")
       .eq("site_id", "lag-1")
       .in("state", ["pending", "running"])
       .order("started_at", { ascending: true })
