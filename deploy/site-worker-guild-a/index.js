@@ -20,6 +20,9 @@
 // Phase 3: real per-instance Tailscale private access. This host itself
 // must be tailnet-joined (tag:guildcloud-mgmt) for the real reachability
 // check in automated_verification to work.
+//
+// Self-deploy mechanism verified live 2026-08-10: this exact comment
+// block was added, pushed, and picked up by the timer unattended.
 
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
