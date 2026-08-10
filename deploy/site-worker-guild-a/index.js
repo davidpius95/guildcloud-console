@@ -308,65 +308,108 @@ async function processOneStage(supabase, operation) {
     } else if (next.stage === "operation_created" || next.stage === "site_worker_dispatch") {
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
     } else if (next.stage === "proxmox_api_call") {
-      const { data: inst } = await supabase.from("instances").select("id, name, catalog_image_id").eq("id", operation.instance_id).single();
-      const { data: t } = await supabase.from("catalog_image_site_templates").select("proxmox_vmid, proxmox_node, proxmox_storage").eq("catalog_image_id", inst.catalog_image_id).eq("site_id", "lag-1").single();
-      const newid = 100000 + Math.floor(Math.random() * 800000);
-      const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, { newid, name: inst.name, pool: "guildcloud-guild-a", full: 0 });
-      await waitForTask(token, upid);
-      await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: NODE }).eq("id", inst.id);
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
+      const { data: inst } = await supabase.from("instances").select("id, name, catalog_image_id, proxmox_vmid").eq("id", operation.instance_id).single();
+      
+      if (operation.kind === "instance.resize") {
+        const targetPlanId = operation.stages?.target_plan_id;
+        const { data: plan } = await supabase.from("catalog_plans").select("id, vcpu, memory_gb").eq("id", targetPlanId).single();
+        if (plan && inst.proxmox_vmid) {
+          await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, { cores: plan.vcpu, memory: plan.memory_gb * 1024 });
+          await supabase.from("instances").update({ catalog_plan_id: plan.id }).eq("id", inst.id);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { resized_to: targetPlanId } });
+      } else if (operation.kind === "instance.snapshot") {
+        const snapname = operation.stages?.proxmox_snapname;
+        if (snapname && inst.proxmox_vmid) {
+          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/snapshot`, { snapname, description: "GuildCloud snapshot" });
+          await supabase.from("instance_snapshots").update({ state: "ready" }).eq("proxmox_snapname", snapname);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { snapname } });
+      } else if (operation.kind === "instance.restore_replace") {
+        const snapname = operation.stages?.proxmox_snapname;
+        if (snapname && inst.proxmox_vmid) {
+          const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/snapshot/${snapname}/rollback`);
+          await waitForTask(token, upid);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { restored_from: snapname } });
+      } else {
+        const { data: t } = await supabase.from("catalog_image_site_templates").select("proxmox_vmid, proxmox_node, proxmox_storage").eq("catalog_image_id", inst.catalog_image_id).eq("site_id", "lag-1").single();
+        const newid = 100000 + Math.floor(Math.random() * 800000);
+        const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, { newid, name: inst.name, pool: "guildcloud-guild-a", full: 0 });
+        await waitForTask(token, upid);
+        await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: NODE }).eq("id", inst.id);
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
+      }
     } else if (next.stage === "template_cloud_init") {
       const { data: inst } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled").eq("id", operation.instance_id).single();
-      const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
-      const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
-      const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
-      const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
-      const password = crypto.randomUUID() + crypto.randomUUID();
-      if (inst.password_ssh_enabled) {
-        await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });
+
+      if (operation.kind === "instance.resize" || operation.kind === "instance.restore_replace") {
+        try {
+          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/reboot`);
+          await waitForTask(token, startUpid);
+        } catch {
+          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+          await waitForTask(token, startUpid);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else if (operation.kind === "instance.snapshot") {
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else {
+        const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
+        const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
+        const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
+        const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
+        const password = crypto.randomUUID() + crypto.randomUUID();
+        if (inst.password_ssh_enabled) {
+          await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });
+        }
+        await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, { cores: plan.vcpu, memory: plan.memory_gb * 1024, ...(sshkeys ? { sshkeys } : {}), cipassword: password });
+        const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+        await waitForTask(token, startUpid);
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       }
-      await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, { cores: plan.vcpu, memory: plan.memory_gb * 1024, ...(sshkeys ? { sshkeys } : {}), cipassword: password });
-      const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
-      await waitForTask(token, startUpid);
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
     } else if (next.stage === "network_access_attach") {
-      const { data: inst } = await supabase.from("instances").select("id, project_id, proxmox_vmid").eq("id", operation.instance_id).single();
-      const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
+      const { data: inst } = await supabase.from("instances").select("id, project_id, proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
 
-      if (project.tailscale_acl_state !== "applied") {
-        await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
+      if (operation.kind !== "instance.create" && inst.private_ip) {
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: inst.private_ip } });
+      } else {
+        const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
 
-      try {
-        await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
-      } catch (e) {
-        await markStage(supabase, next, { status: "active", error: String(e) });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
+        if (project.tailscale_acl_state !== "applied") {
+          await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
 
-      const tsToken = await tailscaleAccessToken(supabase);
-      const hostname = `instance-${inst.id.slice(0, 8)}`;
-      const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
-        capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
-        expirySeconds: 600,
-      });
+        try {
+          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
+        } catch (e) {
+          await markStage(supabase, next, { status: "active", error: String(e) });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
 
-      const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-        command: ["sh", "-c", `systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
-      });
-      await waitForGuestExec(token, inst.proxmox_vmid, exec.pid);
+        const tsToken = await tailscaleAccessToken(supabase);
+        const hostname = `instance-${inst.id.slice(0, 8)}`;
+        const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+          capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
+          expirySeconds: 600,
+        });
 
-      const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
-      const device = (devices.devices ?? []).find((d) => d.hostname === hostname);
-      if (!device) {
-        await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_device_registration" } });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
+        const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+          command: ["sh", "-c", `systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+        });
+        await waitForGuestExec(token, inst.proxmox_vmid, exec.pid);
 
-      await supabase.from("instances").update({ private_ip: device.addresses[0], private_hostname: device.name, tailscale_device_id: device.id }).eq("id", inst.id);
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
-    } else if (next.stage === "backup_monitoring_attach") {
+        const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+        const device = (devices.devices ?? []).find((d) => d.hostname === hostname);
+        if (!device) {
+          await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_device_registration" } });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
+
+        await supabase.from("instances").update({ private_ip: device.addresses[0], private_hostname: device.name, tailscale_device_id: device.id }).eq("id", inst.id);
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
+      } else if (next.stage === "backup_monitoring_attach") {
       await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
     } else if (next.stage === "automated_verification") {
       const { data: instance } = await supabase.from("instances").select("proxmox_vmid, private_ip").eq("id", operation.instance_id).single();

@@ -421,62 +421,87 @@ async function processOneStage(
     } else if (next.stage === "proxmox_api_call") {
       const { data: instance } = await supabase.from("instances").select("id, name, catalog_image_id").eq("id", operation.instance_id).single();
       const inst = instance as InstanceRow;
-      const { data: tmpl } = await supabase
-        .from("catalog_image_site_templates")
-        .select("proxmox_vmid, proxmox_node, proxmox_storage")
-        .eq("catalog_image_id", inst.catalog_image_id)
-        .eq("site_id", "lag-1")
-        .single();
-      const t = tmpl as { proxmox_vmid: number; proxmox_node: string; proxmox_storage: string };
-      const newid = 100000 + Math.floor(Math.random() * 800000); // scratch range, well clear of real guest ids
-      // full: 0 (linked clone) instead of a full byte-copy - ceph-vm is RBD,
-      // which supports true copy-on-write cloning, so this is what actually
-      // makes the clone step fast. Trade-off: the source template can't be
-      // deleted/rebased while any linked clone exists - a normal, accepted
-      // constraint for a stable base template.
-      const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, {
-        newid,
-        name: inst.name,
-        pool: "guildcloud-guild-a",
-        full: 0,
-      });
-      await waitForTask(token, upid as unknown as string);
-      await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: NODE }).eq("id", inst.id);
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
+      if (operation.kind === "instance.resize") {
+        const targetPlanId = (operation.stages as Record<string, unknown> | null)?.target_plan_id as string;
+        const { data: plan } = await supabase.from("catalog_plans").select("id, vcpu, memory_gb").eq("id", targetPlanId).single();
+        const p = plan as { id: string; vcpu: number; memory_gb: number } | null;
+        if (p && inst.proxmox_vmid) {
+          await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, { cores: p.vcpu, memory: p.memory_gb * 1024 });
+          await supabase.from("instances").update({ catalog_plan_id: p.id }).eq("id", inst.id);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { resized_to: targetPlanId } });
+      } else if (operation.kind === "instance.snapshot") {
+        const snapname = (operation.stages as Record<string, unknown> | null)?.proxmox_snapname as string;
+        if (snapname && inst.proxmox_vmid) {
+          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/snapshot`, { snapname, description: "GuildCloud snapshot" });
+          await supabase.from("instance_snapshots").update({ state: "ready" }).eq("proxmox_snapname", snapname);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { snapname } });
+      } else if (operation.kind === "instance.restore_replace") {
+        const snapname = (operation.stages as Record<string, unknown> | null)?.proxmox_snapname as string;
+        if (snapname && inst.proxmox_vmid) {
+          const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/snapshot/${snapname}/rollback`);
+          await waitForTask(token, upid as unknown as string);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { restored_from: snapname } });
+      } else {
+        const { data: tmpl } = await supabase.from("catalog_image_site_templates").select("proxmox_vmid, proxmox_node, proxmox_storage").eq("catalog_image_id", inst.catalog_image_id).eq("site_id", "lag-1").single();
+        const t = tmpl as { proxmox_vmid: number; proxmox_node: string; proxmox_storage: string };
+        const newid = 100000 + Math.floor(Math.random() * 800000);
+        const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, {
+          newid,
+          name: inst.name,
+          pool: "guildcloud-guild-a",
+          full: 0,
+        });
+        await waitForTask(token, upid as unknown as string);
+        await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: NODE }).eq("id", inst.id);
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
+      }
     } else if (next.stage === "template_cloud_init") {
       const { data: instance } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled").eq("id", operation.instance_id).single();
       const inst = instance as { id: string; catalog_plan_id: string; proxmox_vmid: number; password_ssh_enabled: boolean };
-      const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
-      const p = plan as { vcpu: number; memory_gb: number };
 
-      // Override the template's own baked-in cloud-init identity before
-      // first boot - without this, every clone silently inherits the
-      // template's one shared sshkeys/cipassword (see
-      // docs/phase-2/threat-model.md finding #7).
-      const { data: orgKeys } = await supabase
-        .from("ssh_keys")
-        .select("public_key")
-        .eq("organization_id", operation.organization_id);
-      const sshkeysRaw = (orgKeys ?? []).map((k: { public_key: string }) => k.public_key).join("\n");
-      const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
+      if (operation.kind === "instance.resize" || operation.kind === "instance.restore_replace") {
+        try {
+          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/reboot`);
+          await waitForTask(token, startUpid as unknown as string);
+        } catch {
+          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+          await waitForTask(token, startUpid as unknown as string);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else if (operation.kind === "instance.snapshot") {
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else {
+        const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
+        const p = plan as { vcpu: number; memory_gb: number };
 
-      const password = crypto.randomUUID() + crypto.randomUUID();
-      if (inst.password_ssh_enabled) {
-        await supabase.rpc("set_vault_secret", {
-          p_secret_name: `instance_ssh_password_${inst.id}`,
-          p_secret_value: password,
+        const { data: orgKeys } = await supabase
+          .from("ssh_keys")
+          .select("public_key")
+          .eq("organization_id", operation.organization_id);
+        const sshkeysRaw = (orgKeys ?? []).map((k: { public_key: string }) => k.public_key).join("\n");
+        const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
+
+        const password = crypto.randomUUID() + crypto.randomUUID();
+        if (inst.password_ssh_enabled) {
+          await supabase.rpc("set_vault_secret", {
+            p_secret_name: `instance_ssh_password_${inst.id}`,
+            p_secret_value: password,
+          });
+        }
+
+        await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, {
+          cores: p.vcpu,
+          memory: p.memory_gb * 1024,
+          ...(sshkeys ? { sshkeys } : {}),
+          cipassword: password,
         });
+        const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+        await waitForTask(token, startUpid as unknown as string);
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       }
-
-      await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, {
-        cores: p.vcpu,
-        memory: p.memory_gb * 1024,
-        ...(sshkeys ? { sshkeys } : {}),
-        cipassword: password,
-      });
-      const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
-      await waitForTask(token, startUpid as unknown as string);
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
     } else if (next.stage === "network_access_attach") {
       // Phase 3: real Tailscale enrollment. Never a shared/reusable key -
       // see docs/phase-3/threat-model.md for why the old cicustom-baked

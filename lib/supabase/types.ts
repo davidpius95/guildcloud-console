@@ -544,6 +544,64 @@ export type Database = {
           },
         ]
       }
+      instance_snapshots: {
+        Row: {
+          created_at: string
+          id: string
+          instance_id: string
+          name: string
+          organization_id: string
+          project_id: string
+          proxmox_snapname: string
+          size_bytes: number | null
+          state: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instance_id: string
+          name: string
+          organization_id: string
+          project_id: string
+          proxmox_snapname: string
+          size_bytes?: number | null
+          state?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instance_id?: string
+          name?: string
+          organization_id?: string
+          project_id?: string
+          proxmox_snapname?: string
+          size_bytes?: number | null
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instance_snapshots_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "instances"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instance_snapshots_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instance_snapshots_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ssh_keys: {
         Row: {
           created_at: string

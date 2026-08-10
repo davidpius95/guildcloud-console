@@ -6,7 +6,7 @@ import { DeleteInstanceButton } from "@/components/delete-instance-button";
 import { OperationTimeline } from "@/components/operation-timeline";
 import { OperationProgress } from "@/components/operation-progress";
 import { RevealPasswordButton } from "@/components/reveal-password-button";
-import { getInstanceWithOperation } from "@/lib/supabase/queries";
+import { getInstanceWithOperation, getCatalogPlans } from "@/lib/supabase/queries";
 import {
   Badge,
   Button,
@@ -54,7 +54,20 @@ export default async function InstanceDetailPage({
   // every id that came from mock-data.
   const real = await getInstanceWithOperation(id);
   if (real) {
-    const { instance: realInstance, operation, stages } = real;
+    const { instance: realInstance, operation, stages, snapshots } = real;
+    const availablePlans = await getCatalogPlans();
+
+    const plan = realInstance.catalog_plans as unknown as {
+      name: string;
+      vcpu: number;
+      memory_gb: number;
+      disk_gb: number;
+      hourly_price: number;
+      monthly_max: number;
+    } | null;
+
+    const project = realInstance.projects as unknown as { name: string } | null;
+
     return (
       <>
         <nav className="mb-4 text-xs text-ink-400">
@@ -67,10 +80,21 @@ export default async function InstanceDetailPage({
 
         <PageHeader
           title={realInstance.name}
-          description={`${realInstance.site_id} · ${realInstance.catalog_image_id} · ${realInstance.catalog_plan_id}`}
+          description={`${project?.name ?? realInstance.site_id} · ${realInstance.site_id} · ${plan ? plan.name : realInstance.catalog_plan_id}`}
           action={
             realInstance.state === "deleting" ? undefined : (
-              <DeleteInstanceButton instanceId={realInstance.id} instanceName={realInstance.name} />
+              <InstanceActions
+                instance={{
+                  id: realInstance.id,
+                  name: realInstance.name,
+                  state: realInstance.state,
+                  catalog_plan_id: realInstance.catalog_plan_id,
+                  diskGb: plan?.disk_gb ?? 40,
+                }}
+                availablePlans={availablePlans}
+                snapshots={snapshots}
+                isReal={true}
+              />
             )
           }
         />
@@ -87,6 +111,11 @@ export default async function InstanceDetailPage({
           >
             {realInstance.state}
           </Badge>
+          {plan ? (
+            <Badge tone="sky">
+              {plan.name} ({plan.vcpu} vCPU · {plan.memory_gb} GB RAM)
+            </Badge>
+          ) : null}
           {realInstance.proxmox_vmid ? (
             <Badge tone="neutral">Proxmox VMID {realInstance.proxmox_vmid}</Badge>
           ) : null}
@@ -109,6 +138,39 @@ export default async function InstanceDetailPage({
             ) : (
               <Note tone="warning">No operation found for this instance yet.</Note>
             )}
+
+            {snapshots && snapshots.length > 0 ? (
+              <Card>
+                <CardHeader
+                  title="Snapshots & Recovery Points"
+                  subtitle={`${snapshots.length} point-in-time recovery point${snapshots.length === 1 ? "" : "s"} available.`}
+                />
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Name</Th>
+                      <Th>Proxmox ID</Th>
+                      <Th>Status</Th>
+                      <Th className="text-right">Created</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snapshots.map((s) => (
+                      <tr key={s.id}>
+                        <Td className="font-medium text-ink-900">{s.name}</Td>
+                        <Td className="font-mono text-xs text-ink-600">{s.proxmox_snapname}</Td>
+                        <Td>
+                          <Badge tone={s.state === "ready" ? "lemon" : "sky"}>{s.state}</Badge>
+                        </Td>
+                        <Td className="text-right text-xs text-ink-500">
+                          {new Date(s.created_at).toLocaleString()}
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </Card>
+            ) : null}
           </div>
           <div className="space-y-4">
             <Card>
@@ -183,6 +245,34 @@ export default async function InstanceDetailPage({
                 ) : null}
               </div>
             </Card>
+
+            {plan ? (
+              <Card>
+                <CardHeader title="Plan Specs & Pricing" />
+                <div className="space-y-3 px-5 py-4 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-ink-500">Plan</span>
+                    <span className="font-medium">{plan.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-ink-500">vCPU</span>
+                    <span className="font-medium tabular-nums">{plan.vcpu} core{plan.vcpu > 1 ? "s" : ""}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-ink-500">Memory</span>
+                    <span className="font-medium tabular-nums">{plan.memory_gb} GB</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-ink-500">Disk</span>
+                    <span className="font-medium tabular-nums">{plan.disk_gb} GB</span>
+                  </div>
+                  <div className="flex justify-between border-t border-ink-100 pt-2">
+                    <span className="text-ink-500">Monthly Maximum</span>
+                    <span className="font-medium tabular-nums">${Number(plan.monthly_max).toFixed(2)}</span>
+                  </div>
+                </div>
+              </Card>
+            ) : null}
           </div>
         </div>
       </>

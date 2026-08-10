@@ -199,11 +199,32 @@ export async function getInstancesForOrg(organizationId: string) {
   }));
 }
 
+export async function getCatalogPlans() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("catalog_plans")
+    .select("*")
+    .order("vcpu", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getSnapshotsForInstance(instanceId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("instance_snapshots")
+    .select("*")
+    .eq("instance_id", instanceId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function getInstanceWithOperation(instanceId: string) {
   const supabase = await createClient();
   const { data: instance } = await supabase
     .from("instances")
-    .select("*")
+    .select("*, catalog_plans(*), catalog_images(*), projects(name)")
     .eq("id", instanceId)
     .maybeSingle();
   if (!instance) return null;
@@ -223,7 +244,9 @@ export async function getInstanceWithOperation(instanceId: string) {
         .eq("operation_id", operation.id)
     : { data: [] };
 
-  return { instance, operation, stages: stages ?? [] };
+  const snapshots = await getSnapshotsForInstance(instanceId);
+
+  return { instance, operation, stages: stages ?? [], snapshots };
 }
 
 export async function getSshKeysForOrg(organizationId: string) {

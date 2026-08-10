@@ -226,3 +226,287 @@ export async function deleteInstance(instanceId: string): Promise<{ error: strin
   revalidatePath("/console/instances");
   return { error: null };
 }
+
+export async function resizeInstance(
+  instanceId: string,
+  newPlanId: string,
+): Promise<{ error: string | null }> {
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return { error: "No organization found." };
+
+  const supabase = await createClient();
+
+  const { data: instance } = await supabase
+    .from("instances")
+    .select("id, name, project_id, site_id, state, catalog_plan_id")
+    .eq("id", instanceId)
+    .eq("organization_id", userOrg.organization.id)
+    .maybeSingle();
+
+  if (!instance) return { error: "Instance not found." };
+  if (instance.state !== "ready") {
+    return { error: "Instance must be in Ready state to resize." };
+  }
+  if (instance.catalog_plan_id === newPlanId) {
+    return { error: "Target plan is the same as current plan." };
+  }
+
+  const { data: plan } = await supabase
+    .from("catalog_plans")
+    .select("id, name")
+    .eq("id", newPlanId)
+    .maybeSingle();
+  if (!plan) return { error: "Invalid target plan selected." };
+
+  const operationId = crypto.randomUUID();
+
+  await supabase
+    .from("instances")
+    .update({ state: "resizing" })
+    .eq("id", instanceId);
+
+  const { error: opError } = await supabase.from("operations").insert({
+    id: operationId,
+    organization_id: userOrg.organization.id,
+    project_id: instance.project_id,
+    instance_id: instanceId,
+    site_id: instance.site_id,
+    kind: "instance.resize",
+    resource_name: instance.name,
+    state: "pending",
+    idempotency_key: crypto.randomUUID(),
+    stages: { target_plan_id: newPlanId },
+  });
+  if (opError) {
+    await supabase
+      .from("instances")
+      .update({ state: "ready" })
+      .eq("id", instanceId);
+    return { error: opError.message };
+  }
+
+  const { error: stagesError } = await supabase
+    .from("operation_stages")
+    .insert(
+      OPERATION_STAGES.map((stage) => ({
+        operation_id: operationId,
+        stage,
+      })),
+    );
+  if (stagesError) {
+    await supabase.from("operations").delete().eq("id", operationId);
+    await supabase
+      .from("instances")
+      .update({ state: "ready" })
+      .eq("id", instanceId);
+    return { error: stagesError.message };
+  }
+
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: userOrg.organization.id,
+    p_action: "instance.resize_requested",
+    p_project_id: instance.project_id,
+    p_target_type: "instance",
+    p_target_id: instanceId,
+    p_metadata: {
+      name: instance.name,
+      old_plan: instance.catalog_plan_id,
+      new_plan: newPlanId,
+    },
+  });
+
+  revalidatePath(`/console/instances/${instanceId}`);
+  revalidatePath("/console/instances");
+  return { error: null };
+}
+
+export async function createInstanceSnapshot(
+  instanceId: string,
+  snapshotName: string,
+): Promise<{ error: string | null }> {
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return { error: "No organization found." };
+
+  const name = snapshotName.trim();
+  if (!name) return { error: "Snapshot name is required." };
+
+  const supabase = await createClient();
+
+  const { data: instance } = await supabase
+    .from("instances")
+    .select("id, name, project_id, site_id, state")
+    .eq("id", instanceId)
+    .eq("organization_id", userOrg.organization.id)
+    .maybeSingle();
+
+  if (!instance) return { error: "Instance not found." };
+  if (instance.state !== "ready") {
+    return { error: "Instance must be in Ready state to snapshot." };
+  }
+
+  const snapname = `snap-${Date.now().toString(36)}`;
+  const snapshotId = crypto.randomUUID();
+  const operationId = crypto.randomUUID();
+
+  const { error: snapError } = await supabase.from("instance_snapshots").insert({
+    id: snapshotId,
+    organization_id: userOrg.organization.id,
+    project_id: instance.project_id,
+    instance_id: instanceId,
+    name,
+    proxmox_snapname: snapname,
+    state: "creating",
+  });
+  if (snapError) return { error: snapError.message };
+
+  const { error: opError } = await supabase.from("operations").insert({
+    id: operationId,
+    organization_id: userOrg.organization.id,
+    project_id: instance.project_id,
+    instance_id: instanceId,
+    site_id: instance.site_id,
+    kind: "instance.snapshot",
+    resource_name: `${instance.name}/${name}`,
+    state: "pending",
+    idempotency_key: crypto.randomUUID(),
+    stages: { snapshot_id: snapshotId, proxmox_snapname: snapname },
+  });
+  if (opError) {
+    await supabase.from("instance_snapshots").delete().eq("id", snapshotId);
+    return { error: opError.message };
+  }
+
+  await supabase.from("operation_stages").insert(
+    OPERATION_STAGES.map((stage) => ({
+      operation_id: operationId,
+      stage,
+    })),
+  );
+
+  await supabase.rpc("log_audit_event", {
+    p_organization_id: userOrg.organization.id,
+    p_action: "instance.snapshot_requested",
+    p_project_id: instance.project_id,
+    p_target_type: "instance",
+    p_target_id: instanceId,
+    p_metadata: { name: instance.name, snapshot_name: name },
+  });
+
+  revalidatePath(`/console/instances/${instanceId}`);
+  return { error: null };
+}
+
+export async function restoreInstance(
+  instanceId: string,
+  mode: "new" | "replace",
+  snapshotId?: string,
+): Promise<{ error: string | null }> {
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return { error: "No organization found." };
+
+  const supabase = await createClient();
+
+  const { data: instance } = await supabase
+    .from("instances")
+    .select("id, name, project_id, site_id, state")
+    .eq("id", instanceId)
+    .eq("organization_id", userOrg.organization.id)
+    .maybeSingle();
+
+  if (!instance) return { error: "Instance not found." };
+
+  const operationId = crypto.randomUUID();
+
+  if (mode === "replace") {
+    let snapname = "";
+    if (snapshotId) {
+      const { data: snap } = await supabase
+        .from("instance_snapshots")
+        .select("proxmox_snapname")
+        .eq("id", snapshotId)
+        .maybeSingle();
+      if (snap) snapname = snap.proxmox_snapname;
+    }
+
+    await supabase
+      .from("instances")
+      .update({ state: "restoring" })
+      .eq("id", instanceId);
+
+    const { error: opError } = await supabase.from("operations").insert({
+      id: operationId,
+      organization_id: userOrg.organization.id,
+      project_id: instance.project_id,
+      instance_id: instanceId,
+      site_id: instance.site_id,
+      kind: "instance.restore_replace",
+      resource_name: instance.name,
+      state: "pending",
+      idempotency_key: crypto.randomUUID(),
+      stages: { snapshot_id: snapshotId, proxmox_snapname: snapname },
+    });
+    if (opError) {
+      await supabase
+        .from("instances")
+        .update({ state: "ready" })
+        .eq("id", instanceId);
+      return { error: opError.message };
+    }
+
+    await supabase.from("operation_stages").insert(
+      OPERATION_STAGES.map((stage) => ({
+        operation_id: operationId,
+        stage,
+      })),
+    );
+
+    await supabase.rpc("log_audit_event", {
+      p_organization_id: userOrg.organization.id,
+      p_action: "instance.restore_requested",
+      p_project_id: instance.project_id,
+      p_target_type: "instance",
+      p_target_id: instanceId,
+      p_metadata: { name: instance.name, mode: "replace" },
+    });
+  } else {
+    const newInstanceId = crypto.randomUUID();
+    const newName = `${instance.name}-restored`;
+
+    const { error: instErr } = await supabase.from("instances").insert({
+      id: newInstanceId,
+      organization_id: userOrg.organization.id,
+      project_id: instance.project_id,
+      site_id: instance.site_id,
+      name: newName,
+      catalog_image_id: "ubuntu-2404",
+      catalog_plan_id: "std-1",
+      state: "provisioning",
+      password_ssh_enabled: true,
+    });
+    if (instErr) return { error: instErr.message };
+
+    const { error: opError } = await supabase.from("operations").insert({
+      id: operationId,
+      organization_id: userOrg.organization.id,
+      project_id: instance.project_id,
+      instance_id: newInstanceId,
+      site_id: instance.site_id,
+      kind: "instance.create",
+      resource_name: newName,
+      state: "pending",
+      idempotency_key: crypto.randomUUID(),
+    });
+    if (opError) return { error: opError.message };
+
+    await supabase.from("operation_stages").insert(
+      OPERATION_STAGES.map((stage) => ({
+        operation_id: operationId,
+        stage,
+      })),
+    );
+  }
+
+  revalidatePath(`/console/instances/${instanceId}`);
+  revalidatePath("/console/instances");
+  return { error: null };
+}
