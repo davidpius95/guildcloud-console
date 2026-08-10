@@ -63,6 +63,24 @@ export async function createInstance(
     return { error: "No tested template at this site for this image yet." };
   }
 
+  // Same re-validation discipline as the template check above: without
+  // this, an org with zero registered SSH keys and passwordSsh=false
+  // could still submit (e.g. a stale page, or a client that skips the
+  // wizard's own guard) and get a real instance with no working
+  // credential at all - cloud-init has no key to inject, and an
+  // unstored, unshown random password is not a real access method.
+  if (!passwordSsh) {
+    const { count } = await supabase
+      .from("ssh_keys")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", userOrg.organization.id);
+    if (!count) {
+      return {
+        error: "You have no SSH keys registered - add one, or enable password SSH, so this instance is reachable.",
+      };
+    }
+  }
+
   // Ids generated client-side (same pattern as completeOnboarding in
   // Phase 1) - neither insert below chains .select(), so nothing depends
   // on RETURNING visibility of a same-transaction trigger's writes.

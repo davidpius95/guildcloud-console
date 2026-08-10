@@ -105,12 +105,20 @@ function Option({
 
 export function CreateInstanceWizard({
   projects,
+  sshKeyCount,
 }: {
   // Real projects (uuid ids) for the signed-in org - createInstance
   // writes project_id into a real uuid column, so this can never be the
   // mock lib/mock-data.ts Project[] (fictional ids like "prj_core") the
   // way site/image/plan selection still is. See docs/phase-2/api-contract.md.
   projects: { id: string; name: string }[];
+  // Real bug found live: with zero org SSH keys registered, cloud-init has
+  // no key to inject at all, and password SSH being off by default meant
+  // the random password Proxmox still sets was never stored anywhere -
+  // a guaranteed, silent lockout with no way in. Knowing the count here
+  // lets the wizard force the only working access method on instead of
+  // creating an unreachable instance.
+  sshKeyCount: number;
 }) {
   const [siteId, setSiteId] = useState(sites[0].id);
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
@@ -118,7 +126,8 @@ export function CreateInstanceWizard({
   const [planId, setPlanId] = useState("std-2");
   const [protection, setProtection] = useState<ProtectionTier>("standard");
   const [volumeGb, setVolumeGb] = useState(0);
-  const [passwordSsh, setPasswordSsh] = useState(false);
+  const noKeysRegistered = sshKeyCount === 0;
+  const [passwordSsh, setPasswordSsh] = useState(noKeysRegistered);
   const [name, setName] = useState("");
   const [submitted, setSubmitted] = useState(false);
   // Generated once at render, not per submit, so a double-click or a
@@ -376,17 +385,41 @@ export function CreateInstanceWizard({
               <div>
                 <p className="text-sm font-medium text-ink-900">SSH keys</p>
                 <p className="text-xs text-ink-400">
-                  Enabled by default and used for the private route.
+                  {noKeysRegistered
+                    ? "No keys registered yet — nothing to inject into this instance."
+                    : "Every registered key is injected and used for the private route."}
                 </p>
               </div>
-              <Badge tone="lemon">Always on</Badge>
+              <Badge tone={noKeysRegistered ? "amber" : "lemon"}>
+                {noKeysRegistered ? "None registered" : "Always on"}
+              </Badge>
             </div>
+            {noKeysRegistered ? (
+              <p className="mt-2 text-xs text-ink-500">
+                <Link
+                  href="/console/settings"
+                  target="_blank"
+                  className="font-medium text-lemon-700 underline hover:text-lemon-800"
+                >
+                  Add an SSH key in Settings
+                </Link>{" "}
+                — future instances will pick it up automatically. This one
+                is already using password SSH below so you're never locked
+                out.
+              </p>
+            ) : null}
           </div>
 
-          <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg bg-white px-4 py-3 ring-1 ring-inset ring-ink-200">
+          <label
+            className={cx(
+              "mt-3 flex items-start gap-3 rounded-lg bg-white px-4 py-3 ring-1 ring-inset ring-ink-200",
+              noKeysRegistered ? "cursor-not-allowed opacity-80" : "cursor-pointer",
+            )}
+          >
             <input
               type="checkbox"
               checked={passwordSsh}
+              disabled={noKeysRegistered}
               onChange={(e) => setPasswordSsh(e.target.checked)}
               className="mt-0.5 h-4 w-4 accent-lemon-500"
             />
@@ -395,8 +428,9 @@ export function CreateInstanceWizard({
                 Also allow password SSH over the private route
               </span>
               <span className="mt-0.5 block text-xs text-ink-400">
-                Opt-in. The password is never stored by GuildCloud, attempts are
-                rate-limited, and access is audited without recording secrets.
+                {noKeysRegistered
+                  ? "Required here since you have no SSH key registered — otherwise this instance would have no working credential at all. A one-time password is generated and shown on the instance page; change it (`passwd`) once you're in."
+                  : "Opt-in. A generated password is shown once on the instance page after it's ready; change it (`passwd`) once you're in. Attempts are rate-limited and access is audited without recording the secret."}
               </span>
             </span>
           </label>

@@ -160,7 +160,20 @@ export default async function InstanceDetailPage({
                 </Note>
                 {realInstance.password_ssh_enabled ? (
                   realInstance.state === "ready" ? (
-                    <RevealPasswordButton instanceId={realInstance.id} />
+                    <div className="space-y-2">
+                      <RevealPasswordButton instanceId={realInstance.id} />
+                      <p className="text-xs text-ink-400">
+                        Change this (<code className="font-mono">passwd</code>) once
+                        you're in, and{" "}
+                        <Link
+                          href="/console/settings"
+                          className="font-medium text-lemon-700 underline hover:text-lemon-800"
+                        >
+                          add an SSH key
+                        </Link>{" "}
+                        so you don't need a password next time.
+                      </p>
+                    </div>
                   ) : (
                     <p className="text-xs text-ink-400">
                       Password SSH is enabled — the password can be revealed
