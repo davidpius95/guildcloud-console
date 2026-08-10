@@ -220,11 +220,17 @@ async function processPendingSshKeySyncs(supabase) {
     try {
       const { data: keys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
       const content = (keys ?? []).map((k) => k.public_key).join("\n");
-      const managedBlock = `${SSH_SYNC_BEGIN_MARKER}\n${content}\n${SSH_SYNC_END_MARKER}`;
+      const managedBlock = `${SSH_SYNC_BEGIN_MARKER}\n${content}\n${SSH_SYNC_END_MARKER}\n`;
+      // Real bug found live: printf '%s\n' "<JSON.stringify'd string>" left
+      // literal backslash-n text in the file instead of real newlines -
+      // double-quoted shell strings don't interpret \n as an escape, only
+      // printf's FORMAT string does, not its arguments. Base64 sidesteps
+      // shell quoting/escaping entirely instead of fighting it.
       // Strip any previous managed block (awk, marker-delimited) from
       // whatever's already there, then append the fresh one - everything
       // else in the file (an operator's own key, etc.) is untouched.
-      const script = `mkdir -p /home/guildvm/.ssh && touch /home/guildvm/.ssh/authorized_keys && awk '/^${SSH_SYNC_BEGIN_MARKER}$/{skip=1} /^${SSH_SYNC_END_MARKER}$/{skip=0; next} !skip' /home/guildvm/.ssh/authorized_keys > /tmp/gc_preserved_keys && cat /tmp/gc_preserved_keys > /home/guildvm/.ssh/authorized_keys && printf '%s\\n' ${JSON.stringify(managedBlock)} >> /home/guildvm/.ssh/authorized_keys && rm -f /tmp/gc_preserved_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
+      const encoded = Buffer.from(managedBlock, "utf8").toString("base64");
+      const script = `mkdir -p /home/guildvm/.ssh && touch /home/guildvm/.ssh/authorized_keys && awk '/^${SSH_SYNC_BEGIN_MARKER}$/{skip=1} /^${SSH_SYNC_END_MARKER}$/{skip=0; next} !skip' /home/guildvm/.ssh/authorized_keys > /tmp/gc_preserved_keys && cat /tmp/gc_preserved_keys > /home/guildvm/.ssh/authorized_keys && echo ${encoded} | base64 -d >> /home/guildvm/.ssh/authorized_keys && rm -f /tmp/gc_preserved_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
       const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
         command: ["sh", "-c", script],
       });
