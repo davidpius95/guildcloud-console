@@ -117,7 +117,7 @@ async function waitForTask(token, upid, maxWaitMs = 25000) {
   throw new Error(`Proxmox task ${upid} did not finish within ${maxWaitMs}ms`);
 }
 
-async function waitForGuestExec(token, vmid, pid, maxWaitMs = 20000) {
+async function waitForGuestExec(token, vmid, pid, maxWaitMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     const status = await pve(token, "GET", `nodes/${NODE}/qemu/${vmid}/agent/exec-status`, { pid });
@@ -433,7 +433,7 @@ async function processOneStage(supabase, operation) {
         const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
           command: ["sh", "-c", `while pgrep -f 'apt|dpkg|dnf|yum|pacman' >/dev/null 2>&1; do sleep 2; done && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
         });
-        await waitForGuestExec(token, inst.proxmox_vmid, exec.pid);
+        await waitForGuestExec(token, inst.proxmox_vmid, exec.pid, 90000);
 
         const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
         const device = (devices.devices ?? []).find((d) => d.hostname === hostname);
