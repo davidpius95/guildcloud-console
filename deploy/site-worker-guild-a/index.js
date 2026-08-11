@@ -3,31 +3,41 @@
 // This is the CANONICAL, TRACKED source for what actually runs in
 // production, on the Guild-A LXC (vmid 500, /opt/guildcloud-worker/index.js).
 
-import { createClient } from "@supabase/supabase-js";
-import crypto from "node:crypto";
-import fs from "node:fs";
-import net from "node:net";
+const { createClient } = require("@supabase/supabase-js");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-function loadEnv() {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const content = fs.readFileSync("/etc/guildcloud/worker.env", "utf8");
-      for (const line of content.split("\n")) {
-        const match = line.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
-        if (match) {
-          const key = match[1];
-          let val = match[2].trim();
-          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-            val = val.slice(1, -1);
-          }
-          process.env[key] = val;
+function parseEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const content = fs.readFileSync(filePath, "utf8");
+    for (const line of content.split("\n")) {
+      const match = line.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+      if (match) {
+        const key = match[1];
+        let val = match[2].trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
         }
+        if (!process.env[key]) process.env[key] = val;
       }
-    } catch (_e) {
-      // ignore
     }
+  } catch (_e) {
+    // ignore
+  }
+}
+
+function loadEnv() {
+  parseEnvFile("/etc/guildcloud/worker.env");
+  parseEnvFile(path.join(__dirname, "../../.env.local"));
+  parseEnvFile(path.join(__dirname, ".env.local"));
+  
+  if (!process.env.SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    process.env.SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   }
 }
 loadEnv();
@@ -47,7 +57,10 @@ const STAGE_ORDER = [
 ];
 
 function serviceClient() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error(`Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment`);
+  return createClient(url, key);
 }
 
 async function getVaultSecret(supabase, name) {
@@ -60,8 +73,8 @@ async function proxmoxToken(supabase) {
   return getVaultSecret(supabase, "proxmox_guild_a_site_worker_token");
 }
 
-async function pve(token, method, path, params) {
-  const url = new URL(`https://${PVE_HOST}:${PVE_PORT}/api2/json/${path}`);
+async function pve(token, method, pathStr, params) {
+  const url = new URL(`https://${PVE_HOST}:${PVE_PORT}/api2/json/${pathStr}`);
   const init = { method, headers: { Authorization: `PVEAPIToken=${token}` } };
   if (params && method === "GET") {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
@@ -79,7 +92,7 @@ async function pve(token, method, path, params) {
   }
   const resp = await fetch(url, init);
   const json = await resp.json();
-  if (!resp.ok) throw new Error(`Proxmox ${method} ${path} -> ${resp.status}: ${JSON.stringify(json)}`);
+  if (!resp.ok) throw new Error(`Proxmox ${method} ${pathStr} -> ${resp.status}: ${JSON.stringify(json)}`);
   return json.data;
 }
 
@@ -122,15 +135,15 @@ async function tailscaleAccessToken(supabase) {
   return json.access_token;
 }
 
-async function ts(token, method, path, body) {
+async function ts(token, method, pathStr, body) {
   const init = { method, headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
     init.headers["Content-Type"] = "application/json";
   }
-  const resp = await fetch(`https://api.tailscale.com/api/v2/${path}`, init);
+  const resp = await fetch(`https://api.tailscale.com/api/v2/${pathStr}`, init);
   const json = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(`Tailscale ${method} ${path} -> ${resp.status}: ${JSON.stringify(json)}`);
+  if (!resp.ok) throw new Error(`Tailscale ${method} ${pathStr} -> ${resp.status}: ${JSON.stringify(json)}`);
   return json;
 }
 
@@ -273,12 +286,23 @@ async function processOneStage(supabase, operation) {
         const { data: held } = await supabase.from("capacity_reservations").select("memory_gb").eq("node", NODE).eq("state", "held").gt("expires_at", new Date().toISOString());
         const heldGb = (held ?? []).reduce((sum, r) => sum + Number(r.memory_gb), 0);
         const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
-        const targetPlanId = operation.kind === "instance.resize" ? (operation.stages?.target_plan_id || instance?.catalog_plan_id) : instance?.catalog_plan_id;
-        const { data: plan } = await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", targetPlanId).single();
-        const requestedGb = Number(plan?.memory_gb ?? 2);
+        
+        let deltaGb = 0;
+        if (operation.kind === "instance.resize") {
+          const targetPlanId = operation.stages?.target_plan_id || instance?.catalog_plan_id;
+          const { data: targetPlan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", targetPlanId).single();
+          const { data: currentPlan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", instance.catalog_plan_id).single();
+          deltaGb = Math.max(0, Number(targetPlan?.memory_gb ?? 0) - Number(currentPlan?.memory_gb ?? 0));
+        } else {
+          const { data: plan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", instance.catalog_plan_id).single();
+          deltaGb = Number(plan?.memory_gb ?? 2);
+        }
+
         const availableGb = availableBytes / 1024 / 1024 / 1024;
-        if (availableGb - heldGb - requestedGb < 0) throw new Error(`preflight failed: ${availableGb.toFixed(2)}GB available - ${heldGb}GB held - ${requestedGb}GB requested < 0`);
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { available_gb: availableGb, held_gb: heldGb, requested_gb: requestedGb } });
+        if (availableGb - heldGb - deltaGb < 0) {
+          throw new Error(`preflight failed: ${availableGb.toFixed(2)}GB available - ${heldGb}GB held - ${deltaGb}GB needed < 0`);
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { available_gb: availableGb, held_gb: heldGb, needed_gb: deltaGb } });
       }
     } else if (next.stage === "capacity_reservation") {
       if (operation.kind === "instance.snapshot" || operation.kind === "instance.restore_replace") {
