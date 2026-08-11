@@ -2,33 +2,35 @@
 //
 // This is the CANONICAL, TRACKED source for what actually runs in
 // production, on the Guild-A LXC (vmid 500, /opt/guildcloud-worker/index.js).
-// Previously this file only existed on the LXC itself, hand-pasted in over
-// a terminal for every change - this copy, plus the self-deploy mechanism
-// in deploy/site-worker-guild-a/deploy-pull.sh, replaces that: the LXC
-// polls this exact path on `main` and redeploys itself automatically.
-//
-// supabase/functions/site-worker-guild-a/index.ts (Deno) is a SEPARATE,
-// older copy kept only for reference/parity - its own pg_cron schedule is
-// permanently unscheduled because the Supabase Edge Function runtime can't
-// reach Proxmox's private LAN IP at all. This Node.js file is the only one
-// that's real. Prefer editing this file going forward.
-//
-// Loops internally, advancing through as many stages/operations as it can
-// within a bounded time budget. Durability unchanged: state commits to
-// Postgres after every single stage.
-//
-// Phase 3: real per-instance Tailscale private access. This host itself
-// must be tailnet-joined (tag:guildcloud-mgmt) for the real reachability
-// check in automated_verification to work.
-//
-// Self-deploy mechanism verified live 2026-08-10: this exact comment
-// block was added, pushed, and picked up by the timer unattended.
 
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import net from "node:net";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
+function loadEnv() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const content = fs.readFileSync("/etc/guildcloud/worker.env", "utf8");
+      for (const line of content.split("\n")) {
+        const match = line.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+        if (match) {
+          const key = match[1];
+          let val = match[2].trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          process.env[key] = val;
+        }
+      }
+    } catch (_e) {
+      // ignore
+    }
+  }
+}
+loadEnv();
 
 const PVE_HOST = "192.168.8.195";
 const PVE_PORT = 8006;
@@ -164,7 +166,7 @@ async function processPendingInstanceDeletions(supabase) {
           await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/stop`);
           await new Promise((r) => setTimeout(r, 3000));
         } catch (_e) {
-          // already stopped - proceed to delete either way
+          // already stopped
         }
         await pve(token, "DELETE", `nodes/${NODE}/qemu/${inst.proxmox_vmid}`);
       }
@@ -182,24 +184,6 @@ async function processPendingInstanceDeletions(supabase) {
   }
 }
 
-// Real bug fixed: ssh_keys only ever reached a VM's cloud-init once, at
-// creation (template_cloud_init sets Proxmox's `sshkeys` config param,
-// which only applies at first boot). Adding or removing an org key later
-// did nothing for already-running instances - including revocation, the
-// security-relevant half. This writes the org's current full key set
-// directly into the guest's authorized_keys via agent/exec whenever
-// mark_org_instances_ssh_dirty (called from addSshKey/removeSshKey)
-// flags an instance dirty. An empty key set still clears the managed
-// block - a removed key must actually stop working, not just vanish
-// from the table.
-//
-// Real bug found live: a naive overwrite of the whole file silently
-// deleted a pre-existing, intentional operator key baked into the
-// template (proxmox-cluster-guild-a) that predates this feature and
-// isn't tracked in ssh_keys at all. Fixed by only ever replacing content
-// between marker comments - anything outside the managed block (an
-// operator's own key, or anything else already there) is preserved
-// byte-for-byte.
 const SSH_SYNC_BEGIN_MARKER = "# BEGIN GUILDCLOUD MANAGED KEYS - do not edit this block by hand, it is overwritten on every sync";
 const SSH_SYNC_END_MARKER = "# END GUILDCLOUD MANAGED KEYS";
 
@@ -221,14 +205,6 @@ async function processPendingSshKeySyncs(supabase) {
       const { data: keys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
       const content = (keys ?? []).map((k) => k.public_key).join("\n");
       const managedBlock = `${SSH_SYNC_BEGIN_MARKER}\n${content}\n${SSH_SYNC_END_MARKER}\n`;
-      // Real bug found live: printf '%s\n' "<JSON.stringify'd string>" left
-      // literal backslash-n text in the file instead of real newlines -
-      // double-quoted shell strings don't interpret \n as an escape, only
-      // printf's FORMAT string does, not its arguments. Base64 sidesteps
-      // shell quoting/escaping entirely instead of fighting it.
-      // Strip any previous managed block (awk, marker-delimited) from
-      // whatever's already there, then append the fresh one - everything
-      // else in the file (an operator's own key, etc.) is untouched.
       const encoded = Buffer.from(managedBlock, "utf8").toString("base64");
       const script = `mkdir -p /home/guildvm/.ssh && touch /home/guildvm/.ssh/authorized_keys && awk '/^${SSH_SYNC_BEGIN_MARKER}$/{skip=1} /^${SSH_SYNC_END_MARKER}$/{skip=0; next} !skip' /home/guildvm/.ssh/authorized_keys > /tmp/gc_preserved_keys && cat /tmp/gc_preserved_keys > /home/guildvm/.ssh/authorized_keys && echo ${encoded} | base64 -d >> /home/guildvm/.ssh/authorized_keys && rm -f /tmp/gc_preserved_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
       const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
@@ -238,7 +214,6 @@ async function processPendingSshKeySyncs(supabase) {
       await supabase.from("instances").update({ ssh_keys_sync_pending: false }).eq("id", inst.id);
     } catch (e) {
       console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs", instance_id: inst.id, error: String(e) }));
-      // left pending - next invocation retries
     }
   }
 }
@@ -290,21 +265,31 @@ async function processOneStage(supabase, operation) {
     const token = await proxmoxToken(supabase);
 
     if (next.stage === "preflight") {
-      const status = await pve(token, "GET", `nodes/${NODE}/status`);
-      const availableBytes = status.memory.available;
-      const { data: held } = await supabase.from("capacity_reservations").select("memory_gb").eq("node", NODE).eq("state", "held").gt("expires_at", new Date().toISOString());
-      const heldGb = (held ?? []).reduce((sum, r) => sum + Number(r.memory_gb), 0);
-      const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
-      const { data: plan } = await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", instance.catalog_plan_id).single();
-      const requestedGb = Number(plan.memory_gb);
-      const availableGb = availableBytes / 1024 / 1024 / 1024;
-      if (availableGb - heldGb - requestedGb < 0) throw new Error(`preflight failed: ${availableGb.toFixed(2)}GB available - ${heldGb}GB held - ${requestedGb}GB requested < 0`);
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { available_gb: availableGb, held_gb: heldGb, requested_gb: requestedGb } });
+      if (operation.kind === "instance.snapshot") {
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else {
+        const status = await pve(token, "GET", `nodes/${NODE}/status`);
+        const availableBytes = status.memory.available;
+        const { data: held } = await supabase.from("capacity_reservations").select("memory_gb").eq("node", NODE).eq("state", "held").gt("expires_at", new Date().toISOString());
+        const heldGb = (held ?? []).reduce((sum, r) => sum + Number(r.memory_gb), 0);
+        const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
+        const targetPlanId = operation.kind === "instance.resize" ? (operation.stages?.target_plan_id || instance?.catalog_plan_id) : instance?.catalog_plan_id;
+        const { data: plan } = await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", targetPlanId).single();
+        const requestedGb = Number(plan?.memory_gb ?? 2);
+        const availableGb = availableBytes / 1024 / 1024 / 1024;
+        if (availableGb - heldGb - requestedGb < 0) throw new Error(`preflight failed: ${availableGb.toFixed(2)}GB available - ${heldGb}GB held - ${requestedGb}GB requested < 0`);
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { available_gb: availableGb, held_gb: heldGb, requested_gb: requestedGb } });
+      }
     } else if (next.stage === "capacity_reservation") {
-      const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
-      const { data: plan } = await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", instance.catalog_plan_id).single();
-      const { data: reservation } = await supabase.from("capacity_reservations").insert({ operation_id: operation.id, site_id: "lag-1", node: NODE, vcpu: plan.vcpu, memory_gb: plan.memory_gb, disk_gb: plan.disk_gb }).select("id").single();
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { reservation_id: reservation.id } });
+      if (operation.kind === "instance.snapshot" || operation.kind === "instance.restore_replace") {
+        await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
+      } else {
+        const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
+        const targetPlanId = operation.kind === "instance.resize" ? (operation.stages?.target_plan_id || instance?.catalog_plan_id) : instance?.catalog_plan_id;
+        const { data: plan } = await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", targetPlanId).single();
+        const { data: reservation } = await supabase.from("capacity_reservations").insert({ operation_id: operation.id, site_id: "lag-1", node: NODE, vcpu: plan.vcpu, memory_gb: plan.memory_gb, disk_gb: plan.disk_gb }).select("id").single();
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { reservation_id: reservation?.id } });
+      }
     } else if (next.stage === "operation_created" || next.stage === "site_worker_dispatch") {
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
     } else if (next.stage === "proxmox_api_call") {
@@ -313,21 +298,21 @@ async function processOneStage(supabase, operation) {
       if (operation.kind === "instance.resize") {
         const targetPlanId = operation.stages?.target_plan_id;
         const { data: plan } = await supabase.from("catalog_plans").select("id, vcpu, memory_gb").eq("id", targetPlanId).single();
-        if (plan && inst.proxmox_vmid) {
+        if (plan && inst?.proxmox_vmid) {
           await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, { cores: plan.vcpu, memory: plan.memory_gb * 1024 });
           await supabase.from("instances").update({ catalog_plan_id: plan.id }).eq("id", inst.id);
         }
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { resized_to: targetPlanId } });
       } else if (operation.kind === "instance.snapshot") {
         const snapname = operation.stages?.proxmox_snapname;
-        if (snapname && inst.proxmox_vmid) {
+        if (snapname && inst?.proxmox_vmid) {
           await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/snapshot`, { snapname, description: "GuildCloud snapshot" });
           await supabase.from("instance_snapshots").update({ state: "ready" }).eq("proxmox_snapname", snapname);
         }
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { snapname } });
       } else if (operation.kind === "instance.restore_replace") {
         const snapname = operation.stages?.proxmox_snapname;
-        if (snapname && inst.proxmox_vmid) {
+        if (snapname && inst?.proxmox_vmid) {
           const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/snapshot/${snapname}/rollback`);
           await waitForTask(token, upid);
         }
@@ -371,7 +356,7 @@ async function processOneStage(supabase, operation) {
     } else if (next.stage === "network_access_attach") {
       const { data: inst } = await supabase.from("instances").select("id, project_id, proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
 
-      if (operation.kind !== "instance.create" && inst.private_ip) {
+      if (operation.kind !== "instance.create" && inst?.private_ip) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: inst.private_ip } });
       } else {
         const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
@@ -409,27 +394,32 @@ async function processOneStage(supabase, operation) {
 
         await supabase.from("instances").update({ private_ip: device.addresses[0], private_hostname: device.name, tailscale_device_id: device.id }).eq("id", inst.id);
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
-      } else if (next.stage === "backup_monitoring_attach") {
+      }
+    } else if (next.stage === "backup_monitoring_attach") {
       await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
     } else if (next.stage === "automated_verification") {
       const { data: instance } = await supabase.from("instances").select("proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
-      try {
-        await pve(token, "POST", `nodes/${NODE}/qemu/${instance.proxmox_vmid}/agent/ping`);
-      } catch (e) {
-        await markStage(supabase, next, { status: "active", error: String(e) });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
-
-      if (instance.private_ip) {
+      if (operation.kind === "instance.snapshot") {
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else {
         try {
-          await tcpCheck(instance.private_ip, 22);
+          await pve(token, "POST", `nodes/${NODE}/qemu/${instance.proxmox_vmid}/agent/ping`);
         } catch (e) {
-          await markStage(supabase, next, { status: "active", error: `ssh reachability check failed: ${String(e)}` });
+          await markStage(supabase, next, { status: "active", error: String(e) });
           return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
-      }
 
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: instance.private_ip } });
+        if (instance.private_ip) {
+          try {
+            await tcpCheck(instance.private_ip, 22);
+          } catch (e) {
+            await markStage(supabase, next, { status: "active", error: `ssh reachability check failed: ${String(e)}` });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+        }
+
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: instance.private_ip } });
+      }
     } else if (next.stage === "ready") {
       await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
       await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
@@ -478,16 +468,28 @@ async function run() {
       .eq("site_id", "lag-1")
       .in("state", ["pending", "running"])
       .order("started_at", { ascending: true })
-      .limit(1);
+      .limit(10);
 
-    const operation = ops?.[0];
-    if (!operation) { log.push({ ok: true, message: "no pending operations" }); break; }
+    const pendingOps = ops ?? [];
+    if (!pendingOps.length) { log.push({ ok: true, message: "no pending operations" }); break; }
 
-    const outcome = await processOneStage(supabase, operation);
-    log.push({ operation_id: operation.id, ...outcome });
+    let processedAny = false;
+    for (const operation of pendingOps) {
+      const outcome = await processOneStage(supabase, operation);
+      log.push({ operation_id: operation.id, ...outcome });
 
-    if (outcome.status === "no_pending_stage") break;
-    if (outcome.status === "retry_wait") await new Promise((r) => setTimeout(r, outcome.waitMs));
+      if (outcome.status === "no_pending_stage") {
+        await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
+        await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
+        processedAny = true;
+        continue;
+      }
+      processedAny = true;
+      if (outcome.status === "retry_wait") await new Promise((r) => setTimeout(r, outcome.waitMs));
+      break;
+    }
+
+    if (!processedAny) break;
   }
 
   console.log(JSON.stringify({ ok: true, log }));

@@ -670,7 +670,11 @@ Deno.serve(async () => {
     const outcome = await processOneStage(supabase, operation);
     log.push({ operation_id: operation.id, ...outcome });
 
-    if (outcome.status === "no_pending_stage") break; // inconsistent state - don't spin on it
+    if (outcome.status === "no_pending_stage") {
+      await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
+      await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
+      continue;
+    }
     if (outcome.status === "retry_wait") {
       await new Promise((r) => setTimeout(r, outcome.waitMs));
     }

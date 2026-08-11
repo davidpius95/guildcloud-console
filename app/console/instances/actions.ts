@@ -274,6 +274,7 @@ export async function resizeInstance(
     kind: "instance.resize",
     resource_name: instance.name,
     state: "pending",
+    started_at: new Date().toISOString(),
     idempotency_key: crypto.randomUUID(),
     stages: { target_plan_id: newPlanId },
   });
@@ -368,6 +369,7 @@ export async function createInstanceSnapshot(
     kind: "instance.snapshot",
     resource_name: `${instance.name}/${name}`,
     state: "pending",
+    started_at: new Date().toISOString(),
     idempotency_key: crypto.randomUUID(),
     stages: { snapshot_id: snapshotId, proxmox_snapname: snapname },
   });
@@ -442,6 +444,7 @@ export async function restoreInstance(
       kind: "instance.restore_replace",
       resource_name: instance.name,
       state: "pending",
+      started_at: new Date().toISOString(),
       idempotency_key: crypto.randomUUID(),
       stages: { snapshot_id: snapshotId, proxmox_snapname: snapname },
     });
