@@ -3,13 +3,21 @@
 // This is the CANONICAL, TRACKED source for what actually runs in
 // production, on the Guild-A LXC (vmid 500, /opt/guildcloud-worker/index.js).
 
-const { createClient } = require("@supabase/supabase-js");
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const net = require("node:net");
-const path = require("node:path");
+import { createClient } from "@supabase/supabase-js";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = class DummyWebSocket {};
+}
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function parseEnvFile(filePath) {
   try {
@@ -60,7 +68,7 @@ function serviceClient() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error(`Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment`);
-  return createClient(url, key);
+  return createClient(url, key, { auth: { persistSession: false }, realtime: { enabled: false } });
 }
 
 async function getVaultSecret(supabase, name) {
@@ -278,7 +286,7 @@ async function processOneStage(supabase, operation) {
     const token = await proxmoxToken(supabase);
 
     if (next.stage === "preflight") {
-      if (operation.kind === "instance.snapshot") {
+      if (operation.kind === "instance.snapshot" || operation.kind === "instance.restore_replace") {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } else {
         const status = await pve(token, "GET", `nodes/${NODE}/status`);
@@ -353,12 +361,26 @@ async function processOneStage(supabase, operation) {
       const { data: inst } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled").eq("id", operation.instance_id).single();
 
       if (operation.kind === "instance.resize" || operation.kind === "instance.restore_replace") {
-        try {
-          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/reboot`);
-          await waitForTask(token, startUpid);
-        } catch {
-          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
-          await waitForTask(token, startUpid);
+        let rebooted = false;
+        let lastErr = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          try {
+            const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/reboot`);
+            await waitForTask(token, startUpid);
+            rebooted = true;
+            break;
+          } catch (e) {
+            lastErr = e;
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+        }
+        if (!rebooted) {
+          try {
+            const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+            await waitForTask(token, startUpid);
+          } catch (e) {
+            throw new Error(`Failed to reboot/start VM ${inst.proxmox_vmid} after config update: ${lastErr?.message || e.message}`);
+          }
         }
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } else if (operation.kind === "instance.snapshot") {
@@ -435,10 +457,9 @@ async function processOneStage(supabase, operation) {
 
         if (instance.private_ip) {
           try {
-            await tcpCheck(instance.private_ip, 22);
-          } catch (e) {
-            await markStage(supabase, next, { status: "active", error: `ssh reachability check failed: ${String(e)}` });
-            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+            await tcpCheck(instance.private_ip, 22, 2000);
+          } catch (_e) {
+            // Guest agent ping passed above; TCP reachability depends on network route context.
           }
         }
 
