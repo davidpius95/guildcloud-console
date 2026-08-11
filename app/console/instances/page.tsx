@@ -10,7 +10,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { IconLock, IconPlus } from "@/components/icons";
+import { IconLock, IconPlus, OSLogo } from "@/components/icons";
 import { formatDate } from "@/lib/mock-data";
 import { getCurrentUserOrg, getInstancesForOrg } from "@/lib/supabase/queries";
 import type { ResourceState } from "@/lib/types";
@@ -100,7 +100,12 @@ export default async function InstancesPage() {
                       </p>
                     ) : null}
                   </Td>
-                  <Td className="whitespace-nowrap text-ink-500">{i.imageLabel}</Td>
+                  <Td className="whitespace-nowrap text-ink-500">
+                    <span className="inline-flex items-center gap-1.5">
+                      {i.imageId ? <OSLogo imageId={i.imageId} className="h-4 w-4" /> : null}
+                      {i.imageLabel}
+                    </span>
+                  </Td>
                   <Td className="whitespace-nowrap text-ink-500">{i.siteId}</Td>
                   <Td>
                     {i.privateHostname ? (

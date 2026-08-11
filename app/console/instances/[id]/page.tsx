@@ -20,7 +20,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { IconLock, IconShield } from "@/components/icons";
+import { IconLock, IconShield, OSLogo, imageIdFromLabel } from "@/components/icons";
 import {
   instances,
   money,
@@ -118,6 +118,14 @@ export default async function InstanceDetailPage({
           ) : null}
           {realInstance.proxmox_vmid ? (
             <Badge tone="neutral">Proxmox VMID {realInstance.proxmox_vmid}</Badge>
+          ) : null}
+          {realInstance.catalog_image_id ? (
+            <span className="inline-flex items-center gap-1">
+              <OSLogo imageId={realInstance.catalog_image_id} className="h-4 w-4" />
+              <Badge tone="sky">
+                {(realInstance.catalog_images as unknown as { name: string; version: string } | null)?.name ?? realInstance.catalog_image_id}
+              </Badge>
+            </span>
           ) : null}
         </div>
 
@@ -306,7 +314,12 @@ export default async function InstanceDetailPage({
         <Badge tone={instance.protection === "standard" ? "neutral" : "lemon"}>
           {protectionLabel[instance.protection]} tier
         </Badge>
-        <Badge tone="sky">{instance.image}</Badge>
+        <span className="inline-flex items-center gap-1">
+          {imageIdFromLabel(instance.image) ? (
+            <OSLogo imageId={imageIdFromLabel(instance.image)!} className="h-4 w-4" />
+          ) : null}
+          <Badge tone="sky">{instance.image}</Badge>
+        </span>
         <Badge>{instance.plan}</Badge>
         <Badge tone={instance.passwordSshEnabled ? "amber" : "neutral"}>
           {instance.passwordSshEnabled ? "Password SSH on" : "SSH keys only"}

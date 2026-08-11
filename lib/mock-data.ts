@@ -845,6 +845,13 @@ export const images: CatalogImage[] = [
     availableSites: ["lag-1", "abj-1"],
   },
   {
+    id: "arch-linux",
+    name: "Arch Linux",
+    version: "Rolling",
+    family: "os",
+    availableSites: ["lag-1"],
+  },
+  {
     id: "docker",
     name: "Docker",
     version: "on Ubuntu 24.04",

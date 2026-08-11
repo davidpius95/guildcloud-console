@@ -395,8 +395,12 @@ async function processOneStage(supabase, operation) {
           await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });
         }
         await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, { cores: plan.vcpu, memory: plan.memory_gb * 1024, ...(sshkeys ? { sshkeys } : {}), cipassword: password });
-        const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
-        await waitForTask(token, startUpid);
+        try {
+          const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+          await waitForTask(token, startUpid);
+        } catch (e) {
+          if (!String(e).includes("already running")) throw e;
+        }
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       }
     } else if (next.stage === "network_access_attach") {
@@ -427,7 +431,7 @@ async function processOneStage(supabase, operation) {
         });
 
         const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-          command: ["sh", "-c", `systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+          command: ["sh", "-c", `if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
         });
         await waitForGuestExec(token, inst.proxmox_vmid, exec.pid);
 

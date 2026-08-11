@@ -11,7 +11,7 @@ import {
 import type { ProtectionTier } from "@/lib/types";
 import { createInstance } from "@/app/console/instances/actions";
 import { Badge, Button, Card, CardHeader, Note, cx } from "./ui";
-import { IconLock, IconShield } from "./icons";
+import { IconLock, IconShield, OSLogo } from "./icons";
 import { AddSshKeyModal } from "./add-ssh-key-modal";
 
 const protectionOptions: Array<{
@@ -173,11 +173,9 @@ export function CreateInstanceWizard({
     (t) => t.catalogImageId === imageId && t.siteId === siteId,
   );
   const canCreate = site.acceptingNewWork && imageAvailable && name.trim().length > 0;
-  // Only Guild-A (lag-1) + ubuntu-2404 has a real Proxmox template mapped
-  // in catalog_image_site_templates today - every other combination stays
-  // the honest warning note below rather than reaching a worker that would
-  // just fail to find a template. See docs/phase-2/data-model.md.
-  const isReal = siteId === "lag-1" && imageId === "ubuntu-2404";
+  // Any image with a mapped Proxmox template at the selected site (lag-1)
+  // reaches the site worker for real provisioning.
+  const isReal = imageAvailable;
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
@@ -249,10 +247,15 @@ export function CreateInstanceWizard({
                     onClick={() => setImageId(i.id)}
                   >
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium">{i.name}</p>
-                      {i.recommended ? <Badge tone="lemon">Recommended</Badge> : null}
+                      <OSLogo imageId={i.id} className="h-6 w-6" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium">{i.name}</p>
+                          {i.recommended ? <Badge tone="lemon">Recommended</Badge> : null}
+                        </div>
+                        <p className="mt-0.5 text-xs opacity-70">{i.version}</p>
+                      </div>
                     </div>
-                    <p className="mt-0.5 text-xs opacity-70">{i.version}</p>
                     {!available ? (
                       <p className="mt-1 text-xs text-ink-400">
                         No tested template at {site.name}
@@ -280,8 +283,13 @@ export function CreateInstanceWizard({
                     disabled={!available}
                     onClick={() => setImageId(i.id)}
                   >
-                    <p className="text-sm font-medium">{i.name}</p>
-                    <p className="mt-0.5 text-xs opacity-70">{i.version}</p>
+                    <div className="flex items-center gap-2">
+                      <OSLogo imageId={i.id} className="h-6 w-6" />
+                      <div>
+                        <p className="text-sm font-medium">{i.name}</p>
+                        <p className="mt-0.5 text-xs opacity-70">{i.version}</p>
+                      </div>
+                    </div>
                     {!available ? (
                       <p className="mt-1 text-xs text-ink-400">
                         No tested template at {site.name}

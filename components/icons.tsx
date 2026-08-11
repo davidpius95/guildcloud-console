@@ -176,3 +176,114 @@ export const IconGrid = ({ className }: IconProps) => (
     <rect x="14" y="14" width="6" height="6" rx="1" />
   </svg>
 );
+
+/* Operating System & Solution Logos */
+
+export const IconUbuntuLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#E95420]"} viewBox="0 0 24 24" fill="currentColor">
+    <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2" />
+    <circle cx="12" cy="4.5" r="1.8" fill="currentColor" />
+    <circle cx="5.5" cy="15.8" r="1.8" fill="currentColor" />
+    <circle cx="18.5" cy="15.8" r="1.8" fill="currentColor" />
+    <path
+      d="M12 7.5A4.5 4.5 0 1 0 16.5 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+export const IconDebianLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#D70A53]"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <path d="M12 21.5c-4.5 0-8.5-3.5-8.5-8.5 0-6 5-10 10.5-10 4.5 0 7.5 3 7.5 6.5 0 3.5-2.5 5.5-5 5.5-1.8 0-3-1.2-3-2.8 0-2.2 2-3.2 4-3.2" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+export const IconFedoraLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#51A2DA]"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Z" />
+    <path d="M12 7v5a2 2 0 0 0 2 2h3" />
+    <path d="M9 12h6" />
+  </svg>
+);
+
+export const IconRockyLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#10B981]"} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2.5 20.5 7.5v9L12 21.5 3.5 16.5v-9L12 2.5Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    <path d="m7.5 15.5 4.5-7 4.5 7H7.5Z" />
+  </svg>
+);
+
+export const IconAlmaLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#00A1FF]"} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 3 4 8v8l8 5 8-5V8l-8-5Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    <circle cx="12" cy="12" r="3.5" />
+  </svg>
+);
+
+export const IconArchLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#1793D1]"} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 3c-1.5 3.5-3 6.8-5 10.2 1.3.4 2.7.6 4.1.6 1.8 0 3.5-.3 5.1-.9L12 3Z" />
+    <path d="M3.5 20.5C5.8 19 8.6 18 12 18s6.2 1 8.5 2.5c-2.8-5.8-5.7-11.8-8.5-17.5-2.8 5.7-5.7 11.7-8.5 17.5Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+  </svg>
+);
+
+export const IconDockerLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#2496ED]"} viewBox="0 0 24 24" fill="currentColor">
+    <rect x="2" y="11" width="3.5" height="3" rx="0.5" />
+    <rect x="6.5" y="11" width="3.5" height="3" rx="0.5" />
+    <rect x="11" y="11" width="3.5" height="3" rx="0.5" />
+    <rect x="15.5" y="11" width="3.5" height="3" rx="0.5" />
+    <rect x="6.5" y="7" width="3.5" height="3" rx="0.5" />
+    <rect x="11" y="7" width="3.5" height="3" rx="0.5" />
+    <rect x="11" y="3" width="3.5" height="3" rx="0.5" />
+    <path d="M1.5 15.5c2 2 5 2.5 8.5 2.5 6 0 10.5-3 12-7-1.5 0-3.5.5-4.5 1.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+  </svg>
+);
+
+export const IconWordPressLogo = ({ className }: IconProps) => (
+  <svg className={className ?? "h-6 w-6 text-[#21759B]"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <circle cx="12" cy="12" r="9.5" />
+    <path d="m4 12 4.5 10M8.5 8l3.5 10M15.5 8l-3.5 10M20 12l-4.5 10" />
+  </svg>
+);
+
+/** Map a human-readable label like "Ubuntu 24.04 LTS" to a catalog image id. */
+export function imageIdFromLabel(label: string): string | null {
+  const l = label.toLowerCase();
+  if (l.includes("ubuntu")) return "ubuntu-2404";
+  if (l.includes("debian")) return "debian-12";
+  if (l.includes("fedora")) return "fedora-41";
+  if (l.includes("rocky")) return "rocky-9";
+  if (l.includes("alma")) return "alma-9";
+  if (l.includes("arch")) return "arch-linux";
+  if (l.includes("docker")) return "docker";
+  if (l.includes("wordpress")) return "wordpress";
+  return null;
+}
+
+export function OSLogo({ imageId, className }: { imageId: string; className?: string }) {
+  switch (imageId) {
+    case "ubuntu-2404":
+      return <IconUbuntuLogo className={className} />;
+    case "debian-12":
+      return <IconDebianLogo className={className} />;
+    case "fedora-41":
+      return <IconFedoraLogo className={className} />;
+    case "rocky-9":
+      return <IconRockyLogo className={className} />;
+    case "alma-9":
+      return <IconAlmaLogo className={className} />;
+    case "arch-linux":
+      return <IconArchLogo className={className} />;
+    case "docker":
+      return <IconDockerLogo className={className} />;
+    case "wordpress":
+      return <IconWordPressLogo className={className} />;
+    default:
+      return <IconServer className={className} />;
+  }
+}
