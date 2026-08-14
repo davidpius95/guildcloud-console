@@ -17,6 +17,13 @@ TRACKED_FILE="$REPO_DIR/deploy/site-worker-guild-a/index.js"
 export GIT_SSH_COMMAND="ssh -i /opt/guildcloud-worker/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
 
 cd "$REPO_DIR"
+# Real bug found live: something (unclear what - possibly another tool's
+# git config normalization) rewrote origin to an HTTPS URL at some point,
+# which silently broke every deploy for ~3 days (git fetch fails, `set -e`
+# exits the script early, nothing else runs) - no alerting caught it, only
+# a manual journalctl check did. Self-heal the remote on every run rather
+# than trust it stays SSH.
+git remote set-url origin git@github.com:davidpius95/guildcloud-console.git
 git fetch --depth 1 origin main >/tmp/deploy-pull.log 2>&1
 git reset --hard origin/main >>/tmp/deploy-pull.log 2>&1
 
