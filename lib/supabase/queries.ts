@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { createClient } from "./server";
-import type { Organization, Membership, AuditLogEntry, Project } from "@/lib/types";
+import type { Organization, Membership, AuditLogEntry, Project, AccessResourceType } from "@/lib/types";
 import type { Tables } from "./types";
 
 function toOrganization(row: Tables<"organizations">): Organization {
@@ -159,7 +159,7 @@ export async function getInstancesForOrg(organizationId: string) {
   const { data, error } = await supabase
     .from("instances")
     .select(
-      "id, name, state, site_id, private_ip, private_hostname, created_at, catalog_image_id, projects(name), catalog_images(name, version), catalog_plans(name, vcpu, memory_gb, disk_gb, hourly_price, monthly_max)",
+      "id, name, state, site_id, private_ip, private_hostname, created_at, catalog_image_id, project_id, projects(name), catalog_images(name, version), catalog_plans(name, vcpu, memory_gb, disk_gb, hourly_price, monthly_max)",
     )
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false });
@@ -174,6 +174,7 @@ export async function getInstancesForOrg(organizationId: string) {
     private_hostname: string | null;
     created_at: string;
     catalog_image_id: string | null;
+    project_id: string;
     projects: { name: string } | null;
     catalog_images: { name: string; version: string } | null;
     catalog_plans: {
@@ -194,6 +195,7 @@ export async function getInstancesForOrg(organizationId: string) {
     privateIp: row.private_ip ? String(row.private_ip) : null,
     privateHostname: row.private_hostname,
     createdAt: row.created_at,
+    projectId: row.project_id,
     projectName: row.projects?.name ?? "—",
     imageId: row.catalog_image_id ?? null,
     imageLabel: row.catalog_images ? `${row.catalog_images.name} ${row.catalog_images.version}` : "—",
@@ -260,6 +262,24 @@ export async function getSshKeysForOrg(organizationId: string) {
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
+}
+
+export async function getAccessGrantsForOrg(organizationId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("access_grants")
+    .select("id, project_id, membership_id, resource_type, resource_id, created_at")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    membershipId: row.membership_id,
+    resourceType: row.resource_type as AccessResourceType | "all",
+    resourceId: row.resource_id,
+    createdAt: row.created_at,
+  }));
 }
 
 export async function getInstancesWithPrivateNetworkForOrg(organizationId: string) {

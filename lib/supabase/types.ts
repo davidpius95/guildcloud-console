@@ -18,6 +18,61 @@ export type Database = {
   }
   public: {
     Tables: {
+      access_grants: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          membership_id: string
+          organization_id: string
+          project_id: string
+          resource_id: string | null
+          resource_type: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          membership_id: string
+          organization_id: string
+          project_id: string
+          resource_id?: string | null
+          resource_type: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          membership_id?: string
+          organization_id?: string
+          project_id?: string
+          resource_id?: string | null
+          resource_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "access_grants_membership_id_fkey"
+            columns: ["membership_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "access_grants_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "access_grants_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_log: {
         Row: {
           action: string
@@ -216,6 +271,64 @@ export type Database = {
           vcpu?: number
         }
         Relationships: []
+      }
+      instance_snapshots: {
+        Row: {
+          created_at: string
+          id: string
+          instance_id: string
+          name: string
+          organization_id: string
+          project_id: string
+          proxmox_snapname: string
+          size_bytes: number | null
+          state: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instance_id: string
+          name: string
+          organization_id: string
+          project_id: string
+          proxmox_snapname: string
+          size_bytes?: number | null
+          state?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instance_id?: string
+          name?: string
+          organization_id?: string
+          project_id?: string
+          proxmox_snapname?: string
+          size_bytes?: number | null
+          state?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instance_snapshots_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "instances"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instance_snapshots_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instance_snapshots_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       instances: {
         Row: {
@@ -540,64 +653,6 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      instance_snapshots: {
-        Row: {
-          created_at: string
-          id: string
-          instance_id: string
-          name: string
-          organization_id: string
-          project_id: string
-          proxmox_snapname: string
-          size_bytes: number | null
-          state: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          instance_id: string
-          name: string
-          organization_id: string
-          project_id: string
-          proxmox_snapname: string
-          size_bytes?: number | null
-          state?: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          instance_id?: string
-          name?: string
-          organization_id?: string
-          project_id?: string
-          proxmox_snapname?: string
-          size_bytes?: number | null
-          state?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "instance_snapshots_instance_id_fkey"
-            columns: ["instance_id"]
-            isOneToOne: false
-            referencedRelation: "instances"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "instance_snapshots_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "instance_snapshots_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]

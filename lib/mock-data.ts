@@ -740,32 +740,6 @@ export const team: TeamMember[] = [
   },
 ];
 
-export const accessPolicyRules: AccessPolicyRule[] = [
-  {
-    id: "apr_1",
-    projectId: "prj_core",
-    memberId: "tm_3",
-    resourceType: "instance",
-    resourceId: "gi_9a41",
-    createdAt: "2026-04-20",
-  },
-  {
-    id: "apr_2",
-    projectId: "prj_core",
-    memberId: "tm_3",
-    resourceType: "database",
-    resourceId: "db_pg1",
-    createdAt: "2026-04-20",
-  },
-  {
-    id: "apr_3",
-    projectId: "prj_data",
-    memberId: "tm_4",
-    resourceType: "bucket",
-    resourceId: "bkt_raw",
-    createdAt: "2026-05-03",
-  },
-];
 
 export const plans: CatalogPlan[] = [
   {

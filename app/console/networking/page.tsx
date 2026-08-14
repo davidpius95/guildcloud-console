@@ -12,8 +12,15 @@ import {
 import { IconLock } from "@/components/icons";
 import { AccessPolicyCard } from "@/components/access-policy-card";
 import { PrivateAddressTable } from "@/components/private-address-table";
-import { accessPolicyRules, sites, team } from "@/lib/mock-data";
-import { getCurrentUserOrg, getInstancesWithPrivateNetworkForOrg } from "@/lib/supabase/queries";
+import { sites, team } from "@/lib/mock-data";
+import {
+  getAccessGrantsForOrg,
+  getCurrentUserOrg,
+  getInstancesForOrg,
+  getInstancesWithPrivateNetworkForOrg,
+  getMembersForOrg,
+  getProjectsForOrg,
+} from "@/lib/supabase/queries";
 
 const zones = [
   {
@@ -47,6 +54,14 @@ export default async function NetworkingPage() {
   const realInstances = userOrg
     ? await getInstancesWithPrivateNetworkForOrg(userOrg.organization.id)
     : [];
+  const [accessGrants, members, projects, instancesForGrants] = userOrg
+    ? await Promise.all([
+        getAccessGrantsForOrg(userOrg.organization.id),
+        getMembersForOrg(userOrg.organization.id),
+        getProjectsForOrg(userOrg.organization.id),
+        getInstancesForOrg(userOrg.organization.id),
+      ])
+    : [[], [], [], []];
 
   return (
     <>
@@ -69,7 +84,12 @@ export default async function NetworkingPage() {
       </div>
 
       <div className="mb-4">
-        <AccessPolicyCard initialRules={accessPolicyRules} team={team} />
+        <AccessPolicyCard
+          grants={accessGrants}
+          members={members}
+          projects={projects}
+          realInstances={instancesForGrants.map((i) => ({ id: i.id, name: i.name, projectId: i.projectId }))}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
