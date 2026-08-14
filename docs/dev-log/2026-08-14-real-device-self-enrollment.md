@@ -89,16 +89,17 @@ deleted it afterward.
 to boot**: the new instance's own `network_access_attach` stage (which
 installs *its own* tenant-identity Tailscale, unrelated to member
 enrollment) failed after 8 retries: `guest exec pid 1057 did not finish
-within 180000ms`. Direct inspection via guest-agent exec showed this
-wasn't a hang — `apt-get dist-upgrade` had pulled in a `systemd` package
-upgrade, which triggered a `dracut` initramfs rebuild, which genuinely
-took longer than the 180s timeout tuned in this session's earlier
-commits. The operation gave up permanently (`operations.state = failed`)
-rather than retrying once dpkg/apt were done. This is a real, still-open
-gap: the timeout covers package *download* but not a triggered
-initramfs rebuild, and failed operations don't get automatically
-retried. Not fixed this pass (out of scope for enrollment
-verification) — worth a follow-up.
+within 180000ms`.
+
+My first diagnosis was wrong, and it took three instances to get to the
+truth — see
+[2026-08-14-network-attach-root-cause.md](2026-08-14-network-attach-root-cause.md)
+for the full chain. Short version: the timeout and a later guest-agent
+restart were both *symptoms*. The actual cause was that the stage's
+`while pgrep -f 'apt|dpkg|...'` wait-for-package-manager guard matched
+its own `sh -c` process (whose command line contains the pattern text),
+so the loop waited on itself and could never exit. Fixed, with all three
+layers verified live.
 
 **Real gotcha confirmed**: the enrollment key's 300-second expiry
 (`expirySeconds: 300` on the Tailscale key, by design — see
