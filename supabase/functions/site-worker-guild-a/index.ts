@@ -232,6 +232,30 @@ async function ts(token: string, method: string, path: string, body?: unknown) {
   return json;
 }
 
+async function pveUploadSnippet(token: string, filename: string, content: string) {
+  const form = new FormData();
+  form.append("content", "snippets");
+  form.append("filename", filename);
+  form.append("file", new Blob([content], { type: "application/yaml" }), filename);
+  const url = new URL(`https://${PVE_HOST}:${PVE_PORT}/api2/json/nodes/${NODE}/storage/local/upload`);
+  const resp = await fetch(url.toString(), {
+    method: "POST",
+    headers: { Authorization: `PVEAPIToken=${token}` },
+    body: form,
+  });
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(`Proxmox snippet upload ${filename} -> ${resp.status}: ${JSON.stringify(json)}`);
+  if (json.data) await waitForTask(token, json.data, 30_000);
+}
+
+async function pveDeleteSnippet(token: string, filename: string) {
+  try {
+    await pve(token, "DELETE", `nodes/${NODE}/storage/local/content/${encodeURIComponent(`snippets/${filename}`)}`);
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, where: "pveDeleteSnippet", filename, error: String(e) }));
+  }
+}
+
 // Real bug fixed: ssh_keys only ever reached a VM's cloud-init once, at
 // creation - adding or removing an org key later did nothing for
 // already-running instances, including revocation. Writes the org's
@@ -483,8 +507,8 @@ async function processOneStage(
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
       }
     } else if (next.stage === "template_cloud_init") {
-      const { data: instance } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled").eq("id", operation.instance_id).single();
-      const inst = instance as { id: string; catalog_plan_id: string; proxmox_vmid: number; password_ssh_enabled: boolean };
+      const { data: instance } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled, project_id").eq("id", operation.instance_id).single();
+      const inst = instance as { id: string; catalog_plan_id: string; proxmox_vmid: number; password_ssh_enabled: boolean; project_id: string };
 
       if (operation.kind === "instance.resize" || operation.kind === "instance.restore_replace") {
         try {
@@ -516,61 +540,17 @@ async function processOneStage(
           });
         }
 
-        await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, {
-          cores: p.vcpu,
-          memory: p.memory_gb * 1024,
-          ...(sshkeys ? { sshkeys } : {}),
-          cipassword: password,
-        });
-        const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
-        await waitForTask(token, startUpid as unknown as string);
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
-      }
-    } else if (next.stage === "network_access_attach") {
-      // Phase 3: real Tailscale enrollment. Never a shared/reusable key -
-      // see docs/phase-3/threat-model.md for why the old cicustom-baked
-      // key was a critical finding this replaces.
-      const { data: instance } = await supabase.from("instances").select("id, project_id, proxmox_vmid").eq("id", operation.instance_id).single();
-      const inst = instance as { id: string; project_id: string; proxmox_vmid: number };
-      const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
-      const proj = project as { slug: string; tailscale_acl_state: string };
-
-      if (proj.tailscale_acl_state !== "applied") {
-        // Don't enroll a device into a tag with no reachability grant yet -
-        // that would be a silent private-network island, not an error, but
-        // just as unusable. Wait for applyPendingProjectAcls to catch up.
-        await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
-
-      try {
-        await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
-      } catch (e) {
-        await markStage(supabase, next, { status: "active", error: String(e) });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
-
-      const hostname = `instance-${inst.id.slice(0, 8)}`;
-
-      // Install+join is kicked off once and then polled across worker
-      // cycles (via next.detail), not blocked on synchronously. A single
-      // blocking wait here previously re-minted a fresh Tailscale key and
-      // kicked a brand-new exec on every retry - after the first exec was
-      // already running - because a timeout was treated as fatal instead
-      // of "still working". Real failure mode hit in 2026-08-14
-      // verification (Node.js worker): apt dist-upgrade triggered a dracut
-      // initramfs rebuild that alone outran the old single blocking wait,
-      // so every retry stacked another redundant install+join attempt (and
-      // leaked another unused Tailscale key) instead of resuming the same one.
-      const detail = next.detail as { exec_pid?: number; exec_started_at?: string; hostname?: string; waiting_on?: string; stage_started_at?: string };
-      // Persists across exec restarts (unlike exec_started_at, which
-      // resets each time) - the real ceiling on this whole stage, not
-      // on any single exec attempt.
-      const stageStartedAt = detail?.stage_started_at ?? new Date().toISOString();
-
-      if (!detail?.exec_pid) {
+        // Generate Tailscale auth key and upload a per-instance cloud-init
+        // user-data snippet containing the install+join runcmd. This runs the
+        // Tailscale install during cloud-init's final stage, as root in an
+        // unrestricted context — bypassing the virt_qemu_ga_t SELinux domain
+        // that blocks outbound TCP connections from guest-agent exec'd
+        // processes on Fedora/RHEL.
         const tsToken = await tailscaleAccessToken(supabase);
-        const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+        const { data: projectRow } = await supabase.from("projects").select("slug").eq("id", inst.project_id).single();
+        const proj = projectRow as { slug: string };
+        const hostname = `instance-${inst.id.slice(0, 8)}`;
+        const tsKey = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
           capabilities: {
             devices: {
               create: {
@@ -581,97 +561,168 @@ async function processOneStage(
               },
             },
           },
-          expirySeconds: 600,
+          expirySeconds: 3600,
         });
+        const snippetFilename = `ts-${inst.proxmox_vmid}.yaml`;
+        const userDataYaml = `#cloud-config\nruncmd:\n  - "if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true 2>&1 | tee /tmp/ts-install.log"\n`;
+        await pveUploadSnippet(token, snippetFilename, userDataYaml);
 
-        const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-          // tailscaled ships disabled on the template (vmid 9011) so every
-          // clone starts with no bled-through node identity - it must be
-          // started here, on first real enrollment, not assumed running.
-          // cloud-init status --wait ensures cloud-init has fully finished
-          // before we attempt the install. The DNS fix before curl is
-          // needed because Proxmox injects the node's own nameservers
-          // (Tailscale MagicDNS: 100.100.100.100) into the cloud-init
-          // network config, which is unreachable before Tailscale runs.
-          //
-          // On Fedora/RHEL, /etc/resolv.conf is a managed symlink owned by
-          // systemd-resolved — shell redirection and direct writes fail with
-          // EPERM even as root. The correct API is nmcli, which talks to
-          // NetworkManager over D-Bus and has the right privileges. On
-          // Debian/Ubuntu (where systemd-resolved uses DHCP DNS as a
-          // fallback), Tailscale is already installed so this block is a
-          // no-op anyway. tailscale up --accept-dns=true restores Tailscale
-          // DNS management on join.
-          command: ["sh", "-c", `cloud-init status --wait 2>/dev/null || true; ${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then CONN=$(nmcli -g NAME conn show --active 2>/dev/null | head -1); [ -n "$CONN" ] && nmcli conn mod "$CONN" ipv4.dns "8.8.8.8 1.1.1.1" ipv4.ignore-auto-dns yes 2>/dev/null && nmcli conn up "$CONN" >/dev/null 2>&1 && sleep 2; curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+        const vmConfig = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`) as { cicustom?: string };
+        const cicustomParts = (vmConfig.cicustom ?? "").split(",").filter((part: string) => part && !part.startsWith("user="));
+        cicustomParts.push(`user=local:snippets/${snippetFilename}`);
+
+        await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, {
+          cores: p.vcpu,
+          memory: p.memory_gb * 1024,
+          ...(sshkeys ? { sshkeys } : {}),
+          cipassword: password,
+          nameserver: "8.8.8.8 1.1.1.1",
+          cicustom: cicustomParts.join(","),
         });
+        const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
+        await waitForTask(token, startUpid as unknown as string);
         await markStage(supabase, next, {
-          status: "active",
-          detail: { exec_pid: exec.pid, exec_started_at: new Date().toISOString(), hostname, stage_started_at: stageStartedAt },
+          status: "done",
+          finished_at: new Date().toISOString(),
+          detail: { ts_via_cloud_init: true, hostname, ts_snippet_filename: snippetFilename },
         });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
+    } else if (next.stage === "network_access_attach") {
+      const { data: instance } = await supabase.from("instances").select("id, project_id, proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
+      const inst = instance as { id: string; project_id: string; proxmox_vmid: number; private_ip: string | null };
+      const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
+      const proj = project as { slug: string; tailscale_acl_state: string };
 
-      // The re-verification pass that proved the fix above also found a
-      // second, distinct failure mode: apt dist-upgrade upgrades
-      // qemu-guest-agent itself, which restarts its own systemd service
-      // mid-install - wiping the agent's exec-tracking table. The next
-      // poll for our pid then fails outright ("Agent error: PID <n> does
-      // not exist"), not "still running". That's not the script failing;
-      // it's our only handle on it becoming unusable. Rather than fail
-      // the whole operation over a self-inflicted restart, or poll a pid
-      // the agent will never recognize again, drop the dead exec_pid so
-      // the next cycle starts a clean install+join - bounded by the same
-      // stage-wide ceiling as the "still running" case below.
-      let execStatus: { exited?: boolean; exitcode?: number; "err-data"?: string; "out-data"?: string };
-      try {
-        execStatus = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec-status`, { pid: detail.exec_pid }) as {
-          exited?: boolean;
-          exitcode?: number;
-          "err-data"?: string;
-          "out-data"?: string;
-        };
-      } catch (e) {
-        const totalElapsedMs = Date.now() - new Date(stageStartedAt).getTime();
-        if (totalElapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
-          throw new Error(`network_access_attach gave up after ${totalElapsedMs}ms, most recently losing guest-exec tracking: ${String(e)}`);
+      if (operation.kind !== "instance.create" && inst?.private_ip) {
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: inst.private_ip } });
+      } else {
+        if (proj.tailscale_acl_state !== "applied") {
+          await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
-        await markStage(supabase, next, {
-          status: "active",
-          detail: { hostname, stage_started_at: stageStartedAt, waiting_on: "guest_exec_lost_retrying" },
-          error: String(e),
-        });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
 
-      if (!execStatus.exited) {
-        const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
-        if (elapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
-          throw new Error(`guest exec pid ${detail.exec_pid} did not finish within ${NETWORK_ATTACH_EXEC_MAX_MS}ms (install+join script genuinely stuck, not just a slow apt/dracut run)`);
+        try {
+          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
+        } catch (e) {
+          await markStage(supabase, next, { status: "active", error: String(e) });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
-        await markStage(supabase, next, { status: "active", detail: { ...detail, stage_started_at: stageStartedAt } });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-      }
-      if (execStatus.exitcode !== 0) {
-        throw new Error(`guest exec pid ${detail.exec_pid} failed (exit ${execStatus.exitcode}): ${execStatus["err-data"] ?? execStatus["out-data"] ?? ""}`);
-      }
 
-      const tsToken = await tailscaleAccessToken(supabase);
-      const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
-      const device = (devices.devices as Array<{ hostname: string; name: string; addresses: string[]; id: string }> ?? [])
-        .find((d) => d.hostname === detail.hostname);
-      if (!device) {
-        // Registration can lag a moment behind tailscale up returning.
-        await markStage(supabase, next, { status: "active", detail: { ...detail, stage_started_at: stageStartedAt, waiting_on: "tailscale_device_registration" } });
-        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        const stageStartedAt = (next.detail as { stage_started_at?: string })?.stage_started_at ?? new Date().toISOString();
+
+        const { data: tciStageRow } = await supabase
+          .from("operation_stages")
+          .select("detail")
+          .eq("operation_id", operation.id)
+          .eq("stage", "template_cloud_init")
+          .single();
+        const tciDetail = tciStageRow?.detail as { ts_via_cloud_init?: boolean; hostname?: string; ts_snippet_filename?: string } | null;
+        const usedCloudInit = tciDetail?.ts_via_cloud_init === true;
+        const hostname = tciDetail?.hostname ?? `instance-${inst.id.slice(0, 8)}`;
+
+        if (usedCloudInit) {
+          // Cloud-init approach: poll for device enrollment.
+          const tsToken = await tailscaleAccessToken(supabase);
+          const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+          const device = (devices.devices as Array<{ hostname: string; name: string; addresses: string[]; id: string }> ?? [])
+            .find((d) => d.hostname === hostname);
+
+          if (!device) {
+            const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+            if (elapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
+              throw new Error(`network_access_attach (cloud-init): device ${hostname} did not appear in Tailscale after ${elapsedMs}ms — check /tmp/ts-install.log in the VM`);
+            }
+            await markStage(supabase, next, {
+              status: "active",
+              detail: { stage_started_at: stageStartedAt, waiting_on: "tailscale_device_registration", hostname },
+            });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+
+          if (tciDetail?.ts_snippet_filename) {
+            await pveDeleteSnippet(token, tciDetail.ts_snippet_filename);
+          }
+          await supabase.from("instances").update({
+            private_ip: device.addresses[0],
+            private_hostname: device.name,
+            tailscale_device_id: device.id,
+          }).eq("id", inst.id);
+          await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
+        } else {
+          // Legacy exec approach (backward-compat for Ubuntu/Debian provisions
+          // from before the cloud-init approach shipped).
+          const detail = next.detail as { exec_pid?: number; hostname?: string; stage_started_at?: string };
+          if (!detail?.exec_pid) {
+            const tsToken = await tailscaleAccessToken(supabase);
+            const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+              capabilities: {
+                devices: {
+                  create: {
+                    reusable: false,
+                    ephemeral: true,
+                    preauthorized: true,
+                    tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${proj.slug}`],
+                  },
+                },
+              },
+              expirySeconds: 600,
+            });
+            const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+              command: ["sh", "-c", `cloud-init status --wait 2>/dev/null || true; ${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+            });
+            await markStage(supabase, next, {
+              status: "active",
+              detail: { exec_pid: exec.pid, exec_started_at: new Date().toISOString(), hostname, stage_started_at: stageStartedAt },
+            });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+
+          let execStatus: { exited?: boolean; exitcode?: number; "err-data"?: string; "out-data"?: string };
+          try {
+            execStatus = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec-status`, { pid: detail.exec_pid }) as {
+              exited?: boolean; exitcode?: number; "err-data"?: string; "out-data"?: string;
+            };
+          } catch (e) {
+            const totalElapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+            if (totalElapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
+              throw new Error(`network_access_attach gave up after ${totalElapsedMs}ms, most recently losing guest-exec tracking: ${String(e)}`);
+            }
+            await markStage(supabase, next, {
+              status: "active",
+              detail: { hostname, stage_started_at: stageStartedAt, waiting_on: "guest_exec_lost_retrying" },
+              error: String(e),
+            });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+
+          if (!execStatus.exited) {
+            const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+            if (elapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
+              throw new Error(`guest exec pid ${detail.exec_pid} did not finish within ${NETWORK_ATTACH_EXEC_MAX_MS}ms`);
+            }
+            await markStage(supabase, next, { status: "active", detail: { ...detail, stage_started_at: stageStartedAt } });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+          if (execStatus.exitcode !== 0) {
+            throw new Error(`guest exec pid ${detail.exec_pid} failed (exit ${execStatus.exitcode}): ${execStatus["err-data"] ?? execStatus["out-data"] ?? ""}`);
+          }
+
+          const tsToken2 = await tailscaleAccessToken(supabase);
+          const devices2 = await ts(tsToken2, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+          const device2 = (devices2.devices as Array<{ hostname: string; name: string; addresses: string[]; id: string }> ?? [])
+            .find((d) => d.hostname === detail.hostname);
+          if (!device2) {
+            await markStage(supabase, next, { status: "active", detail: { ...detail, stage_started_at: stageStartedAt, waiting_on: "tailscale_device_registration" } });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+          await supabase.from("instances").update({
+            private_ip: device2.addresses[0],
+            private_hostname: device2.name,
+            tailscale_device_id: device2.id,
+          }).eq("id", inst.id);
+          await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device2.addresses[0] } });
+        }
       }
-
-      await supabase.from("instances").update({
-        private_ip: device.addresses[0],
-        private_hostname: device.name,
-        tailscale_device_id: device.id,
-      }).eq("id", inst.id);
-
-      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
     } else if (next.stage === "backup_monitoring_attach") {
       // guild-a-standard-daily covers all guests (all=1) so every provisioned
       // VM is automatically enrolled — no per-VM API call needed and no
