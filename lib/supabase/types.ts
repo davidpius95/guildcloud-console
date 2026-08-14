@@ -421,7 +421,11 @@ export type Database = {
           created_at: string
           device_enrolled: boolean
           email: string | null
+          enrollment_token: string | null
+          enrollment_token_expires_at: string | null
           id: string
+          invite_token: string | null
+          invite_token_expires_at: string | null
           invited_at: string | null
           invited_by: string | null
           invited_email: string | null
@@ -429,13 +433,18 @@ export type Database = {
           last_active_at: string | null
           organization_id: string
           role: string
+          tailscale_device_id: string | null
           user_id: string | null
         }
         Insert: {
           created_at?: string
           device_enrolled?: boolean
           email?: string | null
+          enrollment_token?: string | null
+          enrollment_token_expires_at?: string | null
           id?: string
+          invite_token?: string | null
+          invite_token_expires_at?: string | null
           invited_at?: string | null
           invited_by?: string | null
           invited_email?: string | null
@@ -443,13 +452,18 @@ export type Database = {
           last_active_at?: string | null
           organization_id: string
           role: string
+          tailscale_device_id?: string | null
           user_id?: string | null
         }
         Update: {
           created_at?: string
           device_enrolled?: boolean
           email?: string | null
+          enrollment_token?: string | null
+          enrollment_token_expires_at?: string | null
           id?: string
+          invite_token?: string | null
+          invite_token_expires_at?: string | null
           invited_at?: string | null
           invited_by?: string | null
           invited_email?: string | null
@@ -457,6 +471,7 @@ export type Database = {
           last_active_at?: string | null
           organization_id?: string
           role?: string
+          tailscale_device_id?: string | null
           user_id?: string | null
         }
         Relationships: [
@@ -694,6 +709,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_invite: { Args: { p_token: string }; Returns: undefined }
+      get_invite_by_token: {
+        Args: { p_token: string }
+        Returns: {
+          email: string
+          organization_name: string
+        }[]
+      }
       get_vault_secret: { Args: { secret_name: string }; Returns: string }
       has_org_role: {
         Args: { p_org_id: string; p_roles: string[] }
@@ -715,6 +738,7 @@ export type Database = {
         Args: { p_organization_id: string }
         Returns: undefined
       }
+      redeem_enrollment_token: { Args: { p_token: string }; Returns: string }
       request_instance_deletion: {
         Args: { p_instance_id: string }
         Returns: undefined

@@ -7,6 +7,10 @@ import type { MemberRole } from "@/lib/types";
 
 export type SettingsActionState = { error: string | null };
 
+function siteUrl() {
+  return process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3100";
+}
+
 export async function inviteMember(
   _prev: SettingsActionState,
   formData: FormData,
@@ -20,10 +24,13 @@ export async function inviteMember(
 
   const supabase = await createClient();
 
-  // Phase 1 simplification: creates a pending membership keyed by email,
-  // auto-linked when that person actually signs up (see the
-  // link_pending_invites trigger) - not a full token-based invite-
-  // acceptance flow yet. See docs/phase-1/api-contract.md.
+  // Real invite email, closing the gap docs/phase-1/threat-model.md §5
+  // already flagged: a signed, expiring token (7 days), not just
+  // email-match-on-signup - the person has to actually receive and click
+  // a real link now, not just happen to sign up with a matching address.
+  const inviteToken = crypto.randomUUID() + crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const { error } = await supabase.from("memberships").insert({
     organization_id: userOrg.organization.id,
     invited_email: email,
@@ -31,10 +38,29 @@ export async function inviteMember(
     role,
     invited_by: userOrg.userId,
     invited_at: new Date().toISOString(),
+    invite_token: inviteToken,
+    invite_token_expires_at: expiresAt,
   });
   if (error) {
     if (error.code === "23505") return { error: "This email has already been invited." };
     return { error: error.message };
+  }
+
+  // Best-effort, matching this app's other Edge-Function-call patterns
+  // (e.g. removeMember's device revoke) - a failed send must not undo the
+  // real invite; the pending row and its token still work if the admin
+  // manually shares the link.
+  try {
+    const { error: sendError } = await supabase.functions.invoke("send-invite-email", {
+      body: {
+        to: email,
+        organizationName: userOrg.organization.name,
+        acceptUrl: `${siteUrl()}/accept-invite/${inviteToken}`,
+      },
+    });
+    if (sendError) console.error("send-invite-email failed", sendError);
+  } catch (e) {
+    console.error("send-invite-email call failed", e);
   }
 
   await supabase.rpc("log_audit_event", {
