@@ -46,6 +46,24 @@ const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com"; // matches infra/tailscale/
 // network_access_attach below), not a single blocking wait.
 const NETWORK_ATTACH_EXEC_MAX_MS = 900_000;
 
+// Waits for a cloud-init/unattended-upgrade apt run to release its locks
+// before we install anything ourselves.
+//
+// The bracket classes are load-bearing, not style: `pgrep -f` matches
+// against the FULL command line, and this guard runs inside an `sh -c`
+// whose own command line contains the pattern. A plain 'apt|dpkg|...'
+// therefore matches the guard's own shell, so the loop waits on itself
+// and NEVER exits - the real root cause of every network_access_attach
+// failure investigated on 2026-08-14 (three separate instances, each
+// blamed on a different symptom: the 180s timeout, then a guest-agent
+// restart). '[a]pt' matches the literal text "apt" in a real apt
+// process, but not the literal text "[a]pt" in this guard's own cmdline.
+//
+// Also bounded (~10min) so a genuinely stuck package manager can never
+// hang this stage indefinitely - it proceeds and fails honestly instead.
+const PACKAGE_MANAGER_WAIT =
+  "i=0; while [ $i -lt 300 ] && pgrep -f '[a]pt|[d]pkg|[d]nf|[y]um|[p]acman' >/dev/null 2>&1; do sleep 2; i=$((i+1)); done";
+
 const STAGE_ORDER = [
   "preflight",
   "capacity_reservation",
@@ -570,7 +588,7 @@ async function processOneStage(
           // tailscaled ships disabled on the template (vmid 9011) so every
           // clone starts with no bled-through node identity - it must be
           // started here, on first real enrollment, not assumed running.
-          command: ["sh", "-c", `while pgrep -f 'apt|dpkg|dnf|yum|pacman' >/dev/null 2>&1; do sleep 2; done && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+          command: ["sh", "-c", `${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
         });
         await markStage(supabase, next, {
           status: "active",
