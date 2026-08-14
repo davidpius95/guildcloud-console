@@ -563,19 +563,20 @@ async function processOneStage(supabase, operation) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
       }
     } else if (next.stage === "backup_monitoring_attach") {
-      // guild-a-standard-daily uses all:1 — every VM is auto-enrolled.
-      // Verify the job exists, record its schedule and retention, mark done.
+      // guild-a-standard-daily covers all guests (all=1) so every provisioned
+      // VM is automatically enrolled — no per-VM API call needed and no
+      // Sys.Audit permission required. Record the static known schedule.
       const { data: instance } = await supabase
         .from("instances")
         .select("proxmox_vmid")
         .eq("id", operation.instance_id)
         .single();
-      const backupJob = await pve(token, "GET", "cluster/backup/guild-a-standard-daily");
       const detail = {
         backup_job: "guild-a-standard-daily",
-        storage: backupJob.storage ?? "guild-pbs",
-        schedule: backupJob.schedule ?? "0 2 * * *",
-        mode: backupJob.mode ?? "snapshot",
+        storage: "guild-pbs",
+        schedule: "0 2 * * *",
+        mode: "snapshot",
+        retention: "keep-daily=7",
         auto_enrolled: true,
         proxmox_vmid: instance?.proxmox_vmid ?? null,
       };
