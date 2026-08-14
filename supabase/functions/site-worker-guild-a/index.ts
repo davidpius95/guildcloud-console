@@ -544,7 +544,11 @@ async function processOneStage(
       // initramfs rebuild that alone outran the old single blocking wait,
       // so every retry stacked another redundant install+join attempt (and
       // leaked another unused Tailscale key) instead of resuming the same one.
-      const detail = next.detail as { exec_pid?: number; exec_started_at?: string; hostname?: string; waiting_on?: string };
+      const detail = next.detail as { exec_pid?: number; exec_started_at?: string; hostname?: string; waiting_on?: string; stage_started_at?: string };
+      // Persists across exec restarts (unlike exec_started_at, which
+      // resets each time) - the real ceiling on this whole stage, not
+      // on any single exec attempt.
+      const stageStartedAt = detail?.stage_started_at ?? new Date().toISOString();
 
       if (!detail?.exec_pid) {
         const tsToken = await tailscaleAccessToken(supabase);
@@ -570,23 +574,49 @@ async function processOneStage(
         });
         await markStage(supabase, next, {
           status: "active",
-          detail: { exec_pid: exec.pid, exec_started_at: new Date().toISOString(), hostname },
+          detail: { exec_pid: exec.pid, exec_started_at: new Date().toISOString(), hostname, stage_started_at: stageStartedAt },
         });
         return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
 
-      const execStatus = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec-status`, { pid: detail.exec_pid }) as {
-        exited?: boolean;
-        exitcode?: number;
-        "err-data"?: string;
-        "out-data"?: string;
-      };
+      // The re-verification pass that proved the fix above also found a
+      // second, distinct failure mode: apt dist-upgrade upgrades
+      // qemu-guest-agent itself, which restarts its own systemd service
+      // mid-install - wiping the agent's exec-tracking table. The next
+      // poll for our pid then fails outright ("Agent error: PID <n> does
+      // not exist"), not "still running". That's not the script failing;
+      // it's our only handle on it becoming unusable. Rather than fail
+      // the whole operation over a self-inflicted restart, or poll a pid
+      // the agent will never recognize again, drop the dead exec_pid so
+      // the next cycle starts a clean install+join - bounded by the same
+      // stage-wide ceiling as the "still running" case below.
+      let execStatus: { exited?: boolean; exitcode?: number; "err-data"?: string; "out-data"?: string };
+      try {
+        execStatus = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec-status`, { pid: detail.exec_pid }) as {
+          exited?: boolean;
+          exitcode?: number;
+          "err-data"?: string;
+          "out-data"?: string;
+        };
+      } catch (e) {
+        const totalElapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+        if (totalElapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
+          throw new Error(`network_access_attach gave up after ${totalElapsedMs}ms, most recently losing guest-exec tracking: ${String(e)}`);
+        }
+        await markStage(supabase, next, {
+          status: "active",
+          detail: { hostname, stage_started_at: stageStartedAt, waiting_on: "guest_exec_lost_retrying" },
+          error: String(e),
+        });
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+      }
+
       if (!execStatus.exited) {
-        const elapsedMs = Date.now() - new Date(detail.exec_started_at!).getTime();
+        const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
         if (elapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
           throw new Error(`guest exec pid ${detail.exec_pid} did not finish within ${NETWORK_ATTACH_EXEC_MAX_MS}ms (install+join script genuinely stuck, not just a slow apt/dracut run)`);
         }
-        await markStage(supabase, next, { status: "active", detail });
+        await markStage(supabase, next, { status: "active", detail: { ...detail, stage_started_at: stageStartedAt } });
         return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
       if (execStatus.exitcode !== 0) {
@@ -599,7 +629,7 @@ async function processOneStage(
         .find((d) => d.hostname === detail.hostname);
       if (!device) {
         // Registration can lag a moment behind tailscale up returning.
-        await markStage(supabase, next, { status: "active", detail: { ...detail, waiting_on: "tailscale_device_registration" } });
+        await markStage(supabase, next, { status: "active", detail: { ...detail, stage_started_at: stageStartedAt, waiting_on: "tailscale_device_registration" } });
         return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
 
