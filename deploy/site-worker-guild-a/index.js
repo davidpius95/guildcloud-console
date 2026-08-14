@@ -504,11 +504,17 @@ async function processOneStage(supabase, operation) {
 
           const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
             // cloud-init status --wait ensures cloud-init has fully finished
-            // (including network configuration) before we try to reach the
-            // internet. Without this, Fedora/RHEL VMs with NetworkManager
-            // acquire their DHCP lease asynchronously after cloud-init's own
-            // "done" signal, so curl fires before the default route exists.
-            command: ["sh", "-c", `cloud-init status --wait 2>/dev/null || true; ${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+            // before we attempt the install. The pre-install DNS override is
+            // necessary because Proxmox injects the node's own nameservers
+            // (Tailscale MagicDNS: 100.100.100.100) into the cloud-init
+            // network config. Fedora/RHEL with NetworkManager strictly
+            // honours those static nameservers; Debian/Ubuntu with
+            // systemd-resolved falls back to DHCP-provided DNS. Either way,
+            // 100.100.100.100 is unreachable before Tailscale is running, so
+            // curl cannot resolve tailscale.com. Replacing resolv.conf with
+            // real DNS only when Tailscale is absent is safe: tailscale up
+            // --accept-dns=true restores Tailscale's DNS management on join.
+            command: ["sh", "-c", `cloud-init status --wait 2>/dev/null || true; ${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf && curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
           });
           await markStage(supabase, next, {
             status: "active",
