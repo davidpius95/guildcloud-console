@@ -364,7 +364,7 @@ async function processOneStage(supabase, operation) {
 
         const availableGb = availableBytes / 1024 / 1024 / 1024;
         if (availableGb - heldGb - deltaGb < 0) {
-          throw new Error(`preflight failed: ${availableGb.toFixed(2)}GB available - ${heldGb}GB held - ${deltaGb}GB needed < 0`);
+          throw new Error(`Not enough memory on this site to create this instance right now (${availableGb.toFixed(1)} GB available, ${deltaGb} GB needed). Try again in a few minutes or choose a smaller plan.`);
         }
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { available_gb: availableGb, held_gb: heldGb, needed_gb: deltaGb } });
       }
@@ -600,6 +600,9 @@ async function processOneStage(supabase, operation) {
     await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
     await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
     await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
+    if (operation.instance_id) {
+      await supabase.from("instances").update({ state: "failed" }).eq("id", operation.instance_id);
+    }
     return { status: "operation_failed" };
   }
 }
