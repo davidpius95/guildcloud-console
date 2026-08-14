@@ -70,22 +70,76 @@ flagging: there's no alerting on deploy failures at all yet.
   without error on both real calls (a failure there would have surfaced
   as an error in the returned command instead of a valid script).
 
-## Explicitly not run live this pass
+## Follow-up: the actual `tailscale up` step, run live
 
-- **The final `tailscale up` execution** — the returned command points at
-  `localhost:3100`, only reachable from this dev sandbox itself (a real
-  deployed console would use a real public domain instead). Running it
-  here would join this ephemeral agent sandbox to the real tailnet as a
-  **persistent** (non-ephemeral) device with no guaranteed way to clean
-  it up afterward (device deletion has repeatedly hit an admin-risk-level
-  wall this session). The underlying `tailscale up --authkey ... --hostname
-  ...` command pattern is already proven reliable elsewhere in this
-  codebase (instance enrollment uses the identical pattern successfully,
-  many times, this session) — the residual risk is low, but this exact
-  script wasn't run end-to-end live.
-- **`removeMember`'s revoke path with a real enrolled device** — no
-  member has a real `tailscale_device_id` yet to revoke against (only the
-  Owner successfully got as far as the token/script; running the actual
-  `tailscale up` step, which would create a real device to revoke, was
-  the deliberately-skipped step above). Code reviewed against the
+A later verification pass closed the one gap above — the enrollment
+script was run end-to-end on a real machine, not just reviewed.
+
+**No disposable scratch VM existed.** Every existing instance
+(`timing-e2e-demo`, `uther`, `podTesting`) is a live Production-project
+tenant already running its own `tailscaled` identity — running the
+member-enrollment script on one would have re-authenticated that
+machine's existing tailnet connection under a different identity,
+likely breaking its current private hostname. Provisioned a real,
+throwaway `enroll-test-scratch` instance (Standard 1, Lagos 1) through
+the actual console UI instead, purely as the enrollment target, and
+deleted it afterward.
+
+**Real bug found in an unrelated stage, while waiting for the scratch VM
+to boot**: the new instance's own `network_access_attach` stage (which
+installs *its own* tenant-identity Tailscale, unrelated to member
+enrollment) failed after 8 retries: `guest exec pid 1057 did not finish
+within 180000ms`. Direct inspection via guest-agent exec showed this
+wasn't a hang — `apt-get dist-upgrade` had pulled in a `systemd` package
+upgrade, which triggered a `dracut` initramfs rebuild, which genuinely
+took longer than the 180s timeout tuned in this session's earlier
+commits. The operation gave up permanently (`operations.state = failed`)
+rather than retrying once dpkg/apt were done. This is a real, still-open
+gap: the timeout covers package *download* but not a triggered
+initramfs rebuild, and failed operations don't get automatically
+retried. Not fixed this pass (out of scope for enrollment
+verification) — worth a follow-up.
+
+**Real gotcha confirmed**: the enrollment key's 300-second expiry
+(`expirySeconds: 300` on the Tailscale key, by design — see
+Architecture above) is real and was hit live. The token redeemed early
+(while still waiting on the scratch VM) expired before the script ran;
+`tailscale up` failed with `backend error: invalid key`. Re-clicking
+"Connect this device" and running the fresh command immediately worked.
+This confirms the reveal-once/short-key-lifetime design is doing its
+job, not a bug — but it's a real operational trap for anyone testing
+this flow with a slow-to-boot target.
+
+**Verified live, independently, end to end:**
+- Ran the real script (base64-piped onto the VM via guest-agent exec,
+  since the returned command points at `localhost:3100` — only this dev
+  sandbox can reach that, confirming the concern flagged in the original
+  pass; a real deployed console would use a real public domain instead).
+- `tailscale status --json` on the VM itself showed a real device:
+  `HostName: "member-c3f57b80"`, `Tags: ["tag:guildcloud-member"]`
+  (not `tag:guildcloud-tenant`), `Online: true`, a real Tailscale IP.
+- One worker cycle later, `memberships.device_enrolled` flipped to
+  `true` and `tailscale_device_id` matched the real device's NodeID —
+  confirmed via SQL, not just trusting the UI.
+- The real Settings/Networking UI showed "Enrolled" after refresh.
+- The real ACL grant was confirmed via a direct Tailscale API call
+  (worker's own OAuth-token-exchange pattern, reused standalone since
+  the `mcp__tailscale__*` tools were broken this session by an
+  unrelated schema-validation bug): `tag:guildcloud-member` really does
+  grant to `tag:guildcloud-tenant-project-b44c4107`, the org's real
+  applied Production project.
+
+**Cleanup**: the test Tailscale device was deleted via a direct API call
+(`DELETE device/<id>`, real `200`) — no admin-risk wall this time. The
+scratch instance was deleted through the real console UI; confirmed gone
+from both the `instances` table and Proxmox itself
+(`qemu-server/708869.conf` no longer exists).
+
+## Still not run live
+
+- **`removeMember`'s revoke path with a real enrolled device** — the
+  scratch instance and its device were deleted directly, not through
+  `removeMember`'s own revoke-then-delete flow (no membership actually
+  had a real `tailscale_device_id` at teardown time in a state that
+  exercised that exact code path). Code reviewed against the
   already-proven `processPendingInstanceDeletions` pattern instead.
