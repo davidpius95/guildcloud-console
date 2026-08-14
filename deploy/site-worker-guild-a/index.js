@@ -239,6 +239,38 @@ async function processPendingSshKeySyncs(supabase) {
   }
 }
 
+// Real device self-enrollment completion signal. Deliberately NOT driven
+// by a client-side "I ran the command" ping from the browser - that's
+// exactly the kind of client-trusted signal this worker avoids everywhere
+// else (see request_instance_deletion's own "never trust the client"
+// comment). Instead: list the real tailnet, match by the hostname
+// convention the enroll-device Edge Function uses (member-<id8>) and the
+// tag:guildcloud-member tag, and flip device_enrolled only once the
+// device genuinely shows up.
+async function syncMemberDeviceEnrollment(supabase) {
+  const { data: pending, error } = await supabase
+    .from("memberships")
+    .select("id")
+    .eq("device_enrolled", false)
+    .not("user_id", "is", null);
+  if (error) {
+    console.log(JSON.stringify({ ok: false, where: "syncMemberDeviceEnrollment_select", error: error.message }));
+    return;
+  }
+  if (!pending || pending.length === 0) return;
+
+  const tsToken = await tailscaleAccessToken(supabase);
+  const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+  const deviceList = devices.devices ?? [];
+
+  for (const member of pending) {
+    const hostname = `member-${member.id.slice(0, 8)}`;
+    const device = deviceList.find((d) => d.hostname === hostname && (d.tags ?? []).includes("tag:guildcloud-member"));
+    if (!device) continue;
+    await supabase.from("memberships").update({ device_enrolled: true, tailscale_device_id: device.id }).eq("id", member.id);
+  }
+}
+
 async function applyPendingProjectAcls(supabase) {
   const { data: pending } = await supabase.from("projects").select("id, slug").eq("tailscale_acl_state", "pending");
   if (!pending || pending.length === 0) return;
@@ -508,6 +540,12 @@ async function run() {
     await processPendingSshKeySyncs(supabase);
   } catch (e) {
     console.log(JSON.stringify({ ok: false, stage: "process_pending_ssh_key_syncs", error: String(e) }));
+  }
+
+  try {
+    await syncMemberDeviceEnrollment(supabase);
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, stage: "sync_member_device_enrollment", error: String(e) }));
   }
 
   while (Date.now() < deadline) {

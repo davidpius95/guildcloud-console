@@ -86,3 +86,16 @@ export async function removeAccessGrant(id: string) {
 
   revalidatePath("/console/networking");
 }
+
+// Real device self-enrollment. Calls the enroll-device Edge Function
+// (which holds the Tailscale credentials this app deliberately never
+// does) and returns a one-shot install command for the caller's own
+// device - never a raw Tailscale key, and the word "Tailscale" never
+// appears in this response, only inside the script itself once fetched.
+export async function requestDeviceEnrollment(): Promise<{ command: string | null; error: string | null }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.functions.invoke("enroll-device", { method: "POST" });
+  if (error) return { command: null, error: error.message };
+  if (data?.error) return { command: null, error: data.error };
+  return { command: data?.command ?? null, error: null };
+}

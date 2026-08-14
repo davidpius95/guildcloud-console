@@ -1,5 +1,4 @@
 import type {
-  AccessPolicyRule,
   Alert,
   Bucket,
   CatalogImage,
@@ -17,7 +16,6 @@ import type {
   Project,
   Site,
   StorageAccessKey,
-  TeamMember,
   Volume,
   WebhookDelivery,
   WebhookEndpoint,
@@ -704,42 +702,6 @@ export const invoices: Invoice[] = [
   { id: "inv_2026_06", period: "June 2026", amount: 198.2, status: "paid", issuedAt: "2026-07-01" },
   { id: "inv_2026_05", period: "May 2026", amount: 176.4, status: "paid", issuedAt: "2026-06-01" },
 ];
-
-export const team: TeamMember[] = [
-  {
-    id: "tm_1",
-    name: "Saurabh Rapatwar",
-    email: "saurabh@northwindlabs.io",
-    role: "Owner",
-    deviceEnrolled: true,
-    lastActive: "2026-08-07 09:44",
-  },
-  {
-    id: "tm_2",
-    name: "Amara Obi",
-    email: "amara@northwindlabs.io",
-    role: "Admin",
-    deviceEnrolled: true,
-    lastActive: "2026-08-07 08:20",
-  },
-  {
-    id: "tm_3",
-    name: "Dan Whitfield",
-    email: "dan@northwindlabs.io",
-    role: "Developer",
-    deviceEnrolled: true,
-    lastActive: "2026-08-06 17:55",
-  },
-  {
-    id: "tm_4",
-    name: "Priya Raman",
-    email: "priya@northwindlabs.io",
-    role: "Billing",
-    deviceEnrolled: false,
-    lastActive: "2026-08-03 11:02",
-  },
-];
-
 
 export const plans: CatalogPlan[] = [
   {

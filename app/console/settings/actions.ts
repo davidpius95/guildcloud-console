@@ -75,6 +75,23 @@ export async function removeMember(membershipId: string) {
   if (!userOrg) return;
   const supabase = await createClient();
 
+  // Real bug this closes: the UI already promised "network permission
+  // and server login revoked together" but nothing enforced the network
+  // half. The console can't call the Tailscale API itself (no Vault
+  // access - see docs/phase-1/operator-runbook.md), so this routes
+  // through the enroll-device Edge Function's revoke path instead.
+  // Best-effort and never blocks the actual removal - a leftover device
+  // is a hygiene gap, not a live credential leak, same trade-off already
+  // accepted for instance deletion's Tailscale device cleanup.
+  try {
+    await supabase.functions.invoke("enroll-device", {
+      method: "DELETE",
+      body: { membershipId },
+    });
+  } catch (e) {
+    console.error("enroll-device revoke call failed", e);
+  }
+
   const { error } = await supabase.from("memberships").delete().eq("id", membershipId);
   if (error) return;
 

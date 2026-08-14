@@ -11,8 +11,9 @@ import {
 } from "@/components/ui";
 import { IconLock } from "@/components/icons";
 import { AccessPolicyCard } from "@/components/access-policy-card";
+import { EnrolledDevicesCard } from "@/components/enrolled-devices-card";
 import { PrivateAddressTable } from "@/components/private-address-table";
-import { sites, team } from "@/lib/mock-data";
+import { sites } from "@/lib/mock-data";
 import {
   getAccessGrantsForOrg,
   getCurrentUserOrg,
@@ -108,38 +109,7 @@ export default async function NetworkingPage() {
           </div>
         </Card>
 
-        <Card className="min-w-0">
-          <CardHeader title="Enrolled devices" subtitle="Removing a teammate revokes network permission and server login together." />
-          <Table minWidth="24rem">
-            <thead>
-              <tr>
-                <Th>Member</Th>
-                <Th>Role</Th>
-                <Th>Device</Th>
-                <Th>Last active</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {team.map((m) => (
-                <tr key={m.id}>
-                  <Td>
-                    <span className="font-medium text-ink-900">{m.name}</span>
-                    <p className="text-xs text-ink-400">{m.email}</p>
-                  </Td>
-                  <Td className="text-ink-500">{m.role}</Td>
-                  <Td>
-                    <Badge tone={m.deviceEnrolled ? "lemon" : "neutral"}>
-                      {m.deviceEnrolled ? "Enrolled" : "Not enrolled"}
-                    </Badge>
-                  </Td>
-                  <Td className="whitespace-nowrap text-xs text-ink-500">
-                    {m.lastActive}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <EnrolledDevicesCard members={members} currentUserId={userOrg?.userId ?? null} />
       </div>
 
       <PrivateAddressTable instances={realInstances} />

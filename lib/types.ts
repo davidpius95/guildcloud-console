@@ -189,15 +189,6 @@ export type AccessResourceType =
   | "bucket"
   | "function";
 
-export type AccessPolicyRule = {
-  id: string;
-  projectId: string;
-  memberId: string;
-  resourceType: AccessResourceType | "all";
-  resourceId?: string;
-  createdAt: string;
-};
-
 export type StorageAccessKey = {
   id: string;
   label: string;
@@ -245,17 +236,7 @@ export type WebhookDelivery = {
 
 export type MemberRole = "Owner" | "Admin" | "Developer" | "Billing" | "Read-only";
 
-export type TeamMember = {
-  id: string;
-  name: string;
-  email: string;
-  role: MemberRole;
-  deviceEnrolled: boolean;
-  lastActive: string;
-};
-
-// Real (Supabase-backed) organization and membership types, distinct from
-// the TeamMember shape above (which is still used by mock-only pages).
+// Real (Supabase-backed) organization and membership types.
 export type Organization = {
   id: string;
   name: string;
