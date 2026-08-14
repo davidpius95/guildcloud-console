@@ -503,7 +503,12 @@ async function processOneStage(supabase, operation) {
           });
 
           const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-            command: ["sh", "-c", `${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+            // cloud-init status --wait ensures cloud-init has fully finished
+            // (including network configuration) before we try to reach the
+            // internet. Without this, Fedora/RHEL VMs with NetworkManager
+            // acquire their DHCP lease asynchronously after cloud-init's own
+            // "done" signal, so curl fires before the default route exists.
+            command: ["sh", "-c", `cloud-init status --wait 2>/dev/null || true; ${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
           });
           await markStage(supabase, next, {
             status: "active",
