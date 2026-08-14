@@ -401,7 +401,10 @@ async function processPendingInstanceDeletions(supabase: ReturnType<typeof creat
       await supabase.from("instances").delete().eq("id", inst.id);
     } catch (e) {
       console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions", instance_id: inst.id, error: String(e) }));
-      // left 'deleting' deliberately - next invocation retries
+      const message = String(e);
+      if (message.includes("Permission check failed") || message.includes("not found") || message.includes("no such vm")) {
+        await supabase.from("instances").update({ state: "failed" }).eq("id", inst.id);
+      }
     }
   }
 }
