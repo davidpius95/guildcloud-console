@@ -232,27 +232,37 @@ async function ts(token: string, method: string, path: string, body?: unknown) {
   return json;
 }
 
-async function pveUploadSnippet(token: string, filename: string, content: string) {
-  const form = new FormData();
-  form.append("content", "snippets");
-  form.append("filename", filename);
-  form.append("file", new Blob([content], { type: "application/yaml" }), filename);
-  const url = new URL(`https://${PVE_HOST}:${PVE_PORT}/api2/json/nodes/${NODE}/storage/local/upload`);
-  const resp = await fetch(url.toString(), {
-    method: "POST",
-    headers: { Authorization: `PVEAPIToken=${token}` },
-    body: form,
-  });
-  const json = await resp.json();
-  if (!resp.ok) throw new Error(`Proxmox snippet upload ${filename} -> ${resp.status}: ${JSON.stringify(json)}`);
-  if (json.data) await waitForTask(token, json.data, 30_000);
+// Writes a cloud-init snippet into Proxmox's local:snippets store.
+//
+// This is a direct filesystem write, not an API call, because Proxmox has no
+// API for creating snippets: POST /nodes/{node}/storage/{storage}/upload only
+// accepts content types iso, vztmpl and import (verified against PVE 9.2).
+// Attempting a snippets upload returns an empty body, which is what previously
+// surfaced as "Unexpected end of JSON input" mid-provision.
+//
+// SNIPPETS_DIR is a bind mount of the node's /var/lib/vz/snippets into the
+// (unprivileged) worker container. The host directory carries an ACL granting
+// uid 100000 - the host-side identity of the container's root - write access;
+// without it the mount is read-only to us. Files land as 0644 owned by that
+// uid, which the Proxmox daemon (real root) can still read.
+//
+// Note this is why the real worker runs on the Guild-A LXC and not as a
+// deployed Edge Function: this path does not exist in Supabase's runtime, the
+// same constraint that already forced the move in Phase 2 (Proxmox's private
+// LAN IP is unreachable from Supabase's cloud).
+const SNIPPETS_DIR = Deno.env.get("SNIPPETS_DIR") ?? "/var/lib/vz/snippets";
+
+function writeSnippet(filename: string, content: string) {
+  Deno.writeTextFileSync(`${SNIPPETS_DIR}/${filename}`, content, { mode: 0o644 });
 }
 
-async function pveDeleteSnippet(token: string, filename: string) {
+function deleteSnippet(filename: string) {
   try {
-    await pve(token, "DELETE", `nodes/${NODE}/storage/local/content/${encodeURIComponent(`snippets/${filename}`)}`);
+    Deno.removeSync(`${SNIPPETS_DIR}/${filename}`);
   } catch (e) {
-    console.log(JSON.stringify({ ok: false, where: "pveDeleteSnippet", filename, error: String(e) }));
+    if (!(e instanceof Deno.errors.NotFound)) {
+      console.log(JSON.stringify({ ok: false, where: "deleteSnippet", filename, error: String(e) }));
+    }
   }
 }
 
@@ -565,7 +575,7 @@ async function processOneStage(
         });
         const snippetFilename = `ts-${inst.proxmox_vmid}.yaml`;
         const userDataYaml = `#cloud-config\nruncmd:\n  - "if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true 2>&1 | tee /tmp/ts-install.log"\n`;
-        await pveUploadSnippet(token, snippetFilename, userDataYaml);
+        writeSnippet(snippetFilename, userDataYaml);
 
         const vmConfig = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`) as { cicustom?: string };
         const cicustomParts = (vmConfig.cicustom ?? "").split(",").filter((part: string) => part && !part.startsWith("user="));
@@ -640,7 +650,7 @@ async function processOneStage(
           }
 
           if (tciDetail?.ts_snippet_filename) {
-            await pveDeleteSnippet(token, tciDetail.ts_snippet_filename);
+            deleteSnippet(tciDetail.ts_snippet_filename);
           }
           await supabase.from("instances").update({
             private_ip: device.addresses[0],
