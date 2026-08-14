@@ -589,10 +589,6 @@ async function processOneStage(
           "#cloud-config",
           "# Per-instance vendor-data written by the GuildCloud site worker.",
           `ssh_pwauth: ${inst.password_ssh_enabled ? "true" : "false"}`,
-          "package_update: true",
-          "packages:",
-          "  - qemu-guest-agent",
-          "  - curl",
           "runcmd:",
           "  - [ systemctl, enable, --now, qemu-guest-agent ]",
         ];
