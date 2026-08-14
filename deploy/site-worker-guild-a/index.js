@@ -494,15 +494,45 @@ async function processOneStage(supabase, operation) {
           capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
           expirySeconds: 3600,
         });
-        const snippetFilename = `ts-${inst.proxmox_vmid}.yaml`;
-        const userDataYaml = `#cloud-config\nruncmd:\n  - "if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true 2>&1 | tee /tmp/ts-install.log"\n`;
-        writeSnippet(snippetFilename, userDataYaml);
+        // This goes in vendor-data, NOT user-data. cicustom entries *replace*
+        // the file Proxmox would otherwise generate (QemuServer/Cloudinit.pm
+        // only generates each one when no custom volid is set), and the
+        // generated user-data is what carries ciuser, cipassword, sshkeys and
+        // hostname. Putting our runcmd in user= silently strips all four -
+        // every instance would come up with no SSH key and no password.
+        // vendor-data has no such generated content to displace.
+        //
+        // Because we are replacing vendor-data, this file also has to carry
+        // what the shared tailscale-vendor.yaml did for template clones: the
+        // guest agent, and password auth when the customer opted into it.
+        const snippetFilename = `guildcloud-${inst.proxmox_vmid}.yaml`;
+        const vendorLines = [
+          "#cloud-config",
+          "# Per-instance vendor-data written by the GuildCloud site worker.",
+          `ssh_pwauth: ${inst.password_ssh_enabled ? "true" : "false"}`,
+          "package_update: true",
+          "packages:",
+          "  - qemu-guest-agent",
+          "  - curl",
+          "runcmd:",
+          '  - [ systemctl, enable, --now, qemu-guest-agent ]',
+        ];
+        if (inst.password_ssh_enabled) {
+          vendorLines.push(
+            `  - [ sh, -c, "printf 'PasswordAuthentication yes\\nKbdInteractiveAuthentication no\\n' > /etc/ssh/sshd_config.d/00-guild-auth.conf" ]`,
+            `  - [ sh, -c, "systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true" ]`,
+          );
+        }
+        vendorLines.push(
+          `  - [ sh, -c, "if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true 2>&1 | tee /tmp/ts-install.log" ]`,
+        );
+        writeSnippet(snippetFilename, vendorLines.join("\n") + "\n");
 
-        // Preserve any existing cicustom (e.g. vendor script from template),
-        // replacing only the user= part with our per-instance snippet.
+        // Preserve any other cicustom entries, replacing only vendor= (the
+        // template's shared snippet, which our per-instance one supersedes).
         const vmConfig = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`);
-        const cicustomParts = (vmConfig.cicustom ?? "").split(",").filter((p) => p && !p.startsWith("user="));
-        cicustomParts.push(`user=local:snippets/${snippetFilename}`);
+        const cicustomParts = (vmConfig.cicustom ?? "").split(",").filter((p) => p && !p.startsWith("vendor="));
+        cicustomParts.push(`vendor=local:snippets/${snippetFilename}`);
 
         await pve(token, "PUT", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/config`, {
           cores: plan.vcpu,
