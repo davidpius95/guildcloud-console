@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
 
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      return new Response(JSON.stringify({ error: `resend -> ${resp.status}: ${JSON.stringify(json)}` }), { status: 502 });
+      return new Response(JSON.stringify({ error: `resend -> ${resp.status}: ${JSON.stringify(json)}` }), { status: resp.status });
     }
 
     return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
