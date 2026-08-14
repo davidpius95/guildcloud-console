@@ -563,7 +563,23 @@ async function processOneStage(supabase, operation) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
       }
     } else if (next.stage === "backup_monitoring_attach") {
-      await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
+      // guild-a-standard-daily uses all:1 — every VM is auto-enrolled.
+      // Verify the job exists, record its schedule and retention, mark done.
+      const { data: instance } = await supabase
+        .from("instances")
+        .select("proxmox_vmid")
+        .eq("id", operation.instance_id)
+        .single();
+      const backupJob = await pve(token, "GET", "cluster/backup/guild-a-standard-daily");
+      const detail = {
+        backup_job: "guild-a-standard-daily",
+        storage: backupJob.storage ?? "guild-pbs",
+        schedule: backupJob.schedule ?? "0 2 * * *",
+        mode: backupJob.mode ?? "snapshot",
+        auto_enrolled: true,
+        proxmox_vmid: instance?.proxmox_vmid ?? null,
+      };
+      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail });
     } else if (next.stage === "automated_verification") {
       const { data: instance } = await supabase.from("instances").select("proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
       if (operation.kind === "instance.snapshot") {

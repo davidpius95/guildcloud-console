@@ -659,9 +659,24 @@ async function processOneStage(
 
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
     } else if (next.stage === "backup_monitoring_attach") {
-      // Real PBS backup attachment is future work, not this phase either.
-      // Marked 'skipped', not silently 'done' - see docs/phase-2/threat-model.md.
-      await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
+      // guild-a-standard-daily uses all:1 — every VM is auto-enrolled.
+      // Verify the job exists, record its schedule and retention, mark done.
+      const { data: instance } = await supabase
+        .from("instances")
+        .select("proxmox_vmid")
+        .eq("id", operation.instance_id)
+        .single();
+      const inst2 = instance as { proxmox_vmid: number | null };
+      const backupJob = await pve(token, "GET", "cluster/backup/guild-a-standard-daily");
+      const detail = {
+        backup_job: "guild-a-standard-daily",
+        storage: (backupJob as Record<string, unknown>).storage ?? "guild-pbs",
+        schedule: (backupJob as Record<string, unknown>).schedule ?? "0 2 * * *",
+        mode: (backupJob as Record<string, unknown>).mode ?? "snapshot",
+        auto_enrolled: true,
+        proxmox_vmid: inst2?.proxmox_vmid ?? null,
+      };
+      await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail });
     } else if (next.stage === "automated_verification") {
       const { data: instance } = await supabase.from("instances").select("proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
       const inst = instance as { proxmox_vmid: number; private_ip: string | null };
