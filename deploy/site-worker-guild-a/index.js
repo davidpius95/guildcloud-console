@@ -101,6 +101,33 @@ async function getVaultSecret(supabase, name) {
   return data;
 }
 
+function isTransientFetchError(error) {
+  const message = String(error);
+  return (
+    message.includes("fetch failed") ||
+    message.includes("ECONNRESET") ||
+    message.includes("ETIMEDOUT") ||
+    message.includes("EAI_AGAIN") ||
+    message.includes("ENOTFOUND")
+  );
+}
+
+async function fetchWithRetry(url, init, label, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts || !isTransientFetchError(error)) {
+        throw error;
+      }
+      await new Promise((r) => setTimeout(r, attempt * 250));
+    }
+  }
+  throw new Error(`${label} failed: ${String(lastError)}`);
+}
+
 async function proxmoxToken(supabase) {
   return getVaultSecret(supabase, "proxmox_guild_a_site_worker_token");
 }
@@ -157,11 +184,11 @@ async function waitForGuestExec(token, vmid, pid, maxWaitMs = 180000) {
 async function tailscaleAccessToken(supabase) {
   const clientId = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_id");
   const clientSecret = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_secret");
-  const resp = await fetch("https://api.tailscale.com/api/v2/oauth/token", {
+  const resp = await fetchWithRetry("https://api.tailscale.com/api/v2/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
-  });
+  }, "tailscale oauth token exchange");
   const json = await resp.json();
   if (!resp.ok) throw new Error(`tailscale oauth token exchange -> ${resp.status}: ${JSON.stringify(json)}`);
   return json.access_token;
@@ -173,7 +200,7 @@ async function ts(token, method, pathStr, body) {
     init.body = JSON.stringify(body);
     init.headers["Content-Type"] = "application/json";
   }
-  const resp = await fetch(`https://api.tailscale.com/api/v2/${pathStr}`, init);
+  const resp = await fetchWithRetry(`https://api.tailscale.com/api/v2/${pathStr}`, init, `Tailscale ${method} ${pathStr}`);
   const json = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(`Tailscale ${method} ${pathStr} -> ${resp.status}: ${JSON.stringify(json)}`);
   return json;
@@ -598,8 +625,24 @@ async function processOneStage(supabase, operation) {
           // Cloud-init approach: Tailscale install+join ran during cloud-init
           // runcmd (unrestricted root context, no virt_qemu_ga_t restriction).
           // Just poll for the device to appear in the tailnet.
-          const tsToken = await tailscaleAccessToken(supabase);
-          const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+          let devices;
+          try {
+            const tsToken = await tailscaleAccessToken(supabase);
+            devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+          } catch (e) {
+            if (isTransientFetchError(e)) {
+              const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+              if (elapsedMs <= NETWORK_ATTACH_EXEC_MAX_MS) {
+                await markStage(supabase, next, {
+                  status: "active",
+                  detail: { stage_started_at: stageStartedAt, waiting_on: "tailscale_api_retry", hostname },
+                  error: String(e),
+                });
+                return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+              }
+            }
+            throw e;
+          }
           const device = (devices.devices ?? []).find((d) => d.hostname === hostname);
 
           if (!device) {
@@ -635,11 +678,27 @@ async function processOneStage(supabase, operation) {
           // retry stacked another redundant install+join attempt (and leaked
           // another unused Tailscale key) instead of resuming the same one.
           if (!next.detail?.exec_pid) {
-            const tsToken = await tailscaleAccessToken(supabase);
-            const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
-              capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
-              expirySeconds: 600,
-            });
+            let key;
+            try {
+              const tsToken = await tailscaleAccessToken(supabase);
+              key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+                capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
+                expirySeconds: 600,
+              });
+            } catch (e) {
+              if (isTransientFetchError(e)) {
+                const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+                if (elapsedMs <= NETWORK_ATTACH_EXEC_MAX_MS) {
+                  await markStage(supabase, next, {
+                    status: "active",
+                    detail: { stage_started_at: stageStartedAt, waiting_on: "tailscale_api_retry", hostname },
+                    error: String(e),
+                  });
+                  return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+                }
+              }
+              throw e;
+            }
             const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
               command: ["sh", "-c", `cloud-init status --wait 2>/dev/null || true; ${PACKAGE_MANAGER_WAIT} && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
             });
@@ -689,8 +748,24 @@ async function processOneStage(supabase, operation) {
             throw new Error(`guest exec pid ${next.detail.exec_pid} failed (exit ${execStatus.exitcode}): ${execStatus["err-data"] ?? execStatus["out-data"] ?? ""}`);
           }
 
-          const tsToken = await tailscaleAccessToken(supabase);
-          const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+          let devices;
+          try {
+            const tsToken = await tailscaleAccessToken(supabase);
+            devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+          } catch (e) {
+            if (isTransientFetchError(e)) {
+              const elapsedMs = Date.now() - new Date(stageStartedAt).getTime();
+              if (elapsedMs <= NETWORK_ATTACH_EXEC_MAX_MS) {
+                await markStage(supabase, next, {
+                  status: "active",
+                  detail: { ...next.detail, stage_started_at: stageStartedAt, waiting_on: "tailscale_api_retry" },
+                  error: String(e),
+                });
+                return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+              }
+            }
+            throw e;
+          }
           const device = (devices.devices ?? []).find((d) => d.hostname === next.detail.hostname);
           if (!device) {
             await markStage(supabase, next, { status: "active", detail: { ...next.detail, stage_started_at: stageStartedAt, waiting_on: "tailscale_device_registration" } });
