@@ -57,6 +57,12 @@ const LOOP_BUDGET_MS = 150000;
 const VERIFY_RETRY_MS = 4000;
 const TAILSCALE_TAILNET = "tail345216.ts.net";
 const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com";
+// Real-world ceiling for the network_access_attach install+join script.
+// apt dist-upgrade can trigger a systemd package upgrade, which triggers a
+// dracut initramfs rebuild - alone often exceeds a single guest-exec poll
+// window. This is a total-elapsed cap across many worker cycles (see
+// network_access_attach below), not a single blocking wait.
+const NETWORK_ATTACH_EXEC_MAX_MS = 900000;
 
 const STAGE_ORDER = [
   "preflight", "capacity_reservation", "operation_created", "site_worker_dispatch",
@@ -455,22 +461,53 @@ async function processOneStage(supabase, operation) {
           return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
 
-        const tsToken = await tailscaleAccessToken(supabase);
         const hostname = `instance-${inst.id.slice(0, 8)}`;
-        const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
-          capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
-          expirySeconds: 600,
-        });
 
-        const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-          command: ["sh", "-c", `while pgrep -f 'apt|dpkg|dnf|yum|pacman' >/dev/null 2>&1; do sleep 2; done && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
-        });
-        await waitForGuestExec(token, inst.proxmox_vmid, exec.pid, 180000);
+        // Install+join is kicked off once and then polled across worker
+        // cycles (via next.detail), not blocked on synchronously. A single
+        // blocking wait here previously re-minted a fresh Tailscale key and
+        // kicked a brand-new exec on every retry - after the first exec was
+        // already running - because a timeout was treated as fatal instead
+        // of "still working". Real failure mode hit in 2026-08-14
+        // verification: apt dist-upgrade triggered a dracut initramfs
+        // rebuild that alone outran the old single 180s wait, so every
+        // retry stacked another redundant install+join attempt (and leaked
+        // another unused Tailscale key) instead of resuming the same one.
+        if (!next.detail?.exec_pid) {
+          const tsToken = await tailscaleAccessToken(supabase);
+          const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+            capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
+            expirySeconds: 600,
+          });
 
+          const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+            command: ["sh", "-c", `while pgrep -f 'apt|dpkg|dnf|yum|pacman' >/dev/null 2>&1; do sleep 2; done && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+          });
+          await markStage(supabase, next, {
+            status: "active",
+            detail: { exec_pid: exec.pid, exec_started_at: new Date().toISOString(), hostname },
+          });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
+
+        const execStatus = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec-status`, { pid: next.detail.exec_pid });
+        if (!execStatus.exited) {
+          const elapsedMs = Date.now() - new Date(next.detail.exec_started_at).getTime();
+          if (elapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
+            throw new Error(`guest exec pid ${next.detail.exec_pid} did not finish within ${NETWORK_ATTACH_EXEC_MAX_MS}ms (install+join script genuinely stuck, not just a slow apt/dracut run)`);
+          }
+          await markStage(supabase, next, { status: "active", detail: next.detail });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
+        if (execStatus.exitcode !== 0) {
+          throw new Error(`guest exec pid ${next.detail.exec_pid} failed (exit ${execStatus.exitcode}): ${execStatus["err-data"] ?? execStatus["out-data"] ?? ""}`);
+        }
+
+        const tsToken = await tailscaleAccessToken(supabase);
         const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
-        const device = (devices.devices ?? []).find((d) => d.hostname === hostname);
+        const device = (devices.devices ?? []).find((d) => d.hostname === next.detail.hostname);
         if (!device) {
-          await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_device_registration" } });
+          await markStage(supabase, next, { status: "active", detail: { ...next.detail, waiting_on: "tailscale_device_registration" } });
           return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
 

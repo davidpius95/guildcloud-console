@@ -39,6 +39,12 @@ const LOOP_BUDGET_MS = 150_000; // leaves headroom under a 300s service timeout
 const VERIFY_RETRY_MS = 4_000; // internal guest-agent retry spacing, not tied to the external timer anymore
 const TAILSCALE_TAILNET = "tail345216.ts.net";
 const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com"; // matches infra/tailscale/policy.hujson's existing convention
+// Real-world ceiling for the network_access_attach install+join script.
+// apt dist-upgrade can trigger a systemd package upgrade, which triggers a
+// dracut initramfs rebuild - alone often exceeds a single guest-exec poll
+// window. This is a total-elapsed cap across many worker cycles (see
+// network_access_attach below), not a single blocking wait.
+const NETWORK_ATTACH_EXEC_MAX_MS = 900_000;
 
 const STAGE_ORDER = [
   "preflight",
@@ -526,36 +532,74 @@ async function processOneStage(
         return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
 
-      const tsToken = await tailscaleAccessToken(supabase);
       const hostname = `instance-${inst.id.slice(0, 8)}`;
-      const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
-        capabilities: {
-          devices: {
-            create: {
-              reusable: false,
-              ephemeral: true,
-              preauthorized: true,
-              tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${proj.slug}`],
+
+      // Install+join is kicked off once and then polled across worker
+      // cycles (via next.detail), not blocked on synchronously. A single
+      // blocking wait here previously re-minted a fresh Tailscale key and
+      // kicked a brand-new exec on every retry - after the first exec was
+      // already running - because a timeout was treated as fatal instead
+      // of "still working". Real failure mode hit in 2026-08-14
+      // verification (Node.js worker): apt dist-upgrade triggered a dracut
+      // initramfs rebuild that alone outran the old single blocking wait,
+      // so every retry stacked another redundant install+join attempt (and
+      // leaked another unused Tailscale key) instead of resuming the same one.
+      const detail = next.detail as { exec_pid?: number; exec_started_at?: string; hostname?: string; waiting_on?: string };
+
+      if (!detail?.exec_pid) {
+        const tsToken = await tailscaleAccessToken(supabase);
+        const key = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+          capabilities: {
+            devices: {
+              create: {
+                reusable: false,
+                ephemeral: true,
+                preauthorized: true,
+                tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${proj.slug}`],
+              },
             },
           },
-        },
-        expirySeconds: 600,
-      });
+          expirySeconds: 600,
+        });
 
-      const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
-        // tailscaled ships disabled on the template (vmid 9011) so every
-        // clone starts with no bled-through node identity - it must be
-        // started here, on first real enrollment, not assumed running.
-        command: ["sh", "-c", `systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
-      });
-      await waitForGuestExec(token, inst.proxmox_vmid, exec.pid as number);
+        const exec = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+          // tailscaled ships disabled on the template (vmid 9011) so every
+          // clone starts with no bled-through node identity - it must be
+          // started here, on first real enrollment, not assumed running.
+          command: ["sh", "-c", `while pgrep -f 'apt|dpkg|dnf|yum|pacman' >/dev/null 2>&1; do sleep 2; done && if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${key.key} --hostname ${hostname} --accept-dns=true`],
+        });
+        await markStage(supabase, next, {
+          status: "active",
+          detail: { exec_pid: exec.pid, exec_started_at: new Date().toISOString(), hostname },
+        });
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+      }
 
+      const execStatus = await pve(token, "GET", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec-status`, { pid: detail.exec_pid }) as {
+        exited?: boolean;
+        exitcode?: number;
+        "err-data"?: string;
+        "out-data"?: string;
+      };
+      if (!execStatus.exited) {
+        const elapsedMs = Date.now() - new Date(detail.exec_started_at!).getTime();
+        if (elapsedMs > NETWORK_ATTACH_EXEC_MAX_MS) {
+          throw new Error(`guest exec pid ${detail.exec_pid} did not finish within ${NETWORK_ATTACH_EXEC_MAX_MS}ms (install+join script genuinely stuck, not just a slow apt/dracut run)`);
+        }
+        await markStage(supabase, next, { status: "active", detail });
+        return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+      }
+      if (execStatus.exitcode !== 0) {
+        throw new Error(`guest exec pid ${detail.exec_pid} failed (exit ${execStatus.exitcode}): ${execStatus["err-data"] ?? execStatus["out-data"] ?? ""}`);
+      }
+
+      const tsToken = await tailscaleAccessToken(supabase);
       const devices = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
       const device = (devices.devices as Array<{ hostname: string; name: string; addresses: string[]; id: string }> ?? [])
-        .find((d) => d.hostname === hostname);
+        .find((d) => d.hostname === detail.hostname);
       if (!device) {
         // Registration can lag a moment behind tailscale up returning.
-        await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_device_registration" } });
+        await markStage(supabase, next, { status: "active", detail: { ...detail, waiting_on: "tailscale_device_registration" } });
         return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
       }
 
