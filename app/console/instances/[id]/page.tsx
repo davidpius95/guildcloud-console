@@ -116,8 +116,14 @@ export default async function InstanceDetailPage({
               {plan.name} ({plan.vcpu} vCPU · {plan.memory_gb} GB RAM)
             </Badge>
           ) : null}
+          {/* Same identifier, without naming the execution plane at the
+              customer: GuildCloud owns the control plane and customers never
+              address Proxmox directly (§5), so surfacing its vendor name here
+              only invites them to reason about a system they are promised
+              they never have to. Still shown, because it is the number
+              support will ask for. */}
           {realInstance.proxmox_vmid ? (
-            <Badge tone="neutral">Proxmox VMID {realInstance.proxmox_vmid}</Badge>
+            <Badge tone="neutral">Server ID {realInstance.proxmox_vmid}</Badge>
           ) : null}
           {realInstance.catalog_image_id ? (
             <span className="inline-flex items-center gap-1">

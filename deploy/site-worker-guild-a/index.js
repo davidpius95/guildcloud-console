@@ -64,6 +64,17 @@ const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com";
 // network_access_attach below), not a single blocking wait.
 const NETWORK_ATTACH_EXEC_MAX_MS = 900000;
 
+// Warm pool. Kept deliberately tiny: measured cluster headroom is ~8.33 GB
+// before the plan's 30% reserve (§11) trips, and a warm VM holds its full
+// plan RAM while idle, so every pool slot is one fewer real customer
+// instance the site can accept. One Standard-2 slot (4 GB) is the most that
+// can be justified until capacity grows. Only the single most common
+// image/plan is pooled; every other combination provisions cold.
+const WARM_POOL = { siteId: "lag-1", imageId: "ubuntu-2404", planId: "std-2", target: 1 };
+// A pool VM enrols before we know which customer will get it, so it joins
+// under a pool-owned tag and is retagged into the tenant at claim time.
+const TAILSCALE_POOL_TAG = "tag:guildcloud-pool";
+
 // Waits for a cloud-init/unattended-upgrade apt run to release its locks
 // before we install anything ourselves.
 //
@@ -376,6 +387,178 @@ async function applyPendingProjectAcls(supabase) {
   }
 }
 
+// Single-quoted shell literal: wraps in '...' and escapes any embedded
+// quote. SSH public keys and generated passwords both reach a shell here,
+// and a key comment containing a quote would otherwise break the script.
+function shellQuote(s) {
+  return `'${String(s ?? "").replace(/'/g, `'\\''`)}'`;
+}
+
+// proxmox_api_call records whether this operation claimed a pooled VM; every
+// later stage keys off that one fact rather than re-deriving it.
+async function warmPoolDetail(supabase, operation) {
+  const { data } = await supabase
+    .from("operation_stages")
+    .select("detail")
+    .eq("operation_id", operation.id)
+    .eq("stage", "proxmox_api_call")
+    .single();
+  return data?.detail?.from_warm_pool === true ? data.detail : null;
+}
+
+async function isFromWarmPool(supabase, operation) {
+  return (await warmPoolDetail(supabase, operation)) !== null;
+}
+
+// Claims exactly one warm VM for a create request, or returns null so the
+// caller falls back to provisioning cold. The UPDATE re-checks state='warm'
+// so two workers (or two operations in one loop) can never hand the same VM
+// to two customers - the second CAS matches no row and returns nothing.
+async function claimWarmVm(supabase, inst, instanceId) {
+  const { data: candidates } = await supabase
+    .from("warm_pool_vms")
+    .select("id, proxmox_vmid, tailscale_hostname, tailscale_device_id, private_ip")
+    .eq("state", "warm")
+    .eq("site_id", WARM_POOL.siteId)
+    .eq("catalog_image_id", inst.catalog_image_id)
+    .eq("catalog_plan_id", inst.catalog_plan_id)
+    .limit(1);
+  if (!candidates || candidates.length === 0) return null;
+
+  const { data: claimed } = await supabase
+    .from("warm_pool_vms")
+    .update({
+      state: "claimed",
+      claimed_by_instance_id: instanceId,
+      claimed_at: new Date().toISOString(),
+    })
+    .eq("id", candidates[0].id)
+    .eq("state", "warm")
+    .select("id, proxmox_vmid, tailscale_hostname, tailscale_device_id, private_ip");
+
+  return claimed && claimed.length > 0 ? claimed[0] : null;
+}
+
+// Keeps the pool topped up, and promotes building -> warm once a pool VM has
+// actually joined the tailnet. Runs once per worker cycle, does at most one
+// build per cycle so a cold start cannot stampede the cluster.
+async function maintainWarmPool(supabase, token) {
+  const { data: rows } = await supabase
+    .from("warm_pool_vms")
+    .select("id, proxmox_vmid, tailscale_hostname, state, created_at")
+    .in("state", ["building", "warm"]);
+  const pool = rows ?? [];
+
+  // Promote anything that has finished enrolling.
+  const building = pool.filter((r) => r.state === "building");
+  if (building.length > 0) {
+    let devices = [];
+    try {
+      const tsToken = await tailscaleAccessToken(supabase);
+      const res = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+      devices = res.devices ?? [];
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, where: "maintainWarmPool_devices", error: String(e) }));
+    }
+    for (const row of building) {
+      const device = devices.find((d) => d.hostname === row.tailscale_hostname);
+      if (device) {
+        await supabase
+          .from("warm_pool_vms")
+          .update({
+            state: "warm",
+            warmed_at: new Date().toISOString(),
+            tailscale_device_id: device.id,
+            private_ip: (device.addresses ?? []).find((a) => a.startsWith("100.")) ?? null,
+          })
+          .eq("id", row.id);
+        console.log(JSON.stringify({ ok: true, where: "warmPool_warmed", vmid: row.proxmox_vmid }));
+        continue;
+      }
+      // Never enrolled: stop holding RAM for a VM that will not become usable.
+      if (Date.now() - new Date(row.created_at).getTime() > NETWORK_ATTACH_EXEC_MAX_MS) {
+        await supabase
+          .from("warm_pool_vms")
+          .update({ state: "failed", failure_reason: "did not enrol before timeout" })
+          .eq("id", row.id);
+        try {
+          await pve(token, "POST", `nodes/${NODE}/qemu/${row.proxmox_vmid}/status/stop`);
+          await pve(token, "DELETE", `nodes/${NODE}/qemu/${row.proxmox_vmid}`, { purge: 1 });
+        } catch (e) {
+          console.log(JSON.stringify({ ok: false, where: "warmPool_sweep", vmid: row.proxmox_vmid, error: String(e) }));
+        }
+      }
+    }
+  }
+
+  if (pool.length >= WARM_POOL.target) return;
+
+  // Build one. Same template and cloud-init shape a real instance gets, minus
+  // any customer identity: no org SSH keys, no tenant tag, no password. The
+  // customer's own credentials are pushed at claim time instead.
+  try {
+    const { data: t } = await supabase
+      .from("catalog_image_site_templates")
+      .select("proxmox_vmid")
+      .eq("catalog_image_id", WARM_POOL.imageId)
+      .eq("site_id", WARM_POOL.siteId)
+      .single();
+    if (!t) return;
+
+    const newid = 100000 + Math.floor(Math.random() * 800000);
+    const hostname = `pool-${newid}`;
+    const tsToken = await tailscaleAccessToken(supabase);
+    const tsKey = await ts(tsToken, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
+      capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: [TAILSCALE_POOL_TAG] } } },
+      expirySeconds: 3600,
+    });
+
+    const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, {
+      newid, name: hostname, pool: "guildcloud-guild-a", full: 0,
+    });
+    await waitForTask(token, upid);
+
+    const vendorLines = [
+      "#cloud-config",
+      "# Warm-pool vendor-data. Carries no customer identity by design.",
+      "ssh_pwauth: false",
+      "bootcmd:",
+      `  - [ sh, -c, "systemctl mask --now systemd-networkd-wait-online.service NetworkManager-wait-online.service 2>/dev/null || true" ]`,
+      `  - [ sh, -c, "systemctl set-default multi-user.target 2>/dev/null || true" ]`,
+      `  - [ sh, -c, "systemctl mask snapd.seeded.service 2>/dev/null || true" ]`,
+      "runcmd:",
+      "  - [ systemctl, enable, --now, qemu-guest-agent ]",
+      `  - [ sh, -c, "for i in 1 2 3 4 5; do command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh; systemctl enable --now tailscaled; sleep 3; timeout 90 tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true && break; sleep 15; done 2>&1 | tee -a /tmp/ts-install.log" ]`,
+    ];
+    writeSnippet(`guildcloud-${newid}.yaml`, vendorLines.join("\n") + "\n");
+
+    const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", WARM_POOL.planId).single();
+    await pve(token, "PUT", `nodes/${NODE}/qemu/${newid}/config`, {
+      cores: plan.vcpu,
+      memory: plan.memory_gb * 1024,
+      ciuser: "guildvm",
+      ipconfig0: "ip=dhcp",
+      nameserver: "8.8.8.8 1.1.1.1",
+      ciupgrade: 0,
+      cicustom: `vendor=local:snippets/guildcloud-${newid}.yaml`,
+    });
+    await pve(token, "POST", `nodes/${NODE}/qemu/${newid}/status/start`);
+
+    await supabase.from("warm_pool_vms").insert({
+      site_id: WARM_POOL.siteId,
+      catalog_image_id: WARM_POOL.imageId,
+      catalog_plan_id: WARM_POOL.planId,
+      proxmox_vmid: newid,
+      proxmox_node: NODE,
+      tailscale_hostname: hostname,
+      state: "building",
+    });
+    console.log(JSON.stringify({ ok: true, where: "warmPool_building", vmid: newid }));
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, where: "maintainWarmPool_build", error: String(e) }));
+  }
+}
+
 async function markStage(supabase, stage, patch) {
   const finalPatch = (patch.status === "done" || patch.status === "skipped") && !("error" in patch)
     ? { ...patch, error: null }
@@ -409,8 +592,8 @@ async function processOneStage(supabase, operation) {
         const availableBytes = status.memory.available;
         const { data: held } = await supabase.from("capacity_reservations").select("memory_gb").eq("node", NODE).eq("state", "held").gt("expires_at", new Date().toISOString());
         const heldGb = (held ?? []).reduce((sum, r) => sum + Number(r.memory_gb), 0);
-        const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
-        
+        const { data: instance } = await supabase.from("instances").select("catalog_plan_id, catalog_image_id").eq("id", operation.instance_id).single();
+
         let deltaGb = 0;
         if (operation.kind === "instance.resize") {
           const targetPlanId = operation.stages?.target_plan_id || instance?.catalog_plan_id;
@@ -420,6 +603,23 @@ async function processOneStage(supabase, operation) {
         } else {
           const { data: plan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", instance.catalog_plan_id).single();
           deltaGb = Number(plan?.memory_gb ?? 2);
+
+          // A claimable warm VM has *already* been paid for in RAM - it is
+          // running right now, and its memory is part of what makes
+          // `available` small. Charging the request again for memory the pool
+          // is holding on its behalf double-counts, and on a cluster this
+          // tight it means the pool blocks the very requests it exists to
+          // serve: the first create after warming failed preflight for 4 GB
+          // that the warm VM itself was holding.
+          const { data: claimable } = await supabase
+            .from("warm_pool_vms")
+            .select("id")
+            .eq("state", "warm")
+            .eq("site_id", WARM_POOL.siteId)
+            .eq("catalog_image_id", instance.catalog_image_id ?? WARM_POOL.imageId)
+            .eq("catalog_plan_id", instance.catalog_plan_id)
+            .limit(1);
+          if (claimable && claimable.length > 0) deltaGb = 0;
         }
 
         const availableGb = availableBytes / 1024 / 1024 / 1024;
@@ -441,7 +641,11 @@ async function processOneStage(supabase, operation) {
     } else if (next.stage === "operation_created" || next.stage === "site_worker_dispatch") {
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
     } else if (next.stage === "proxmox_api_call") {
-      const { data: inst } = await supabase.from("instances").select("id, name, catalog_image_id, proxmox_vmid").eq("id", operation.instance_id).single();
+      // catalog_plan_id is load-bearing here, not incidental: claimWarmVm
+      // filters the pool on it, and selecting it away made every claim query
+      // filter on undefined, match nothing, and silently fall through to a
+      // cold clone while the pool sat warm and unused.
+      const { data: inst } = await supabase.from("instances").select("id, name, catalog_image_id, catalog_plan_id, proxmox_vmid").eq("id", operation.instance_id).single();
       
       if (operation.kind === "instance.resize") {
         const targetPlanId = operation.stages?.target_plan_id;
@@ -466,12 +670,38 @@ async function processOneStage(supabase, operation) {
         }
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { restored_from: snapname } });
       } else {
-        const { data: t } = await supabase.from("catalog_image_site_templates").select("proxmox_vmid, proxmox_node, proxmox_storage").eq("catalog_image_id", inst.catalog_image_id).eq("site_id", "lag-1").single();
-        const newid = 100000 + Math.floor(Math.random() * 800000);
-        const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, { newid, name: inst.name, pool: "guildcloud-guild-a", full: 0 });
-        await waitForTask(token, upid);
-        await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: NODE }).eq("id", inst.id);
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
+        // Warm path first: a pooled VM has already paid the clone, the boot
+        // and the Tailscale enrolment that make cold provisioning take
+        // minutes. Claiming one turns the rest of this operation into
+        // configuration only. Falls through to a cold clone whenever the pool
+        // is empty or the request is for an image/plan that is not pooled.
+        const warm = await claimWarmVm(supabase, inst, inst.id);
+        if (warm) {
+          await pve(token, "PUT", `nodes/${NODE}/qemu/${warm.proxmox_vmid}/config`, { name: inst.name });
+          await supabase
+            .from("instances")
+            .update({ proxmox_vmid: warm.proxmox_vmid, proxmox_node: NODE })
+            .eq("id", inst.id);
+          await markStage(supabase, next, {
+            status: "done",
+            finished_at: new Date().toISOString(),
+            detail: {
+              vmid: warm.proxmox_vmid,
+              from_warm_pool: true,
+              warm_pool_id: warm.id,
+              pool_hostname: warm.tailscale_hostname,
+              tailscale_device_id: warm.tailscale_device_id,
+              private_ip: warm.private_ip,
+            },
+          });
+        } else {
+          const { data: t } = await supabase.from("catalog_image_site_templates").select("proxmox_vmid, proxmox_node, proxmox_storage").eq("catalog_image_id", inst.catalog_image_id).eq("site_id", "lag-1").single();
+          const newid = 100000 + Math.floor(Math.random() * 800000);
+          const upid = await pve(token, "POST", `nodes/${NODE}/qemu/${t.proxmox_vmid}/clone`, { newid, name: inst.name, pool: "guildcloud-guild-a", full: 0 });
+          await waitForTask(token, upid);
+          await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: NODE }).eq("id", inst.id);
+          await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
+        }
       }
     } else if (next.stage === "template_cloud_init") {
       const { data: inst } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled, project_id").eq("id", operation.instance_id).single();
@@ -501,6 +731,55 @@ async function processOneStage(supabase, operation) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } else if (operation.kind === "instance.snapshot") {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
+      } else if (await isFromWarmPool(supabase, operation)) {
+        // Warm path: the VM is already booted and already on the tailnet, so
+        // there is no snippet to write and nothing to reboot. All that is
+        // missing is the customer's identity, which is pushed in live rather
+        // than baked into a first boot that already happened.
+        const poolDetail = await warmPoolDetail(supabase, operation);
+        const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
+        const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
+        const password = crypto.randomUUID() + crypto.randomUUID();
+        if (inst.password_ssh_enabled) {
+          await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });
+        }
+
+        const hostname = `instance-${inst.id.slice(0, 8)}`;
+        // One exec: authorized_keys, optional password auth, and the tailnet
+        // hostname. Keys are written directly because cloud-init's sshkeys
+        // handling only runs on a first boot this VM is already past.
+        const script = [
+          "set -e",
+          "install -d -m 700 -o guildvm -g guildvm /home/guildvm/.ssh",
+          `printf '%s\\n' ${shellQuote(sshkeysRaw)} > /home/guildvm/.ssh/authorized_keys`,
+          "chmod 600 /home/guildvm/.ssh/authorized_keys",
+          "chown guildvm:guildvm /home/guildvm/.ssh/authorized_keys",
+          inst.password_ssh_enabled
+            ? `printf 'PasswordAuthentication yes\\nKbdInteractiveAuthentication no\\n' > /etc/ssh/sshd_config.d/00-guild-auth.conf && echo ${shellQuote(`guildvm:${password}`)} | chpasswd && (systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true)`
+            : "rm -f /etc/ssh/sshd_config.d/00-guild-auth.conf 2>/dev/null || true",
+          `tailscale set --hostname=${hostname} 2>/dev/null || true`,
+        ].join("\n");
+
+        const execRes = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/exec`, {
+          command: ["/bin/sh", "-c", script],
+        });
+        await waitForGuestExec(token, inst.proxmox_vmid, execRes.pid, 60000);
+
+        await markStage(supabase, next, {
+          status: "done",
+          finished_at: new Date().toISOString(),
+          detail: {
+            hostname,
+            from_warm_pool: true,
+            // The device is already enrolled, so network_access_attach has
+            // nothing to wait for - it only has to retag it into the tenant.
+            ts_via_cloud_init: false,
+            warm_pool_id: poolDetail?.warm_pool_id,
+            pool_hostname: poolDetail?.pool_hostname,
+            tailscale_device_id: poolDetail?.tailscale_device_id,
+            private_ip: poolDetail?.private_ip,
+          },
+        });
       } else {
         const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
         const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
@@ -541,6 +820,29 @@ async function processOneStage(supabase, operation) {
           "#cloud-config",
           "# Per-instance vendor-data written by the GuildCloud site worker.",
           `ssh_pwauth: ${inst.password_ssh_enabled ? "true" : "false"}`,
+          // bootcmd runs in cloud-init-local, before network-online.target is
+          // reached, so masking here takes effect on THIS boot rather than the
+          // next one. systemd-networkd-wait-online blocks multi-user.target for
+          // its full 120s default timeout on these cloud images — measured as
+          // 2min 0.166s of a 2min 34s userspace boot, and by far the single
+          // largest component of provisioning time. Nothing downstream needs
+          // it: cloud-init has its own network readiness handling, and the
+          // instance is verified by real Tailscale enrolment, not by this unit.
+          "bootcmd:",
+          `  - [ sh, -c, "systemctl mask --now systemd-networkd-wait-online.service NetworkManager-wait-online.service 2>/dev/null || true" ]`,
+          // Server images should not be waiting on graphical.target.
+          `  - [ sh, -c, "systemctl set-default multi-user.target 2>/dev/null || true" ]`,
+          // snapd seeding adds ~38s on Ubuntu and nothing in the provisioning
+          // path depends on it; it still runs, just not as a boot barrier.
+          //
+          // Deliberately NOT masking snapd.service/snapd.socket/grub2-common
+          // here: masking those at bootcmd time races units that are already
+          // queued and broke the dependency graph outright — boot never
+          // reached multi-user.target, cloud-init never ran runcmd, and the
+          // instance came up with Tailscale installed but logged out. Those
+          // units have to be removed when the template is built, not masked
+          // mid-boot.
+          `  - [ sh, -c, "systemctl mask snapd.seeded.service 2>/dev/null || true" ]`,
           "runcmd:",
           '  - [ systemctl, enable, --now, qemu-guest-agent ]',
         ];
@@ -551,7 +853,18 @@ async function processOneStage(supabase, operation) {
           );
         }
         vendorLines.push(
-          `  - [ sh, -c, "if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true 2>&1 | tee /tmp/ts-install.log" ]`,
+          // Retried, not chained. The previous single-shot `a && b && c` form
+          // made any transient failure terminal: a DNS blip on the install
+          // curl, or tailscaled not yet up when `tailscale up` ran, left the
+          // instance permanently unenrolled and hung network_access_attach
+          // forever. `timeout` also bounds `tailscale up` so a hang cannot
+          // block cloud-init from finishing.
+          `  - [ sh, -c, "for i in 1 2 3 4 5; do command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh; systemctl enable --now tailscaled; sleep 3; timeout 90 tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true && break; sleep 15; done 2>&1 | tee -a /tmp/ts-install.log" ]`,
+          // Detached so cloud-init finishes and the instance reaches Ready
+          // without waiting on it. Proxmox's own ciupgrade is disabled below
+          // because its upgrade runs *before* runcmd, gating enrolment behind
+          // a full dist-upgrade and stalling network_access_attach for minutes.
+          `  - [ sh, -c, "systemd-run --unit=guildcloud-postboot-upgrade --collect /bin/sh -c 'if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade; elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade; elif command -v pacman >/dev/null 2>&1; then pacman -Syu --noconfirm; fi' || true" ]`,
         );
         writeSnippet(snippetFilename, vendorLines.join("\n") + "\n");
 
@@ -571,6 +884,12 @@ async function processOneStage(supabase, operation) {
           // Proxmox injects from the node's own resolv.conf and is unreachable
           // before Tailscale is installed.
           nameserver: "8.8.8.8 1.1.1.1",
+          // Proxmox defaults this to 1, which emits package_upgrade:true into
+          // user-data. cloud-init runs that upgrade before runcmd, so Tailscale
+          // enrolment - which network_access_attach polls for - cannot start
+          // until a full dist-upgrade finishes. Patching moves to the detached
+          // post-boot unit in the vendor-data above.
+          ciupgrade: 0,
           cicustom: cicustomParts.join(","),
         });
         try {
@@ -593,19 +912,21 @@ async function processOneStage(supabase, operation) {
       } else {
         const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
 
-        if (project.tailscale_acl_state !== "applied") {
-          await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
-          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-        }
-
-        try {
-          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
-        } catch (e) {
-          await markStage(supabase, next, { status: "active", error: String(e) });
-          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-        }
-
+        // Start the clock on first entry, before any wait, and carry it
+        // through every retry below. Both waits used to omit stage_started_at,
+        // so the elapsed bound could never fire: an instance whose guest agent
+        // never came up (or whose ACL never applied) retried here forever
+        // instead of failing with a diagnosable error.
         const stageStartedAt = next.detail?.stage_started_at ?? new Date().toISOString();
+        const elapsed = () => Date.now() - new Date(stageStartedAt).getTime();
+
+        if (project.tailscale_acl_state !== "applied") {
+          if (elapsed() > NETWORK_ATTACH_EXEC_MAX_MS) {
+            throw new Error(`network_access_attach: project ACL still "${project.tailscale_acl_state}" after ${elapsed()}ms — expected "applied"`);
+          }
+          await markStage(supabase, next, { status: "active", detail: { stage_started_at: stageStartedAt, waiting_on: "tailscale_acl" } });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
 
         // Check whether template_cloud_init used the new cloud-init approach
         // (ts_via_cloud_init:true, available for all new provisions) or the
@@ -620,6 +941,64 @@ async function processOneStage(supabase, operation) {
         const usedCloudInit = tciStage?.detail?.ts_via_cloud_init === true;
         // hostname is deterministic from inst.id — same formula in both stages.
         const hostname = tciStage?.detail?.hostname ?? `instance-${inst.id.slice(0, 8)}`;
+
+        // Warm path: the device joined the tailnet minutes ago under the pool
+        // tag. The only thing standing between it and the customer is its
+        // tags, so this stage is a single retag rather than a poll. This is
+        // where the minutes of cold provisioning actually disappear.
+        const warmDetail = tciStage?.detail?.from_warm_pool === true ? tciStage.detail : null;
+        if (warmDetail) {
+          const tsToken = await tailscaleAccessToken(supabase);
+          let deviceId = warmDetail.tailscale_device_id;
+          if (!deviceId) {
+            const res = await ts(tsToken, "GET", `tailnet/${TAILSCALE_TAILNET}/devices`);
+            const d = (res.devices ?? []).find(
+              (x) => x.hostname === hostname || x.hostname === warmDetail.pool_hostname,
+            );
+            deviceId = d?.id;
+          }
+          if (!deviceId) {
+            throw new Error(`network_access_attach (warm pool): could not resolve the Tailscale device for ${warmDetail.pool_hostname}`);
+          }
+          // Retag out of the pool and into this project. Until this lands the
+          // VM is pool-tagged and not reachable as tenant infrastructure, so
+          // this is the step that actually grants the customer access.
+          await ts(tsToken, "POST", `device/${deviceId}/tags`, {
+            tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`],
+          });
+
+          const privateIp = warmDetail.private_ip ?? null;
+          if (privateIp) {
+            await supabase.from("instances").update({ private_ip: privateIp }).eq("id", inst.id);
+          }
+          if (warmDetail.warm_pool_id) {
+            deleteSnippet(`guildcloud-${inst.proxmox_vmid}.yaml`);
+          }
+          await markStage(supabase, next, {
+            status: "done",
+            finished_at: new Date().toISOString(),
+            detail: { from_warm_pool: true, hostname, private_ip: privateIp, tailscale_device_id: deviceId },
+          });
+          return { status: "advanced" };
+        }
+
+        // Only the legacy path shells into the VM, so only it needs the guest
+        // agent. The cloud-init path proves success by the device appearing in
+        // the tailnet and never execs anything — gating it on the agent made
+        // provisioning wait on a capability it does not use, adding minutes on
+        // every distro and stalling entirely on ones where the agent is slow to
+        // come up (Rocky/Alma), even though enrolment itself was fine.
+        if (!usedCloudInit) {
+          try {
+            await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
+          } catch (e) {
+            if (elapsed() > NETWORK_ATTACH_EXEC_MAX_MS) {
+              throw new Error(`network_access_attach: QEMU guest agent never responded after ${elapsed()}ms — the VM may have failed to boot or cloud-init failed before installing it: ${String(e)}`);
+            }
+            await markStage(supabase, next, { status: "active", detail: { stage_started_at: stageStartedAt, waiting_on: "guest_agent" }, error: String(e) });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+        }
 
         if (usedCloudInit) {
           // Cloud-init approach: Tailscale install+join ran during cloud-init
@@ -865,6 +1244,14 @@ async function run() {
     await syncMemberDeviceEnrollment(supabase);
   } catch (e) {
     console.log(JSON.stringify({ ok: false, stage: "sync_member_device_enrollment", error: String(e) }));
+  }
+
+  // Refill after the operation loop below would have drained it, so a claim
+  // and its replacement never contend for the same cycle.
+  try {
+    await maintainWarmPool(supabase, await proxmoxToken(supabase));
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, stage: "maintain_warm_pool", error: String(e) }));
   }
 
   while (Date.now() < deadline) {

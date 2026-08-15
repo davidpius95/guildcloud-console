@@ -627,7 +627,18 @@ async function processOneStage(
           );
         }
         vendorLines.push(
-          `  - [ sh, -c, "if ! command -v tailscale >/dev/null 2>&1; then curl -fsSL https://tailscale.com/install.sh | sh; fi && systemctl enable --now tailscaled && tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true 2>&1 | tee /tmp/ts-install.log" ]`,
+          // Retried, not chained. The previous single-shot `a && b && c` form
+          // made any transient failure terminal: a DNS blip on the install
+          // curl, or tailscaled not yet up when `tailscale up` ran, left the
+          // instance permanently unenrolled and hung network_access_attach
+          // forever. `timeout` also bounds `tailscale up` so a hang cannot
+          // block cloud-init from finishing.
+          `  - [ sh, -c, "for i in 1 2 3 4 5; do command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh; systemctl enable --now tailscaled; sleep 3; timeout 90 tailscale up --authkey ${tsKey.key} --hostname ${hostname} --accept-dns=true && break; sleep 15; done 2>&1 | tee -a /tmp/ts-install.log" ]`,
+          // Detached so cloud-init finishes and the instance reaches Ready
+          // without waiting on it. Proxmox's own ciupgrade is disabled below
+          // because its upgrade runs *before* runcmd, gating enrolment behind
+          // a full dist-upgrade and stalling network_access_attach for minutes.
+          `  - [ sh, -c, "systemd-run --unit=guildcloud-postboot-upgrade --collect /bin/sh -c 'if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade; elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade; elif command -v pacman >/dev/null 2>&1; then pacman -Syu --noconfirm; fi' || true" ]`,
         );
         writeSnippet(snippetFilename, vendorLines.join("\n") + "\n");
 
@@ -643,6 +654,12 @@ async function processOneStage(
           ...(sshkeys ? { sshkeys } : {}),
           cipassword: password,
           nameserver: "8.8.8.8 1.1.1.1",
+          // Proxmox defaults this to 1, which emits package_upgrade:true into
+          // user-data. cloud-init runs that upgrade before runcmd, so Tailscale
+          // enrolment - which network_access_attach polls for - cannot start
+          // until a full dist-upgrade finishes. Patching moves to the detached
+          // post-boot unit in the vendor-data above.
+          ciupgrade: 0,
           cicustom: cicustomParts.join(","),
         });
         const startUpid = await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/status/start`);
@@ -662,19 +679,21 @@ async function processOneStage(
       if (operation.kind !== "instance.create" && inst?.private_ip) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: inst.private_ip } });
       } else {
-        if (proj.tailscale_acl_state !== "applied") {
-          await markStage(supabase, next, { status: "active", detail: { waiting_on: "tailscale_acl" } });
-          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-        }
-
-        try {
-          await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
-        } catch (e) {
-          await markStage(supabase, next, { status: "active", error: String(e) });
-          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
-        }
-
+        // Start the clock on first entry, before any wait, and carry it
+        // through every retry below. Both waits used to omit stage_started_at,
+        // so the elapsed bound could never fire: an instance whose guest agent
+        // never came up (or whose ACL never applied) retried here forever
+        // instead of failing with a diagnosable error.
         const stageStartedAt = (next.detail as { stage_started_at?: string })?.stage_started_at ?? new Date().toISOString();
+        const elapsed = () => Date.now() - new Date(stageStartedAt).getTime();
+
+        if (proj.tailscale_acl_state !== "applied") {
+          if (elapsed() > NETWORK_ATTACH_EXEC_MAX_MS) {
+            throw new Error(`network_access_attach: project ACL still "${proj.tailscale_acl_state}" after ${elapsed()}ms — expected "applied"`);
+          }
+          await markStage(supabase, next, { status: "active", detail: { stage_started_at: stageStartedAt, waiting_on: "tailscale_acl" } });
+          return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+        }
 
         const { data: tciStageRow } = await supabase
           .from("operation_stages")
@@ -685,6 +704,24 @@ async function processOneStage(
         const tciDetail = tciStageRow?.detail as { ts_via_cloud_init?: boolean; hostname?: string; ts_snippet_filename?: string } | null;
         const usedCloudInit = tciDetail?.ts_via_cloud_init === true;
         const hostname = tciDetail?.hostname ?? `instance-${inst.id.slice(0, 8)}`;
+
+        // Only the legacy path shells into the VM, so only it needs the guest
+        // agent. The cloud-init path proves success by the device appearing in
+        // the tailnet and never execs anything — gating it on the agent made
+        // provisioning wait on a capability it does not use, adding minutes on
+        // every distro and stalling entirely on ones where the agent is slow to
+        // come up (Rocky/Alma), even though enrolment itself was fine.
+        if (!usedCloudInit) {
+          try {
+            await pve(token, "POST", `nodes/${NODE}/qemu/${inst.proxmox_vmid}/agent/ping`);
+          } catch (e) {
+            if (elapsed() > NETWORK_ATTACH_EXEC_MAX_MS) {
+              throw new Error(`network_access_attach: QEMU guest agent never responded after ${elapsed()}ms — the VM may have failed to boot or cloud-init failed before installing it: ${String(e)}`);
+            }
+            await markStage(supabase, next, { status: "active", detail: { stage_started_at: stageStartedAt, waiting_on: "guest_agent" }, error: String(e) });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+          }
+        }
 
         if (usedCloudInit) {
           // Cloud-init approach: poll for device enrollment.

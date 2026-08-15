@@ -173,6 +173,16 @@ export function CreateInstanceWizard({
     (t) => t.catalogImageId === imageId && t.siteId === siteId,
   );
   const canCreate = site.acceptingNewWork && imageAvailable && name.trim().length > 0;
+  // A disabled button with no stated reason is a dead end - the name field
+  // lives in step 5, far below this button on the sticky summary, so the
+  // most common blocker is invisible from where the button is.
+  const blockedReason = !site.acceptingNewWork
+    ? `${site.name} is not accepting new work right now.`
+    : !imageAvailable
+      ? `${image.name} ${image.version} has no tested template at ${site.name}.`
+      : name.trim().length === 0
+        ? "Give your server a name in step 5 to continue."
+        : null;
   // Any image with a mapped Proxmox template at the selected site (lag-1)
   // reaches the site worker for real provisioning.
   const isReal = imageAvailable;
@@ -572,6 +582,16 @@ export function CreateInstanceWizard({
             >
               {pending ? "Creating…" : "Create instance"}
             </Button>
+
+            {blockedReason && !pending ? (
+              <p className="text-center text-xs text-ink-500">{blockedReason}</p>
+            ) : null}
+
+            {canCreate && !pending ? (
+              <p className="text-center text-xs text-ink-400">
+                Takes about two to four minutes to be ready.
+              </p>
+            ) : null}
 
             <div className="flex items-start gap-2 text-xs text-ink-400">
               <IconLock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
