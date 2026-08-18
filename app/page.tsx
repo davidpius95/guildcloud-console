@@ -128,7 +128,7 @@ export default function LandingPage() {
       <section className="relative overflow-hidden border-b border-ink-100">
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-32 -top-40 h-[32rem] w-[32rem] rounded-full bg-lemon-200/50 blur-3xl"
+          className="pointer-events-none absolute -right-32 -top-40 h-[32rem] w-[32rem] rounded-full bg-lemon-200/50 blur-3xl animate-float-soft"
         />
         <div className="relative mx-auto max-w-6xl px-5 py-20 sm:py-28">
           <span className="inline-flex items-center gap-2 rounded-full bg-lemon-50 px-3 py-1 text-xs font-medium text-lemon-800 ring-1 ring-inset ring-lemon-200">
@@ -136,7 +136,7 @@ export default function LandingPage() {
             Private by default — no public SSH route on MVP instances
           </span>
 
-          <h1 className="mt-6 max-w-3xl text-4xl font-semibold leading-[1.1] tracking-tight text-ink-900 sm:text-6xl">
+          <h1 className="animate-fade-up mt-6 max-w-3xl text-4xl font-semibold leading-[1.1] tracking-tight text-ink-900 sm:text-6xl">
             Cloud infrastructure without the{" "}
             <span className="relative whitespace-nowrap">
               <span className="absolute inset-x-0 bottom-1.5 h-3 bg-lemon-300" />
@@ -172,6 +172,19 @@ export default function LandingPage() {
             trustworthy private cloud first — and every claim on this page is
             written to match what has actually been tested.
           </p>
+
+          <div className="mt-10 grid gap-3 sm:grid-cols-3">
+            {[
+              ["Private access", "No public SSH route on MVP instances"],
+              ["Clear recovery", "Restores are tested before they are promised"],
+              ["Wallet-first", "Costs stay visible before anything is created"],
+            ].map(([title, detail]) => (
+              <div key={title} className="rounded-xl border border-ink-100 bg-white/85 p-4 shadow-[0_1px_2px_rgba(23,29,54,0.04)] backdrop-blur">
+                <p className="text-sm font-semibold text-ink-900">{title}</p>
+                <p className="mt-1 text-xs leading-5 text-ink-500">{detail}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -186,7 +199,7 @@ export default function LandingPage() {
             its stages, and failures tell you which stage failed.
           </p>
 
-          <div className="mt-8 overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-white/10">
+            <div className="mt-8 overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-white/10 animate-fade-up">
             <div className="flex items-center gap-2 border-b border-ink-100 bg-ink-50 px-4 py-2.5">
               <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
               <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
@@ -262,7 +275,7 @@ export default function LandingPage() {
               return (
                 <div
                   key={s.name}
-                  className="rounded-xl border border-ink-100 p-6 transition-shadow hover:shadow-md"
+                  className="rounded-xl border border-ink-100 p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
                 >
                   <span className="grid h-10 w-10 place-items-center rounded-lg bg-lemon-100 text-lemon-800">
                     <Icon className="h-5 w-5" />

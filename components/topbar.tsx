@@ -38,7 +38,7 @@ export function Topbar() {
   const unread = alerts.filter((a) => !a.acknowledged).length;
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-ink-100 bg-white/90 px-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-ink-100/80 bg-white/85 px-4 backdrop-blur-md sm:px-6 dark:border-white/5 dark:bg-[#171d36]/80">
       <Link href="/console" className="flex items-center gap-2 lg:hidden">
         <span className="grid h-7 w-7 place-items-center rounded-md bg-lemon-400">
           <span className="h-3 w-3 rounded-[2px] bg-[#0e1226]" />
@@ -53,16 +53,16 @@ export function Topbar() {
             setNotifOpen(false);
             setLaunchOpen(false);
           }}
-          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ring-1 ring-inset ring-ink-200 transition-colors hover:bg-ink-50"
+          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ring-1 ring-inset ring-ink-200 transition-all duration-200 hover:-translate-y-px hover:bg-ink-50"
         >
           <span className="hidden text-ink-400 sm:inline">Project</span>
           <span className="truncate font-medium text-ink-900">
             {activeProject.name}
           </span>
-          <IconChevron className="h-3.5 w-3.5 shrink-0 text-ink-400" />
+          <IconChevron className={cx("h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform duration-200", projectOpen && "rotate-180")} />
         </button>
         {projectOpen ? (
-          <div className="absolute left-0 top-11 w-64 overflow-hidden rounded-xl border border-ink-100 bg-white py-1 shadow-lg">
+          <div className="absolute left-0 top-11 w-64 overflow-hidden rounded-xl border border-ink-100 bg-white py-1 shadow-lg animate-fade-up">
             {projects.map((p) => (
               <button
                 key={p.id}
@@ -98,7 +98,7 @@ export function Topbar() {
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
         <Link
           href="/console/billing"
-          className="hidden items-center gap-2 rounded-lg bg-lemon-50 px-3 py-1.5 text-sm ring-1 ring-inset ring-lemon-200 transition-colors hover:bg-lemon-100 sm:flex"
+            className="hidden items-center gap-2 rounded-lg bg-lemon-50 px-3 py-1.5 text-sm ring-1 ring-inset ring-lemon-200 transition-all duration-200 hover:-translate-y-px hover:bg-lemon-100 sm:flex"
         >
           <IconWallet className="h-4 w-4 text-lemon-700" />
           <span className="text-lemon-800">Wallet</span>
@@ -116,7 +116,7 @@ export function Topbar() {
               setLaunchOpen(false);
             }}
             aria-label="Notifications"
-            className="relative grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+            className="relative grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-all duration-200 hover:-translate-y-px hover:bg-ink-100 hover:text-ink-800"
           >
             <IconBell className="h-4.5 w-4.5" />
             {unread > 0 ? (
@@ -124,7 +124,7 @@ export function Topbar() {
             ) : null}
           </button>
           {notifOpen ? (
-            <div className="absolute right-0 top-11 w-80 overflow-hidden rounded-xl border border-ink-100 bg-white shadow-lg">
+            <div className="absolute right-0 top-11 w-80 overflow-hidden rounded-xl border border-ink-100 bg-white shadow-lg animate-fade-up">
               <div className="border-b border-ink-100 px-4 py-2.5 text-xs font-semibold text-ink-500">
                 {unread} unacknowledged alert{unread === 1 ? "" : "s"}
               </div>
@@ -158,12 +158,12 @@ export function Topbar() {
               setNotifOpen(false);
             }}
             aria-label="Quick launch"
-            className="grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+            className="grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-all duration-200 hover:-translate-y-px hover:bg-ink-100 hover:text-ink-800"
           >
             <IconGrid className="h-4.5 w-4.5" />
           </button>
           {launchOpen ? (
-            <div className="absolute right-0 top-11 grid w-72 grid-cols-2 gap-1 overflow-hidden rounded-xl border border-ink-100 bg-white p-2 shadow-lg">
+            <div className="absolute right-0 top-11 grid w-72 grid-cols-2 gap-1 overflow-hidden rounded-xl border border-ink-100 bg-white p-2 shadow-lg animate-fade-up">
               {quickLaunch.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -191,7 +191,7 @@ export function Topbar() {
 
         <Link
           href="/console/settings"
-          className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-ink-50"
+          className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-all duration-200 hover:-translate-y-px hover:bg-ink-50"
         >
           <span className="grid h-7 w-7 place-items-center rounded-full bg-[#171d36] text-xs font-semibold text-lemon-400">
             {currentUser.name

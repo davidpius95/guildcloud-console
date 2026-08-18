@@ -73,11 +73,11 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col bg-ink-950 lg:flex">
+    <aside className="hidden w-60 shrink-0 flex-col border-r border-white/5 bg-ink-950/96 backdrop-blur lg:flex">
       <Link
         href="/"
-        className="flex items-center gap-2.5 px-5 py-5 text-white transition-opacity hover:opacity-80"
-      >
+          className="flex items-center gap-2.5 px-5 py-5 text-white transition-opacity hover:opacity-80"
+        >
         <span className="grid h-8 w-8 place-items-center rounded-lg bg-lemon-400">
           <span className="h-3.5 w-3.5 rounded-[3px] bg-ink-950" />
         </span>
@@ -105,11 +105,11 @@ export function Sidebar() {
                   <li key={item.href}>
                     <Link
                       href={item.href}
-                      className={cx(
-                        "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
+                    className={cx(
+                        "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-all duration-200",
                         active
-                          ? "bg-ink-800 font-medium text-white"
-                          : "text-ink-300 hover:bg-ink-900 hover:text-white",
+                          ? "bg-white/10 font-medium text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                          : "text-ink-300 hover:bg-ink-900 hover:text-white hover:translate-x-0.5",
                       )}
                     >
                       <Icon
@@ -132,7 +132,7 @@ export function Sidebar() {
         <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-ink-500">
           Environment
         </p>
-        <p className="mt-1 text-xs text-ink-300">
+          <p className="mt-1 text-xs text-ink-300">
           Mock data — no live infrastructure is attached.
         </p>
       </div>

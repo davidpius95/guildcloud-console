@@ -50,22 +50,107 @@ export default function DashboardPage() {
   const runningOp = operations.find((o) => o.state === "running");
   const openAlerts = alerts.filter((a) => !a.acknowledged);
   const readyInstances = instances.filter((i) => i.state === "ready").length;
+  const healthySites = sites.filter((s) => s.status === "healthy").length;
+  const protectedInstances = instances.filter(
+    (i) => i.protection === "protected",
+  ).length;
+  const monthlyProjectSpend = projects.reduce(
+    (total, project) => total + project.monthlySpend,
+    0,
+  );
+  const admittedSites = sites.filter((s) => s.acceptingNewWork).length;
 
   return (
     <>
-      <PageHeader
-        title={`Welcome back, ${organization.name}`}
-        description="Private-by-default infrastructure across your admitted sites. Everything below reflects mock data."
-        action={
-          <div className="flex gap-2">
-            <Button href="/console/projects" variant="secondary">
-              View all projects
-            </Button>
-            <Button href="/console/instances/new">
-              <IconPlus className="h-4 w-4" />
-              Create instance
-            </Button>
+      <section className="mb-6 overflow-hidden rounded-2xl border border-ink-100 bg-gradient-to-br from-ink-950 via-ink-900 to-[#11193a] text-white shadow-[0_24px_70px_rgba(23,29,54,0.18)]">
+        <div className="relative grid gap-6 px-6 py-7 lg:grid-cols-[1.15fr_0.85fr] lg:px-8">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-lemon-300/80">
+              Console snapshot
+            </p>
+            <h1 className="mt-3 max-w-2xl text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+              Welcome back, {organization.name}
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-300">
+              Private-by-default infrastructure across your admitted sites.
+              This view combines wallet, capacity, alert, and recovery state so
+              the next decision is obvious before you click into a resource.
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
+                {healthySites} healthy sites
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
+                {protectedInstances} protected instances
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
+                {openAlerts.length} open alerts
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
+                {admittedSites} sites admitting work
+              </span>
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Button href="/console/instances/new">
+                <IconPlus className="h-4 w-4" />
+                Create instance
+              </Button>
+              <Button href="/console/billing" variant="secondary">
+                View billing
+              </Button>
+            </div>
           </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
+              <p className="text-xs text-ink-300">Wallet balance</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
+                {money(organization.walletBalance)}
+              </p>
+              <p className="mt-1 text-xs text-ink-300">
+                Auto-reload at {money(organization.autoReloadThreshold)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
+              <p className="text-xs text-ink-300">Month to date</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
+                {money(organization.monthToDateSpend)}
+              </p>
+              <p className="mt-1 text-xs text-ink-300">
+                Forecast {money(organization.monthlyForecast)} of {money(organization.budget)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
+              <p className="text-xs text-ink-300">Ready instances</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
+                {readyInstances} / {instances.length}
+              </p>
+              <p className="mt-1 text-xs text-ink-300">
+                1 provisioning, 1 degraded, 1 stopped
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
+              <p className="text-xs text-ink-300">Project spend</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
+                {money(monthlyProjectSpend)}
+              </p>
+              <p className="mt-1 text-xs text-ink-300">
+                Across {projects.length} active projects
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <PageHeader
+        title="Operations"
+        description="The detailed controls below reflect mock data, but the layout is meant to behave like a real operator console."
+        action={
+          <Button href="/console/projects" variant="secondary">
+            View all projects
+          </Button>
         }
       />
 

@@ -15,7 +15,7 @@ export function Card({
   return (
     <div
       className={cx(
-        "rounded-xl border border-ink-100 bg-white shadow-[0_1px_2px_rgba(23,29,54,0.04)]",
+        "rounded-xl border border-ink-100 bg-white shadow-[0_1px_2px_rgba(23,29,54,0.04)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(23,29,54,0.08)]",
         className,
       )}
     >
@@ -57,7 +57,7 @@ export function PageHeader({
 }) {
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
+      <div className="max-w-2xl">
         <h1 className="text-xl font-semibold tracking-tight text-ink-900">
           {title}
         </h1>
@@ -304,7 +304,7 @@ export function Button({
     md: "px-3.5 py-2 text-sm",
   };
   const classes = cx(
-    "inline-flex items-center justify-center gap-1.5 rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lemon-600",
+    "inline-flex items-center justify-center gap-1.5 rounded-lg transition-all duration-200 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lemon-600",
     variants[variant],
     sizes[size],
     disabled && "cursor-not-allowed opacity-60",
@@ -343,7 +343,7 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-ink-200 bg-white/70 px-6 py-14 text-center shadow-[0_1px_2px_rgba(23,29,54,0.03)]">
       <h3 className="text-sm font-semibold text-ink-800">{title}</h3>
       <p className="mt-1 max-w-sm text-sm text-ink-400">{description}</p>
       {action ? <div className="mt-4">{action}</div> : null}

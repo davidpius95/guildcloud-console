@@ -1,0 +1,200 @@
+<div id="guildcloud-architecture">
+  <style>
+    #guildcloud-architecture { display: grid; gap: 1.25rem; }
+    #guildcloud-architecture .gc-tabs { display: flex; gap: .5rem; flex-wrap: wrap; }
+    #guildcloud-architecture .gc-view { display: none; gap: 1.25rem; }
+    #guildcloud-architecture .gc-view.is-active { display: grid; }
+    #guildcloud-architecture .gc-flow { display: grid; gap: .65rem; }
+    #guildcloud-architecture .gc-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .65rem; align-items: stretch; }
+    #guildcloud-architecture .gc-node { min-width: 0; }
+    #guildcloud-architecture .gc-node h3 { margin-top: 0; }
+    #guildcloud-architecture .gc-arrow { text-align: center; color: var(--muted-foreground); font-weight: 500; }
+    #guildcloud-architecture .gc-layer { display: grid; gap: .6rem; padding-block: .25rem 1rem; border-bottom: 1px solid var(--border); }
+    #guildcloud-architecture .gc-layer:last-child { border-bottom: 0; }
+    #guildcloud-architecture .gc-layer-title { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; flex-wrap: wrap; }
+    #guildcloud-architecture .gc-status { display: inline-flex; align-items: center; gap: .35rem; font-size: .88em; color: var(--muted-foreground); }
+    #guildcloud-architecture .gc-dot { width: .7rem; height: .7rem; border-radius: 50%; flex: 0 0 auto; }
+    #guildcloud-architecture .gc-real { background: var(--green); }
+    #guildcloud-architecture .gc-partial { background: var(--orange); }
+    #guildcloud-architecture .gc-mock { background: var(--purple); }
+    #guildcloud-architecture .gc-planned { background: var(--muted-foreground); }
+    #guildcloud-architecture .gc-critical { color: var(--red); }
+    #guildcloud-architecture .gc-sequence { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; counter-reset: step; }
+    #guildcloud-architecture .gc-step { min-width: 0; position: relative; }
+    #guildcloud-architecture .gc-step::before { counter-increment: step; content: counter(step); display: inline-grid; place-items: center; width: 1.45rem; height: 1.45rem; border-radius: 50%; background: var(--secondary); color: var(--secondary-foreground); margin-bottom: .45rem; }
+    #guildcloud-architecture .gc-step strong { display: block; }
+    #guildcloud-architecture .gc-phase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem 1rem; }
+    #guildcloud-architecture .gc-phase { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .55rem; align-items: start; padding-block: .55rem; border-bottom: 1px solid var(--border); }
+    #guildcloud-architecture .gc-phase-num { font-weight: 500; color: var(--muted-foreground); }
+    #guildcloud-architecture .gc-phase p { margin: .2rem 0 0; }
+    #guildcloud-architecture .gc-legend { display: flex; flex-wrap: wrap; gap: .8rem 1rem; }
+    #guildcloud-architecture .gc-callout { border-left: 3px solid var(--orange); padding-left: .8rem; }
+    #guildcloud-architecture ul { margin-bottom: 0; }
+    @media (max-width: 700px) {
+      #guildcloud-architecture .gc-sequence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      #guildcloud-architecture .gc-phase-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 390px) {
+      #guildcloud-architecture .gc-sequence { grid-template-columns: 1fr; }
+    }
+  </style>
+
+  <div>
+    <h2>GuildCloud: current system to complete master-plan platform</h2>
+    <p class="subtitle">Customer provisioning stays simple. The control plane chooses the healthy cluster and node; customers never interact with Proxmox.</p>
+  </div>
+
+  <div class="gc-tabs" role="tablist" aria-label="Architecture views">
+    <button class="btn btn-primary" type="button" role="tab" aria-selected="true" data-view="current">Working today</button>
+    <button class="btn" type="button" role="tab" aria-selected="false" data-view="scheduler">Two-cluster provisioning</button>
+    <button class="btn" type="button" role="tab" aria-selected="false" data-view="target">Complete master plan</button>
+    <button class="btn" type="button" role="tab" aria-selected="false" data-view="phases">Phase 0–9 status</button>
+  </div>
+
+  <div class="gc-legend" aria-label="Status legend">
+    <span class="gc-status"><span class="gc-dot gc-real"></span>Working with real infrastructure</span>
+    <span class="gc-status"><span class="gc-dot gc-partial"></span>Partial or constrained</span>
+    <span class="gc-status"><span class="gc-dot gc-mock"></span>UI/mock path</span>
+    <span class="gc-status"><span class="gc-dot gc-planned"></span>Planned or blocked</span>
+  </div>
+
+  <section class="gc-view is-active" data-panel="current" role="tabpanel">
+    <div class="gc-flow">
+      <div class="gc-row">
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Real</span><h3>Customer</h3><p>Signs in, creates an organization/project, selects image and plan, then watches a durable operation timeline.</p></article>
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Real</span><h3>Next.js console</h3><p>Public site, auth, onboarding, projects, instance creation, connection details, lifecycle actions, and team access.</p></article>
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Real</span><h3>Supabase control plane</h3><p>Auth, organizations, projects, roles, RLS, audit, catalog, instances, operations, stages, reservations, invites, and access grants.</p></article>
+      </div>
+      <div class="gc-arrow">request → validate → durable operation</div>
+      <div class="gc-row">
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Real, single path</span><h3>Guild-A worker</h3><p>One LXC on <code>nodeD</code> polls <code>lag-1</code>, retries transient faults, resumes stages, and deploys itself from Git.</p></article>
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Real</span><h3>Guild-A Proxmox</h3><p>Five nodes, Ceph-backed templates, warm pool, VM lifecycle, guest-agent verification, and GuildCloud resource pool.</p></article>
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-partial"></span>Detected, not provisioned</span><h3>Guild-B Proxmox</h3><p>Six online nodes and substantial capacity, but no GuildCloud worker, placement assignment, or full tested image catalogue.</p></article>
+      </div>
+      <div class="gc-arrow">configure → private access → verify</div>
+      <div class="gc-row">
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Real</span><h3>Tailscale access</h3><p>Per-instance enrollment, private IP/hostname, customer device onboarding, SSH keys, optional password SSH, grants, and revocation paths.</p></article>
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-partial"></span>Infrastructure real</span><h3>Backup and monitoring</h3><p>PBS jobs and cluster monitoring exist, but customer-level attachment, alerts, restore UX, off-site geography, and proof gates are incomplete.</p></article>
+        <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-mock"></span>Mainly mock</span><h3>Billing and managed services</h3><p>Wallet, payments, ledger, Kubernetes, PostgreSQL, object storage, volumes, functions, marketplace, and much monitoring remain presentation paths.</p></article>
+      </div>
+    </div>
+    <div class="gc-callout"><strong>Current bottleneck:</strong> every real customer VM is assigned to Guild-A and <code>nodeD</code>, even when another Guild-A node or Guild-B has better capacity.</div>
+  </section>
+
+  <section class="gc-view" data-panel="scheduler" role="tabpanel">
+    <div class="gc-layer">
+      <div class="gc-layer-title"><h3>1. Customer experience</h3><span class="gc-status"><span class="gc-dot gc-real"></span>Unchanged</span></div>
+      <div class="gc-row">
+        <article class="card gc-node"><h3>Create instance</h3><p>Customer chooses project, image, plan, protection, and access. GuildCloud shows cost and progress, not Proxmox internals.</p></article>
+        <article class="card gc-node"><h3>One operation timeline</h3><p>The same preparing, reserving, building, networking, testing, and ready stages remain visible.</p></article>
+      </div>
+    </div>
+    <div class="gc-arrow">↓ operation enters capacity-aware placement</div>
+    <div class="gc-layer">
+      <div class="gc-layer-title"><h3>2. Placement authority</h3><span class="gc-status"><span class="gc-dot gc-planned"></span>New component</span></div>
+      <div class="gc-row">
+        <article class="card gc-node"><h3>Health snapshots</h3><p>Each worker publishes cluster, node, storage, template, network, backup, monitoring, and heartbeat state.</p></article>
+        <article class="card gc-node"><h3>Eligibility filter</h3><p>Online, fresh heartbeat, tested image, admitted node, enough CPU/RAM/disk, and 30% reserve retained.</p></article>
+        <article class="card gc-node"><h3>Atomic reservation</h3><p>One database transaction chooses <code>cluster_id + node</code>, inserts the capacity hold, and prevents double placement.</p></article>
+        <article class="card gc-node"><h3>Best-fit score</h3><p>Prefer the eligible node with strongest post-placement headroom; deterministic tie-break avoids unstable decisions.</p></article>
+      </div>
+    </div>
+    <div class="gc-arrow">↓ operation is locked to exactly one worker</div>
+    <div class="gc-row">
+      <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-real"></span>Existing worker generalized</span><h3>Guild-A worker</h3><p>Claims only <code>cluster_id = guild-a</code>. Uses Guild-A credentials, Ceph templates, and the selected <code>nodeA–E</code>.</p></article>
+      <article class="card gc-node"><span class="gc-status"><span class="gc-dot gc-planned"></span>New deployment</span><h3>Guild-B worker</h3><p>Claims only <code>cluster_id = guild-b</code>. Uses separate credentials and the selected <code>podA–F</code>.</p></article>
+    </div>
+    <div class="gc-arrow">↓ both workers run the same tested lifecycle contract</div>
+    <div class="gc-sequence" aria-label="Provisioning sequence">
+      <div class="gc-step"><strong>Preflight</strong><span class="text-muted">Identity, wallet, quota, admission</span></div>
+      <div class="gc-step"><strong>Place</strong><span class="text-muted">Cluster and node selected</span></div>
+      <div class="gc-step"><strong>Reserve</strong><span class="text-muted">Atomic capacity hold</span></div>
+      <div class="gc-step"><strong>Dispatch</strong><span class="text-muted">Assigned worker claims</span></div>
+      <div class="gc-step"><strong>Clone</strong><span class="text-muted">Tested local template</span></div>
+      <div class="gc-step"><strong>Configure</strong><span class="text-muted">Cloud-init and identity</span></div>
+      <div class="gc-step"><strong>Connect</strong><span class="text-muted">Tailscale, DNS, policy</span></div>
+      <div class="gc-step"><strong>Protect</strong><span class="text-muted">Backup and monitoring</span></div>
+      <div class="gc-step"><strong>Verify</strong><span class="text-muted">Boot, route, SSH, services</span></div>
+      <div class="gc-step"><strong>Ready</strong><span class="text-muted">Expose private connection</span></div>
+    </div>
+    <div class="gc-callout"><strong>Capability-aware behavior:</strong> Ubuntu may be placed on either cluster once Guild-B passes its worker/template tests. Fedora, Rocky, AlmaLinux, Debian, and Arch stay Guild-A-only until an equivalent Guild-B template is verified.</div>
+  </section>
+
+  <section class="gc-view" data-panel="target" role="tabpanel">
+    <div class="gc-layer">
+      <div class="gc-layer-title"><h3>Experience and control plane</h3><span class="gc-status"><span class="gc-dot gc-partial"></span>Partly working</span></div>
+      <div class="gc-row">
+        <article class="card gc-node"><h3>Public experience</h3><p>Landing, pricing, docs, onboarding, truthful service catalogue, support, and status.</p></article>
+        <article class="card gc-node"><h3>Identity and projects</h3><p>Organizations, projects, roles, MFA, invitations, devices, API keys, audit, quotas, and risk controls.</p></article>
+        <article class="card gc-node"><h3>Console and API</h3><p>Compute, data, storage, functions, networking, monitoring, marketplace, billing, settings, and support.</p></article>
+      </div>
+    </div>
+    <div class="gc-arrow">↓ durable, idempotent requests and event stream</div>
+    <div class="gc-layer">
+      <div class="gc-layer-title"><h3>Platform orchestration</h3><span class="gc-status"><span class="gc-dot gc-partial"></span>Core exists; breadth incomplete</span></div>
+      <div class="gc-row">
+        <article class="card gc-node"><h3>Operation orchestrator</h3><p>Create, resize, snapshot, restore, delete, retry classification, cleanup, audit, and customer-safe stage updates.</p></article>
+        <article class="card gc-node"><h3>Placement and capacity</h3><p>Site admission, cluster/node scheduling, 30% reserve, quotas, affinity, template availability, and capacity leases.</p></article>
+        <article class="card gc-node"><h3>Financial engine</h3><p>Meter events, pricing, append-only ledger, wallet, Paystack, Flutterwave, invoices, budgets, alerts, and webhooks.</p></article>
+        <article class="card gc-node"><h3>Observability and support</h3><p>Service health, performance, protection, incidents, safe diagnostics, maintenance, status, and support context.</p></article>
+      </div>
+    </div>
+    <div class="gc-arrow">↓ selected site worker; browser never talks directly to Proxmox</div>
+    <div class="gc-layer">
+      <div class="gc-layer-title"><h3>Sites and execution plane</h3><span class="gc-status"><span class="gc-dot gc-partial"></span>Two clusters, one physical site today</span></div>
+      <div class="gc-row">
+        <article class="card gc-node"><h3>Lagos site now</h3><p>Guild-A and Guild-B as independent Proxmox clusters, each with its own worker, credentials, admission state, templates, nodes, and backup namespace.</p></article>
+        <article class="card gc-node"><h3>Future real sites</h3><p>Separate power, router, switch, cluster, worker, backup path, monitoring, and outbound tunnel. No stretched Proxmox cluster.</p></article>
+        <article class="card gc-node"><h3>Private network control</h3><p>Project IPAM, private DNS, Tailscale enrollment, device and identity policy, SSH credentials, team revocation, and recovery console.</p></article>
+      </div>
+    </div>
+    <div class="gc-arrow">↓ attach product services and protection</div>
+    <div class="gc-layer">
+      <div class="gc-layer-title"><h3>Customer services</h3><span class="gc-status"><span class="gc-dot gc-mock"></span>Mostly future implementation</span></div>
+      <div class="gc-row">
+        <article class="card gc-node"><h3>Guild Instances</h3><p>Private VMs, tested OS images, resize, volumes, backup, monitoring, SSH, snapshots, restore, and deletion recovery.</p></article>
+        <article class="card gc-node"><h3>Managed platform</h3><p>Shared Kubernetes per site, private PostgreSQL, object storage, expandable volumes, and Node.js/Python functions.</p></article>
+        <article class="card gc-node"><h3>Protection</h3><p>Standard, Protected, and Warm Standby backed by off-site copies, retention, restore drills, and measured recovery targets.</p></article>
+        <article class="card gc-node"><h3>Future edge</h3><p>Optional public ingress, stable edge IPs, domains, TLS, WAF, and outbound site tunnels after the private MVP is proven.</p></article>
+      </div>
+    </div>
+    <div class="gc-arrow">↓ automated acceptance checks</div>
+    <div class="gc-row">
+      <article class="card gc-node"><h3>Ready gate</h3><p>Boot, cloud-init, route, private DNS, Tailscale, SSH credential, backup enrollment, monitoring, metering, and policy must pass before Ready.</p></article>
+      <article class="card gc-node"><h3>Trust loop</h3><p>Every public promise requires repeatable live evidence, documented incidents/fixes, runbooks, recovery drills, and honest console copy.</p></article>
+    </div>
+  </section>
+
+  <section class="gc-view" data-panel="phases" role="tabpanel">
+    <div class="gc-phase-grid">
+      <div class="gc-phase"><span class="gc-phase-num">0</span><div><span class="gc-status"><span class="gc-dot gc-partial"></span>Baseline: substantial, open gaps</span><p>Both clusters inventoried, capacity/firewall/backup evidence exists. Tenant isolation, true geography, stale credential revocation, and G-23 placement remain open.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">1</span><div><span class="gc-status"><span class="gc-dot gc-real"></span>Control plane: mostly real</span><p>Auth, organizations, projects, roles, RLS, audit, catalogue, operations, onboarding, and invitations are implemented.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">2</span><div><span class="gc-status"><span class="gc-dot gc-partial"></span>Site integration: Guild-A real</span><p>Worker, Proxmox lifecycle, deploy-pull, retries, templates, and cleanup work. Guild-B worker and multi-node placement are not built.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">3</span><div><span class="gc-status"><span class="gc-dot gc-partial"></span>Private access: meaningful real slice</span><p>Tailscale enrollment, devices, SSH keys/passwords, private IP/hostname, grants, invites, and key sync exist. Recovery console and full policy builder remain.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">4</span><div><span class="gc-status"><span class="gc-dot gc-partial"></span>Lifecycle: core paths present</span><p>Create and delete are live-proven; resize, snapshot, restore, and warm-pool paths exist but need full acceptance coverage across clusters and images.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">5</span><div><span class="gc-status"><span class="gc-dot gc-partial"></span>Protection: infrastructure ahead of product</span><p>PBS and some monitoring exist. Customer backup attachment, restore console, alerting, incident/status flow, off-site copies, and drills remain incomplete.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">6</span><div><span class="gc-status"><span class="gc-dot gc-mock"></span>Financial operations: mainly mock</span><p>Prices are displayed, but real metering, ledger, wallet, Paystack/Flutterwave verification, invoices, reconciliation, and webhooks remain.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">7</span><div><span class="gc-status"><span class="gc-dot gc-mock"></span>Managed services: presentation only</span><p>Kubernetes, PostgreSQL, object storage, volumes, and functions need real provisioning, isolation, credentials, backup, monitoring, and event tests.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">8</span><div><span class="gc-status"><span class="gc-dot gc-partial"></span>Public experience: strong shell, incomplete product</span><p>Landing, auth, onboarding, and console shell work. Documentation, truthful availability, accessibility, support, and real service depth remain.</p></div></div>
+      <div class="gc-phase"><span class="gc-phase-num">9</span><div><span class="gc-status"><span class="gc-dot gc-planned"></span>Launch readiness: not reached</span><p>Trusted cohort, all acceptance gates, failure drills, capacity review, policies, release procedure, and go/no-go report are still required.</p></div></div>
+    </div>
+    <div class="gc-callout"><strong>Immediate architectural priority:</strong> complete Phase 2 placement across Guild-A and Guild-B without presenting two clusters in one building as geographic redundancy.</div>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById('guildcloud-architecture');
+      const tabs = [...root.querySelectorAll('[data-view]')];
+      const panels = [...root.querySelectorAll('[data-panel]')];
+      tabs.forEach((tab) => tab.addEventListener('click', () => {
+        const selected = tab.dataset.view;
+        tabs.forEach((item) => {
+          const active = item === tab;
+          item.setAttribute('aria-selected', String(active));
+          item.classList.toggle('btn-primary', active);
+        });
+        panels.forEach((panel) => panel.classList.toggle('is-active', panel.dataset.panel === selected));
+      }));
+    })();
+  </script>
+</div>

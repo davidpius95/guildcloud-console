@@ -36,11 +36,26 @@ body {
   height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  background: var(--color-ink-50);
+  background:
+    radial-gradient(circle at top left, rgba(163, 230, 53, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(125, 211, 252, 0.08), transparent 24%),
+    linear-gradient(180deg, #f8fafc 0%, var(--color-ink-50) 100%);
   color: var(--color-ink-900);
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.15s ease;
+  overflow-x: hidden;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+::selection {
+  background: rgba(163, 230, 53, 0.32);
+  color: var(--color-ink-950);
 }
 
 /* Compact scrollbars keep the console dense without feeling cramped. */
@@ -63,6 +78,59 @@ body {
 }
 .dark ::-webkit-scrollbar-thumb:hover {
   background: var(--color-ink-600);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-lemon-600);
+  outline-offset: 2px;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -8px, 0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.55s ease both;
+}
+
+.animate-float-soft {
+  animation: float-soft 8s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background-size: 200% 100%;
+  animation: shimmer 8s linear infinite;
+}
+
+.glass-panel {
+  background: color-mix(in srgb, white 82%, transparent);
+  backdrop-filter: blur(18px);
 }
 
 /*
@@ -108,4 +176,26 @@ body {
 }
 .dark .console-root .bg-white\/90 {
   background-color: color-mix(in srgb, var(--color-surface) 92%, transparent);
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at top left, rgba(163, 230, 53, 0.08), transparent 24%),
+    linear-gradient(180deg, #0b1020 0%, #090d19 100%);
+}
+
+.dark ::selection {
+  background: rgba(163, 230, 53, 0.26);
+  color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

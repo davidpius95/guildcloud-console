@@ -42,7 +42,7 @@ export default function SignInPage() {
   const [state, formAction] = useActionState(signInWithEmail, initialState);
 
   return (
-    <Card className="p-6">
+    <Card className="animate-fade-up p-6">
       <h1 className="text-lg font-semibold text-ink-900">Sign in</h1>
       <p className="mt-1 text-sm text-ink-500">Welcome back to GuildCloud.</p>
 

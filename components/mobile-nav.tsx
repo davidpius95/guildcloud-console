@@ -25,7 +25,7 @@ const items = [
 export function MobileNav() {
   const pathname = usePathname();
   return (
-    <nav className="overflow-x-auto border-b border-ink-100 bg-white lg:hidden">
+    <nav className="overflow-x-auto border-b border-ink-100/80 bg-white/90 backdrop-blur lg:hidden">
       <ul className="flex min-w-max gap-1 px-4 py-2">
         {items.map((item) => {
           const active =
@@ -36,11 +36,11 @@ export function MobileNav() {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className={cx(
-                  "block whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors",
+                  className={cx(
+                  "block whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-all duration-200",
                   active
-                    ? "bg-[#171d36] font-medium text-white"
-                    : "text-ink-500 hover:bg-ink-100",
+                    ? "bg-[#171d36] font-medium text-white shadow-[0_8px_18px_rgba(23,29,54,0.16)]"
+                    : "text-ink-500 hover:-translate-y-px hover:bg-ink-100",
                 )}
               >
                 {item.label}
