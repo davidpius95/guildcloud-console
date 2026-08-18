@@ -82,3 +82,38 @@ focused run passed all 26 tests with zero failures.
   locks.
 - The pre-existing untracked `supabase/.temp/` directory was not modified or
   staged.
+
+## Fix Round 1
+
+### Accepted Findings
+
+- `rankCandidates` now validates the request and `now` before evaluating the
+  list, including when the candidate list is empty.
+- Added `deploy/site-worker/package.json` with `type: module` and removed the
+  root `package.json` `type: module` setting, keeping ESM scoped to the worker
+  policy directory.
+- Retained and explicitly regression-tested `vcpuHeadroomRatio: 0` when
+  `vcpuCeiling` is zero; the metric remains finite and the vCPU hard gate still
+  rejects the positive request.
+
+### Fix-Round TDD Evidence
+
+- RED: `npm test` reported 27 passing tests and exactly 2 failures for the new
+  empty-list invalid-request and invalid-`now` assertions; both failures were
+  missing expected `TypeError` exceptions.
+- GREEN: `npm run test:worker` passed all 29 tests after the validation and
+  package-scope fixes.
+
+### Fix-Round Verification
+
+- `npm run test:worker`: PASS, 29 tests.
+- `npm test`: PASS, 29 tests.
+- `npm test --prefix deploy/site-worker-guild-a`: PASS, 29 tests.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS, with the existing package-lock location and
+  middleware-to-proxy warnings only.
+- `git diff --check`: PASS.
+
+### Fix-Round Commit
+
+- `9d799a5 fix: harden placement policy validation`
