@@ -152,19 +152,42 @@ create unique index instances_cluster_vmid_key
   where proxmox_vmid is not null;
 
 alter table public.capacity_reservations
-  add column cluster_id text,
-  add column storage_id text;
+  add column cluster_id text default 'guild-a',
+  add column storage_id text default 'ceph-vm';
 
 update public.capacity_reservations
 set cluster_id = 'guild-a', storage_id = 'ceph-vm'
 where cluster_id is null or storage_id is null;
 
+with ranked_active_reservations as (
+  select
+    id,
+    row_number() over (
+      partition by operation_id
+      order by
+        case when state = 'committed' then 0 else 1 end,
+        case when state = 'held' and expires_at > now() then 0 else 1 end,
+        created_at desc,
+        id desc
+    ) as active_rank
+  from public.capacity_reservations
+  where state in ('held', 'committed')
+)
+update public.capacity_reservations as reservation
+set state = 'released'
+from ranked_active_reservations
+where reservation.id = ranked_active_reservations.id
+  and ranked_active_reservations.active_rank > 1;
+
 alter table public.capacity_reservations
   alter column cluster_id set not null,
   alter column storage_id set not null,
   add constraint capacity_reservations_cluster_id_fkey
-    foreign key (cluster_id) references public.infrastructure_clusters(id),
-  add constraint capacity_reservations_operation_key unique (operation_id);
+    foreign key (cluster_id) references public.infrastructure_clusters(id);
+
+create unique index capacity_reservations_active_operation_key
+  on public.capacity_reservations (operation_id)
+  where state in ('held', 'committed');
 
 alter table public.warm_pool_vms
   add column cluster_id text;

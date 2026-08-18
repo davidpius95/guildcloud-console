@@ -71,3 +71,45 @@ root as a full Supabase reset because it begins after the live Phase 1 schema.
 Task 2A validation therefore used the isolated pre-migration fixture supplied
 in the worktree; Task 2B owns the durable checked-in replay harness and is not
 included in this commit.
+
+## Fix Round 1
+
+Accepted reservation compatibility and migration-safety findings were addressed:
+
+- `capacity_reservations.cluster_id` and `storage_id` now retain the required
+  NOT NULL guarantees while defaulting legacy inserts to `guild-a` and
+  `ceph-vm`.
+- The global operation uniqueness constraint is replaced with the partial
+  `capacity_reservations_active_operation_key` index for `held` and
+  `committed` reservations only.
+- Before that index is created, active duplicate legacy reservations are ranked
+  per operation: committed first, then unexpired held, then newest
+  `created_at` and `id`. All non-winning active rows are retained and released.
+- The pgTAP fixture now contains committed, unexpired-held, and expired-held
+  duplicates for one legacy operation. Assertions cover the selected committed
+  row, preserved history, legacy insert defaults, partial-index conflicts, and
+  allowed released history.
+- pgTAP also now asserts the exact one-row Guild-A seed before behavioral test
+  setup and verifies that legacy operation/instance placement values were not
+  invented or changed.
+
+### Fix Round 1 RED
+
+Before the migration change, the expanded pgTAP contract reported eight
+failures, including missing reservation defaults and the old
+`capacity_reservations_operation_key`. After adding the authorized duplicate
+fixture rows, the unchanged migration failed during DDL with:
+
+```text
+ERROR: could not create unique index "capacity_reservations_operation_key"
+```
+
+### Fix Round 1 GREEN
+
+The isolated runner then applied the real fixture, real migration, and real
+pgTAP contract successfully with no network or published ports:
+
+```text
+1..151
+Harness cleanup: removing disposable container
+```

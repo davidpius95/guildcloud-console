@@ -237,6 +237,14 @@ select col_default_is(
   'public', 'placement_settings', 'mode', 'single',
   'placement mode defaults to single-cluster compatibility'
 );
+select col_default_is(
+  'public', 'capacity_reservations', 'cluster_id', 'guild-a',
+  'legacy reservations default to Guild-A'
+);
+select col_default_is(
+  'public', 'capacity_reservations', 'storage_id', 'ceph-vm',
+  'legacy reservations default to Guild-A Ceph storage'
+);
 
 select col_is_null(
   'public', 'operations', 'cluster_id', 'operation cluster remains nullable'
@@ -298,6 +306,24 @@ select fk_ok(
 select fk_ok(
   'public', 'warm_pool_vms', 'cluster_id',
   'public', 'infrastructure_clusters', 'id'
+);
+select is(
+  (select count(*) from public.infrastructure_clusters),
+  1::bigint,
+  'Guild-A is the only initial infrastructure cluster'
+);
+select results_eq(
+  $$
+    select id, site_id, name, enabled, admission_state
+    from public.infrastructure_clusters
+  $$,
+  $$ values ('guild-a'::text, 'lag-1'::text, 'Guild-A'::text, true, 'paused'::text) $$,
+  'Guild-A seed has the approved compatibility values'
+);
+select is(
+  (select count(*) from public.infrastructure_clusters where id = 'guild-b'),
+  0::bigint,
+  'Guild-B is absent before behavioral test setup'
 );
 select lives_ok(
   $$
@@ -655,14 +681,24 @@ select throws_ok(
 );
 
 select results_eq(
-  $$ select distinct cluster_id from public.operations order by cluster_id $$,
-  $$ values ('guild-a'::text) $$,
-  'existing operations are backfilled to Guild-A'
+  $$
+    select id, cluster_id, assigned_node, storage_id
+    from public.operations
+    order by id
+  $$,
+  $$ values
+    ('00000000-0000-0000-0000-000000000001'::uuid, 'guild-a'::text, null::text, null::text),
+    ('00000000-0000-0000-0000-000000000002'::uuid, 'guild-a'::text, null::text, null::text) $$,
+  'existing operations are backfilled to Guild-A without invented placement'
 );
 select results_eq(
-  $$ select distinct cluster_id from public.instances order by cluster_id $$,
-  $$ values ('guild-a'::text) $$,
-  'existing instances are backfilled to Guild-A'
+  $$
+    select cluster_id, proxmox_vmid, proxmox_node
+    from public.instances
+    where id = '10000000-0000-0000-0000-000000000001'
+  $$,
+  $$ values ('guild-a'::text, 101, 'nodeD'::text) $$,
+  'existing instance placement values remain unchanged after cluster backfill'
 );
 select results_eq(
   $$
@@ -672,6 +708,29 @@ select results_eq(
   $$,
   $$ values ('guild-a'::text, 'ceph-vm'::text) $$,
   'existing reservations are backfilled with Guild-A storage identity'
+);
+select is(
+  (
+    select count(*)
+    from public.capacity_reservations
+    where operation_id = '00000000-0000-0000-0000-000000000001'
+      and state in ('held', 'committed')
+  ),
+  1::bigint,
+  'duplicate legacy reservations are reconciled to one active row'
+);
+select results_eq(
+  $$
+    select id, state
+    from public.capacity_reservations
+    where operation_id = '00000000-0000-0000-0000-000000000001'
+    order by id
+  $$,
+  $$ values
+    ('20000000-0000-0000-0000-000000000001'::uuid, 'released'::text),
+    ('20000000-0000-0000-0000-000000000002'::uuid, 'committed'::text),
+    ('20000000-0000-0000-0000-000000000003'::uuid, 'released'::text) $$,
+  'reconciliation preserves duplicate reservation history and committed precedence'
 );
 select results_eq(
   $$
@@ -726,13 +785,54 @@ select throws_ok(
     insert into public.capacity_reservations
       (id, operation_id, site_id, node, vcpu, memory_gb, disk_gb,
        cluster_id, storage_id)
-    values ('20000000-0000-0000-0000-000000000002',
+    values ('20000000-0000-0000-0000-000000000020',
             '00000000-0000-0000-0000-000000000001',
             'lag-1', 'nodeD', 1, 1, 10, 'guild-a', 'ceph-vm')
   $$,
   '23505',
-  'duplicate key value violates unique constraint "capacity_reservations_operation_key"',
-  'an operation can hold only one capacity reservation'
+  'duplicate key value violates unique constraint "capacity_reservations_active_operation_key"',
+  'a second active reservation for an operation conflicts'
+);
+select lives_ok(
+  $$
+    insert into public.capacity_reservations
+      (id, operation_id, site_id, node, vcpu, memory_gb, disk_gb)
+    values ('20000000-0000-0000-0000-000000000010',
+            '00000000-0000-0000-0000-000000000002',
+            'lag-1', 'nodeD', 1, 1, 10)
+  $$,
+  'the exact legacy reservation insert shape remains valid'
+);
+select results_eq(
+  $$
+    select cluster_id, storage_id
+    from public.capacity_reservations
+    where id = '20000000-0000-0000-0000-000000000010'
+  $$,
+  $$ values ('guild-a'::text, 'ceph-vm'::text) $$,
+  'legacy reservation inserts receive Guild-A capacity defaults'
+);
+select throws_ok(
+  $$
+    insert into public.capacity_reservations
+      (id, operation_id, site_id, node, vcpu, memory_gb, disk_gb)
+    values ('20000000-0000-0000-0000-000000000011',
+            '00000000-0000-0000-0000-000000000002',
+            'lag-1', 'nodeD', 1, 1, 10)
+  $$,
+  '23505',
+  'duplicate key value violates unique constraint "capacity_reservations_active_operation_key"',
+  'a second legacy-shape active reservation conflicts'
+);
+select lives_ok(
+  $$
+    insert into public.capacity_reservations
+      (id, operation_id, site_id, node, vcpu, memory_gb, disk_gb, state)
+    values ('20000000-0000-0000-0000-000000000012',
+            '00000000-0000-0000-0000-000000000002',
+            'lag-1', 'nodeD', 1, 1, 10, 'released')
+  $$,
+  'released reservation history can share an operation with an active row'
 );
 
 select has_table(
