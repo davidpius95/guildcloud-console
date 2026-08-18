@@ -349,3 +349,23 @@ test("ranks eligible candidates by score and deterministic identity", () => {
 test("requires rankCandidates input to be an array", () => {
   assert.throws(() => rankCandidates({}, REQUEST, NOW), TypeError);
 });
+
+test("validates an invalid request when ranking an empty candidate list", () => {
+  assert.throws(
+    () => rankCandidates([], { ...REQUEST, memoryBytes: 0 }, NOW),
+    TypeError,
+  );
+});
+
+test("validates an invalid now when ranking an empty candidate list", () => {
+  assert.throws(() => rankCandidates([], REQUEST, "not-a-timestamp"), TypeError);
+});
+
+test("keeps the zero vCPU ceiling headroom metric finite", () => {
+  const result = evaluateCandidate(candidate({ totalVcpu: 1 }), REQUEST, NOW);
+
+  assert.equal(result.metrics.vcpuCeiling, 0);
+  assert.equal(result.metrics.vcpuHeadroomRatio, 0);
+  assert.equal(Number.isFinite(result.metrics.vcpuHeadroomRatio), true);
+  assert.deepEqual(result.rejectionReasons, ["vcpu_limit_exceeded"]);
+});

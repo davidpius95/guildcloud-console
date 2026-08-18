@@ -236,6 +236,9 @@ export function rankCandidates(candidates, request, now) {
     throw new TypeError("candidates must be an array");
   }
 
+  validateRequest(request);
+  parseTimestamp(now, "now");
+
   return candidates
     .map((candidate) => evaluateCandidate(candidate, request, now))
     .filter((result) => result.eligible)
