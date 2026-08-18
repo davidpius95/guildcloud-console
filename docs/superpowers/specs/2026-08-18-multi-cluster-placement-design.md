@@ -76,10 +76,21 @@ The worker loop has three responsibilities:
    operations.
 3. Process only operations assigned to the worker's configured cluster.
 
+Each worker renews its heartbeat at least every 20 seconds, including while a
+long Proxmox task or guest verification wait is active. Capacity snapshots may
+be refreshed independently; a busy worker must not look dead merely because a
+single stage takes several minutes.
+
 The database is the placement authority. Workers provide live observations;
 the database transaction makes the single durable decision and creates the
 capacity reservation. This avoids a separate scheduler service while
 preventing two workers from racing to own the same request.
+
+An unassigned create operation is not claimable by either cluster worker. The
+placement transaction owns the global `preflight` and `capacity_reservation`
+stages. After it assigns the cluster/node and commits the reservation, the
+matching worker resumes at `operation_created` and continues the existing
+stage contract.
 
 ## 6. Data Model
 
@@ -112,7 +123,8 @@ One row per cluster/node pair:
 | `admission_state` | `open`, `draining`, or `paused` |
 | `online` | Latest Proxmox status |
 | `total_vcpu`, `committed_vcpu` | Physical and configured workload capacity |
-| `total_memory_bytes`, `used_memory_bytes` | Current memory capacity |
+| `total_memory_bytes`, `used_memory_bytes` | Physical and observed memory capacity |
+| `committed_memory_bytes` | Sum of configured guest memory on the node |
 | `cpu_utilization` | Scoring signal, not the primary capacity promise |
 | `observed_at` | Freshness boundary |
 | `failure_reason` | Why the node cannot accept work |
@@ -217,7 +229,9 @@ A candidate must satisfy every hard gate:
 
 For node memory:
 
-`post_free_memory = total_memory - used_memory - held_memory - requested_memory`
+`memory_baseline = max(used_memory, committed_memory)`
+
+`post_free_memory = total_memory - memory_baseline - held_memory - requested_memory`
 
 The candidate passes only when:
 
@@ -237,6 +251,11 @@ The candidate passes only when:
 
 These rules are deliberately conservative. Future oversubscription or
 storage-class policy requires measured evidence and a separate decision.
+
+Configured guest memory includes GuildCloud and admitted legacy workloads, so
+ballooned-down or idle guests cannot make a node appear safer than its maximum
+commitment. Templates are excluded because they are stopped and allocate no
+runtime memory.
 
 ## 9. Candidate Score
 
