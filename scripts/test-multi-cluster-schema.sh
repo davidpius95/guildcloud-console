@@ -4,10 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture_path="$repo_root/supabase/tests/fixtures/multi_cluster_base.sql"
 migration_path="$repo_root/supabase/migrations/20260818090000_add_multi_cluster_placement.sql"
-test_path="$repo_root/supabase/tests/multi_cluster_placement_schema.sql"
+rpc_migration_path="$repo_root/supabase/migrations/20260818100000_add_atomic_placement_rpc.sql"
+schema_test_path="$repo_root/supabase/tests/multi_cluster_placement_schema.sql"
+rpc_test_path="$repo_root/supabase/tests/multi_cluster_placement_rpc.sql"
+concurrency_test_path="$repo_root/scripts/test-multi-cluster-concurrency.sh"
 postgres_image='supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00'
-container_name="guildcloud-task2b-${RANDOM}-${BASHPID}"
-log_file="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task2b.XXXXXX.log")"
+container_name="guildcloud-task3-${RANDOM}-${BASHPID}"
+log_file="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task3.XXXXXX.log")"
+schema_log="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task3-schema.XXXXXX.log")"
+rpc_log="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task3-rpc.XXXXXX.log")"
 container_started=0
 phase='startup'
 
@@ -24,7 +29,7 @@ cleanup() {
     tail -n 80 "$log_file" >&2 || true
   fi
 
-  rm -f "$log_file"
+  rm -f "$log_file" "$schema_log" "$rpc_log"
   exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
@@ -36,7 +41,14 @@ fail() {
   exit 1
 }
 
-for required_file in "$fixture_path" "$migration_path" "$test_path"; do
+for required_file in \
+  "$fixture_path" \
+  "$migration_path" \
+  "$rpc_migration_path" \
+  "$schema_test_path" \
+  "$rpc_test_path" \
+  "$concurrency_test_path"
+do
   if [[ ! -f "$required_file" ]]; then
     fail "Missing required schema test file: $required_file"
   fi
@@ -104,14 +116,44 @@ run_sql_file() {
   fi
 }
 
-run_sql_file 'Applying isolated fixture' "$fixture_path"
-run_sql_file 'Applying real production migration' "$migration_path"
-run_sql_file 'Running real pgTAP contract' "$test_path"
+run_tap_file() {
+  local label=$1
+  local path=$2
+  local suite_log=$3
 
-assertion_count="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$log_file")"
-failure_count="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$log_file")"
-if [[ "$assertion_count" -ne 151 || "$failure_count" -ne 0 ]]; then
-  fail "Expected 151 passing pgTAP assertions, got $assertion_count passing and $failure_count failing"
+  phase="$label"
+  printf '  %s\n' "$label"
+  if ! psql_in_container < "$path" >"$suite_log" 2>&1; then
+    cat "$suite_log" >>"$log_file"
+    fail "$label failed"
+  fi
+  cat "$suite_log" >>"$log_file"
+}
+
+run_sql_file 'Applying isolated fixture' "$fixture_path"
+run_sql_file 'Applying real multi-cluster schema migration' "$migration_path"
+run_sql_file 'Applying real atomic placement RPC migration' "$rpc_migration_path"
+run_tap_file 'Running schema pgTAP contract' "$schema_test_path" "$schema_log"
+run_tap_file 'Running RPC pgTAP contract' "$rpc_test_path" "$rpc_log"
+
+schema_assertions="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$schema_log")"
+schema_failures="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$schema_log")"
+if [[ "$schema_assertions" -ne 151 || "$schema_failures" -ne 0 ]]; then
+  fail "Expected 151 passing schema assertions, got $schema_assertions passing and $schema_failures failing"
 fi
 
-printf 'PASS: 151 pgTAP assertions passed in the isolated database\n'
+rpc_assertions="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$rpc_log")"
+rpc_failures="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$rpc_log")"
+if [[ "$rpc_assertions" -ne 69 || "$rpc_failures" -ne 0 ]]; then
+  fail "Expected 69 passing RPC assertions, got $rpc_assertions passing and $rpc_failures failing"
+fi
+
+phase='Running two-session concurrency contract'
+printf '  %s\n' "$phase"
+if ! bash "$concurrency_test_path" "$container_name" >>"$log_file" 2>&1; then
+  fail 'Two-session concurrency contract failed'
+fi
+
+printf 'PASS: 151 schema pgTAP assertions passed\n'
+printf 'PASS: 69 RPC pgTAP assertions passed\n'
+printf 'PASS: 6 two-session concurrency assertions passed\n'
