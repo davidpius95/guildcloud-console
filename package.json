@@ -2,12 +2,15 @@
   "name": "guildcloud-console",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev -p 3100",
     "build": "next build",
     "start": "next start -p 3100",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:worker": "node --test deploy/site-worker/*.test.js",
+    "test": "node --test deploy/site-worker/*.test.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
