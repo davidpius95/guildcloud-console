@@ -1,11 +1,15 @@
 # GuildCloud — console and landing page
 
-A private-by-default cloud platform. This repository currently contains the
-**public experience only**: the marketing landing page and the full signed-in
-console, running entirely on mock data.
+A private-by-default cloud platform. This repository contains the marketing
+landing page and the full signed-in console, backed by a real control plane
+(Supabase) and a real Proxmox execution plane for the Guild Instances flow.
 
-There is no control plane, no Proxmox integration, no private-access
-enrollment, and no payment processing in this repository yet.
+**Read [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) first** — it is the
+continuously-updated source of truth for what's real vs. mock, current
+architecture, and what's in progress. This README covers only how to run the
+app locally.
+
+There is no payment processing in this repository yet.
 
 ## Running it
 
@@ -47,9 +51,11 @@ lib/
   mock-data.ts          All mock data — the single seam to replace with an API
 ```
 
-`lib/mock-data.ts` is the only source of data. Replacing it with real API calls
-is the intended path to a working control plane; the page components read from
-it through plain typed imports.
+`lib/mock-data.ts` still backs most subsystem pages (Kubernetes, databases,
+storage, volumes, functions, marketplace, migration, monitoring, billing
+analytics, support). The Guild Instances flow (list/detail/create, and org/
+project/auth underneath it) is real — see `docs/PROJECT_STATUS.md` for the
+current real-vs-mock breakdown before assuming any given page's data source.
 
 ## Design intent
 
@@ -69,7 +75,4 @@ may be published before a real site capacity model exists.
 
 ## Next steps
 
-- **Phase 1 — control plane:** organizations, projects, roles, authentication,
-  audit, catalog, and the durable operation model.
-- **Vertical slice:** Guild Instances end to end against a real Proxmox site
-  worker.
+See `docs/PROJECT_STATUS.md` — kept current, not duplicated here.

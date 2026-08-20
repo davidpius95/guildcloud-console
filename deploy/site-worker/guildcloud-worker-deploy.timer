@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll for a new GuildCloud site-worker version every 2 minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=2min
+Unit=guildcloud-worker-deploy.service
+
+[Install]
+WantedBy=timers.target

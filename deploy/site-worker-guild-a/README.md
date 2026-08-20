@@ -1,30 +1,42 @@
-# Guild-A site worker — self-deploy
+# Guild-A site worker - launcher
 
-`index.js` here is the **canonical, real** source for what runs in
-production on the Guild-A LXC (`vmid 500`, `/opt/guildcloud-worker/index.js`).
-It used to only exist on that machine, hand-pasted over a terminal for
-every change. Not anymore.
+`index.js` here is a one-line launcher (`import "../site-worker/index.js"`)
+identifying this deployment as Guild-A via `/etc/guildcloud/worker.env` (see
+`env.example` in this directory for the exact values). The real, canonical
+worker source, its tests, and its deployment mechanism all live in
+`deploy/site-worker/` - see `deploy/site-worker/README.md` for setup,
+shipping a change, verifying a deployed release, and rollback.
 
-`deploy-pull.sh` runs on that LXC via a systemd timer
-(`guildcloud-worker-deploy.timer`, every 2 minutes). It pulls this repo
-with a read-only deploy key, and if `index.js` here differs from the live
-file, copies it in and restarts `guildcloud-worker.timer`.
+This directory exists only so the production LXC (`vmid 500`,
+`/opt/guildcloud-worker/repo/deploy/site-worker-guild-a/`) keeps a stable
+sparse-checkout path and its existing deploy history. Do not add worker
+logic here - it belongs in `deploy/site-worker/`.
 
-**To ship a worker change: edit this file, commit, push to `main`.** No
-terminal access to the LXC needed. It's picked up within ~2 minutes.
+`supabase/functions/site-worker-guild-a/index.ts` (Deno) is retired: a
+permanent 410 notice, not a working copy - see that file's own header
+comment for why (the Edge Function runtime cannot reach Proxmox's private
+LAN IP at all).
 
-`supabase/functions/site-worker-guild-a/index.ts` (Deno) is a separate,
-older copy kept only for reference/parity — its own pg_cron schedule is
-permanently unscheduled because the Supabase Edge Function runtime can't
-reach Proxmox's private LAN IP at all. It is not what runs. Prefer editing
-this file.
+## Do not merge to `main` without also updating the live LXC's deploy setup
 
-## One-time setup performed on the LXC (not repeated per-change)
+The production LXC's `deploy-pull.sh` (still `guildcloud-worker-deploy.timer`
+-> `guildcloud-worker-deploy.service` on the box today) sparse-checks out
+**only** `deploy/site-worker-guild-a/` and copies its single `index.js` to
+`/opt/guildcloud-worker/index.js`. That file now does
+`import "../site-worker/index.js"` - on the LXC's sparse checkout, that
+sibling directory does not exist, so the next auto-deploy would copy in a
+launcher that fails to import and crashes on start.
 
-- Generated an ed25519 keypair at `/opt/guildcloud-worker/.ssh/deploy_key`
-  (private key never leaves the box).
-- Added the public half as a **read-only** deploy key on this GitHub repo.
-- Sparse-checked-out just this `deploy/` directory into
-  `/opt/guildcloud-worker/repo`.
-- Installed `guildcloud-worker-deploy.service`/`.timer` from this
-  directory into `/etc/systemd/system/` and enabled the timer.
+Landing this safely means, in order, per Phase R1 of
+`docs/superpowers/plans/2026-08-18-multi-cluster-placement.md`:
+1. Widen the LXC's sparse-checkout to include `deploy/site-worker/` too.
+2. Switch the LXC's systemd units to the generic ones in
+   `deploy/site-worker/` (`guildcloud-worker.service`/`.timer`,
+   `guildcloud-worker-deploy.service`/`.timer`), which stage the whole
+   directory and run `current/index.js` directly - no launcher indirection
+   needed at runtime once this is done.
+3. Only then merge/push this branch's worker changes to `main`.
+
+Until that migration happens on the real LXC, this branch's worker code is
+safe to have in git (nothing here pushes to `main` or touches the LXC on its
+own) but is **not** safe to merge un-migrated.

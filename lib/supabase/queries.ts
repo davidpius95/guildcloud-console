@@ -147,9 +147,11 @@ export async function getMembersForOrg(organizationId: string) {
 // Only ubuntu-2404/lag-1 does. This is the real source of truth instead.
 export async function getCatalogTemplateAvailability() {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("catalog_image_site_templates")
-    .select("catalog_image_id, site_id");
+  // See the catalog_image_site_availability() RPC's own comment
+  // (supabase/migrations/20260819120000_route_lifecycle_by_instance.sql)
+  // for why this is a security-definer RPC rather than a direct read of
+  // catalog_image_site_templates.
+  const { data, error } = await supabase.rpc("catalog_image_site_availability");
   if (error) throw error;
   return (data ?? []).map((row) => ({ catalogImageId: row.catalog_image_id, siteId: row.site_id }));
 }
