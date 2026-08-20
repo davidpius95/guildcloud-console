@@ -10,6 +10,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
+import { RemoteAccessGuide } from "@/components/remote-access-guide";
 import { IconLock, IconPlus, OSLogo } from "@/components/icons";
 import { formatDate } from "@/lib/mock-data";
 import { getCurrentUserOrg, getInstancesForOrg } from "@/lib/supabase/queries";
@@ -34,6 +35,8 @@ export default async function InstancesPage() {
           </Button>
         }
       />
+
+      <RemoteAccessGuide className="mb-6" />
 
       <div className="mb-5">
         <Note>

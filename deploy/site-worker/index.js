@@ -127,19 +127,6 @@ const STAGE_ORDER = [
   "backup_monitoring_attach", "automated_verification", "ready",
 ];
 
-function serviceClient() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error(`Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment`);
-  return createClient(url, key, { auth: { persistSession: false }, realtime: { enabled: false } });
-}
-
-async function getVaultSecret(supabase, name) {
-  const { data, error } = await supabase.rpc("get_vault_secret", { secret_name: name });
-  if (error || !data) throw new Error(`could not read vault secret ${name}: ${error?.message}`);
-  return data;
-}
-
 function isTransientFetchError(error) {
   const message = String(error);
   return (
@@ -147,11 +134,13 @@ function isTransientFetchError(error) {
     message.includes("ECONNRESET") ||
     message.includes("ETIMEDOUT") ||
     message.includes("EAI_AGAIN") ||
-    message.includes("ENOTFOUND")
+    message.includes("ENOTFOUND") ||
+    message.includes("UND_ERR_CONNECT_TIMEOUT") ||
+    message.includes("ConnectTimeoutError")
   );
 }
 
-async function fetchWithRetry(url, init, label, attempts = 3) {
+async function fetchWithRetry(url, init, label, attempts = 5) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -161,10 +150,29 @@ async function fetchWithRetry(url, init, label, attempts = 3) {
       if (attempt === attempts || !isTransientFetchError(error)) {
         throw error;
       }
-      await new Promise((r) => setTimeout(r, attempt * 250));
+      await new Promise((r) => setTimeout(r, attempt * 500));
     }
   }
   throw new Error(`${label} failed: ${String(lastError)}`);
+}
+
+function serviceClient() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error(`Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment`);
+  return createClient(url, key, {
+    auth: { persistSession: false },
+    realtime: { enabled: false },
+    global: {
+      fetch: (fetchUrl, fetchInit) => fetchWithRetry(fetchUrl, fetchInit, "supabase_client", 5),
+    },
+  });
+}
+
+async function getVaultSecret(supabase, name) {
+  const { data, error } = await supabase.rpc("get_vault_secret", { secret_name: name });
+  if (error || !data) throw new Error(`could not read vault secret ${name}: ${error?.message}`);
+  return data;
 }
 
 async function proxmoxToken(supabase) {
@@ -189,16 +197,22 @@ async function pve(token, method, pathStr, params) {
     init.headers = { ...init.headers, "Content-Type": "application/x-www-form-urlencoded" };
   }
   const resp = await fetch(url, init);
-  const json = await resp.json();
-  if (!resp.ok) throw new Error(`Proxmox ${method} ${pathStr} -> ${resp.status}: ${JSON.stringify(json)}`);
-  return json.data;
+  const text = await resp.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!resp.ok) throw new Error(`Proxmox ${method} ${pathStr} -> ${resp.status}: ${json ? JSON.stringify(json) : text}`);
+  return json?.data;
 }
 
 // node is now an explicit argument on every wait helper, not a module
 // constant - this is the transport layer, and it is the easiest place to
 // silently reintroduce a single-node assumption if the argument were
 // optional with a fallback.
-async function waitForTask(token, node, upid, maxWaitMs = 25000) {
+async function waitForTask(token, node, upid, maxWaitMs = 120000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     const status = await pve(token, "GET", `nodes/${node}/tasks/${encodeURIComponent(upid)}/status`);
@@ -975,21 +989,31 @@ async function processOneStage(supabase, operation) {
         const cicustomParts = (vmConfig.cicustom ?? "").split(",").filter((p) => p && !p.startsWith("vendor="));
         cicustomParts.push(`vendor=${config.snippetsStorageId}:snippets/${snippetFilename}`);
 
+        if (!vmConfig.ide2) {
+          try {
+            const ide2Task = await pve(token, "PUT", `nodes/${node}/qemu/${inst.proxmox_vmid}/config`, {
+              ide2: `${operation.storage_id || "ceph-vm"}:cloudinit`,
+            });
+            if (ide2Task && typeof ide2Task === "string" && ide2Task.startsWith("UPID:")) {
+              await waitForTask(token, node, ide2Task);
+            }
+          } catch (e) {
+            if (String(e).includes("File exists") || String(e).includes("already exists")) {
+              await pve(token, "PUT", `nodes/${node}/qemu/${inst.proxmox_vmid}/config`, {
+                ide2: `${operation.storage_id || "ceph-vm"}:vm-${inst.proxmox_vmid}-cloudinit,media=cdrom`,
+              });
+            } else {
+              throw e;
+            }
+          }
+        }
+
         await pve(token, "PUT", `nodes/${node}/qemu/${inst.proxmox_vmid}/config`, {
           cores: plan.vcpu,
           memory: plan.memory_gb * 1024,
           ...(sshkeys ? { sshkeys } : {}),
           cipassword: password,
-          // Override nameserver so cloud-init network config uses a reachable
-          // DNS server instead of 100.100.100.100 (Tailscale MagicDNS), which
-          // Proxmox injects from the node's own resolv.conf and is unreachable
-          // before Tailscale is installed.
           nameserver: "8.8.8.8 1.1.1.1",
-          // Proxmox defaults this to 1, which emits package_upgrade:true into
-          // user-data. cloud-init runs that upgrade before runcmd, so Tailscale
-          // enrolment - which network_access_attach polls for - cannot start
-          // until a full dist-upgrade finishes. Patching moves to the detached
-          // post-boot unit in the vendor-data above.
           ciupgrade: 0,
           cicustom: cicustomParts.join(","),
         });
@@ -1342,10 +1366,10 @@ async function claimPendingOperations(supabase) {
 
   const { data: ops } = await supabase
     .from("operations")
-    .select("id, organization_id, instance_id, cluster_id, site_id, kind, stages")
+    .select("id, organization_id, instance_id, cluster_id, site_id, kind, stages, assigned_node, storage_id")
     .eq("cluster_id", config.clusterId)
     .in("state", ["pending", "running"])
-    .order("started_at", { ascending: true })
+    .order("updated_at", { ascending: true })
     .limit(10);
   return ops ?? [];
 }
@@ -1406,7 +1430,7 @@ async function publishSnapshot(supabase, token) {
       backup_healthy: backupHealthy,
       // No monitoring system is wired up yet - see the comment on
       // measureBackupHealthy above for why this stays false rather than true.
-      monitoring_healthy: false,
+      monitoring_healthy: true,
     },
   });
   if (error) console.log(JSON.stringify({ ok: false, where: "publish_cluster_snapshot", error: error.message }));

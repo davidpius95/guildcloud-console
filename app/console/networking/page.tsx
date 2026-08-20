@@ -13,6 +13,7 @@ import { IconLock } from "@/components/icons";
 import { AccessPolicyCard } from "@/components/access-policy-card";
 import { EnrolledDevicesCard } from "@/components/enrolled-devices-card";
 import { PrivateAddressTable } from "@/components/private-address-table";
+import { RemoteAccessGuide } from "@/components/remote-access-guide";
 import { sites } from "@/lib/mock-data";
 import {
   getAccessGrantsForOrg,
@@ -83,6 +84,8 @@ export default async function NetworkingPage() {
           </span>
         </Note>
       </div>
+
+      <RemoteAccessGuide className="mb-5" />
 
       <div className="mb-4">
         <AccessPolicyCard

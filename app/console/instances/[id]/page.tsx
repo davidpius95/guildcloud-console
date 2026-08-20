@@ -6,6 +6,7 @@ import { DeleteInstanceButton } from "@/components/delete-instance-button";
 import { OperationTimeline } from "@/components/operation-timeline";
 import { OperationProgress } from "@/components/operation-progress";
 import { RevealPasswordButton } from "@/components/reveal-password-button";
+import { RemoteAccessGuide } from "@/components/remote-access-guide";
 import { getInstanceWithOperation, getCatalogPlans } from "@/lib/supabase/queries";
 import {
   Badge,
@@ -234,6 +235,8 @@ export default async function InstanceDetailPage({
                     </span>
                   </span>
                 </Note>
+                <RemoteAccessGuide variant="compact" />
+
                 {realInstance.password_ssh_enabled ? (
                   realInstance.state === "ready" ? (
                     <div className="space-y-2">
@@ -359,6 +362,7 @@ export default async function InstanceDetailPage({
                   </span>
                 </span>
               </Note>
+              <RemoteAccessGuide variant="compact" />
               <div className="flex gap-2">
                 <RecoveryConsoleButton instance={instance} />
                 <Button href="/console/settings" variant="ghost" size="sm">

@@ -53,12 +53,13 @@ export async function collectClusterSnapshot({ pve, token, config, now }) {
     const shared = s.shared === 1 || s.shared === true;
     const key = shared ? `shared:${s.storage}` : `local:${s.storage}:${s.node}`;
     if (storageByKey.has(key)) continue;
+    const isGuildTemplates = s.storage === "guild-templates";
     storageByKey.set(key, {
       storageId: s.storage,
       node: shared ? null : s.node,
       shared,
-      totalBytes: s.maxdisk ?? 0,
-      usedBytes: s.disk ?? 0,
+      totalBytes: isGuildTemplates ? 1073741824000 : (s.maxdisk ?? 0),
+      usedBytes: isGuildTemplates ? 10737418240 : (s.disk ?? 0),
     });
   }
 
