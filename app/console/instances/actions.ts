@@ -53,13 +53,19 @@ export async function createInstance(
   // provisionable." Matches the wizard's existing "No tested template at
   // {site}" copy rather than letting an unmapped combination reach the
   // worker and fail there instead.
-  const { data: template } = await supabase
-    .from("catalog_image_site_templates")
-    .select("proxmox_vmid")
+  // catalog_image_site_availability() is a security-definer RPC, not a
+  // direct table read, because the real placement source
+  // (catalog_image_cluster_templates) is service-role-only - exposing
+  // cluster/node identity to this authenticated call would leak the
+  // topology the whole multi-cluster design hides from customers. See
+  // the RPC's own comment for why it also unions the legacy
+  // catalog_image_site_templates path during rollout.
+  const { data: availability } = await supabase
+    .rpc("catalog_image_site_availability")
     .eq("catalog_image_id", catalogImageId)
     .eq("site_id", siteId)
     .maybeSingle();
-  if (!template) {
+  if (!availability) {
     return { error: "No tested template at this site for this image yet." };
   }
 

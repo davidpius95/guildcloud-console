@@ -334,6 +334,11 @@ export type Database = {
         Row: {
           catalog_image_id: string
           catalog_plan_id: string
+          // Placement fields. Set by place_next_pending_operation() (create)
+          // or the worker itself (proxmox_node/storage_id, once a VM
+          // exists). Internal only - see queries.ts for the customer-facing
+          // shape, which must never surface these.
+          cluster_id: string | null
           created_at: string
           id: string
           name: string
@@ -347,11 +352,13 @@ export type Database = {
           site_id: string
           ssh_keys_sync_pending: boolean
           state: string
+          storage_id: string | null
           tailscale_device_id: string | null
         }
         Insert: {
           catalog_image_id: string
           catalog_plan_id: string
+          cluster_id?: string | null
           created_at?: string
           id?: string
           name: string
@@ -365,11 +372,13 @@ export type Database = {
           site_id: string
           ssh_keys_sync_pending?: boolean
           state?: string
+          storage_id?: string | null
           tailscale_device_id?: string | null
         }
         Update: {
           catalog_image_id?: string
           catalog_plan_id?: string
+          cluster_id?: string | null
           created_at?: string
           id?: string
           name?: string
@@ -383,6 +392,7 @@ export type Database = {
           site_id?: string
           ssh_keys_sync_pending?: boolean
           state?: string
+          storage_id?: string | null
           tailscale_device_id?: string | null
         }
         Relationships: [
@@ -710,6 +720,13 @@ export type Database = {
     }
     Functions: {
       accept_invite: { Args: { p_token: string }; Returns: undefined }
+      catalog_image_site_availability: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          catalog_image_id: string
+          site_id: string
+        }[]
+      }
       get_invite_by_token: {
         Args: { p_token: string }
         Returns: {

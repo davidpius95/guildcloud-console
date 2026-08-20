@@ -5,8 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture_path="$repo_root/supabase/tests/fixtures/multi_cluster_base.sql"
 migration_path="$repo_root/supabase/migrations/20260818090000_add_multi_cluster_placement.sql"
 rpc_migration_path="$repo_root/supabase/migrations/20260818100000_add_atomic_placement_rpc.sql"
+node_templates_migration_path="$repo_root/supabase/migrations/20260819090000_add_per_node_template_resolution.sql"
+worker_health_migration_path="$repo_root/supabase/migrations/20260819100000_add_worker_health_rpc.sql"
+lifecycle_migration_path="$repo_root/supabase/migrations/20260819120000_route_lifecycle_by_instance.sql"
 schema_test_path="$repo_root/supabase/tests/multi_cluster_placement_schema.sql"
 rpc_test_path="$repo_root/supabase/tests/multi_cluster_placement_rpc.sql"
+node_templates_test_path="$repo_root/supabase/tests/multi_cluster_node_templates.sql"
+worker_health_test_path="$repo_root/supabase/tests/multi_cluster_worker_health_rpc.sql"
+lifecycle_test_path="$repo_root/supabase/tests/multi_cluster_lifecycle.sql"
 concurrency_test_path="$repo_root/scripts/test-multi-cluster-concurrency.sh"
 postgres_image='supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00'
 container_name="guildcloud-task3-${RANDOM}-${BASHPID}"
@@ -29,7 +35,7 @@ cleanup() {
     tail -n 80 "$log_file" >&2 || true
   fi
 
-  rm -f "$log_file" "$schema_log" "$rpc_log"
+  rm -f "$log_file" "$schema_log" "$rpc_log" "${node_templates_log:-}" "${worker_health_log:-}" "${lifecycle_log:-}"
   exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
@@ -45,8 +51,14 @@ for required_file in \
   "$fixture_path" \
   "$migration_path" \
   "$rpc_migration_path" \
+  "$node_templates_migration_path" \
+  "$worker_health_migration_path" \
+  "$lifecycle_migration_path" \
   "$schema_test_path" \
   "$rpc_test_path" \
+  "$node_templates_test_path" \
+  "$worker_health_test_path" \
+  "$lifecycle_test_path" \
   "$concurrency_test_path"
 do
   if [[ ! -f "$required_file" ]]; then
@@ -133,8 +145,17 @@ run_tap_file() {
 run_sql_file 'Applying isolated fixture' "$fixture_path"
 run_sql_file 'Applying real multi-cluster schema migration' "$migration_path"
 run_sql_file 'Applying real atomic placement RPC migration' "$rpc_migration_path"
+run_sql_file 'Applying real per-node template resolution migration' "$node_templates_migration_path"
+run_sql_file 'Applying real worker health RPC migration' "$worker_health_migration_path"
+run_sql_file 'Applying real lifecycle routing migration' "$lifecycle_migration_path"
 run_tap_file 'Running schema pgTAP contract' "$schema_test_path" "$schema_log"
 run_tap_file 'Running RPC pgTAP contract' "$rpc_test_path" "$rpc_log"
+node_templates_log="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task3-node-templates.XXXXXX.log")"
+run_tap_file 'Running per-node template pgTAP contract' "$node_templates_test_path" "$node_templates_log"
+worker_health_log="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task3-worker-health.XXXXXX.log")"
+run_tap_file 'Running worker health RPC pgTAP contract' "$worker_health_test_path" "$worker_health_log"
+lifecycle_log="$(mktemp "${TMPDIR:-/tmp}/guildcloud-task3-lifecycle.XXXXXX.log")"
+run_tap_file 'Running lifecycle routing pgTAP contract' "$lifecycle_test_path" "$lifecycle_log"
 
 schema_assertions="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$schema_log")"
 schema_failures="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$schema_log")"
@@ -148,6 +169,24 @@ if [[ "$rpc_assertions" -ne 69 || "$rpc_failures" -ne 0 ]]; then
   fail "Expected 69 passing RPC assertions, got $rpc_assertions passing and $rpc_failures failing"
 fi
 
+node_templates_assertions="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$node_templates_log")"
+node_templates_failures="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$node_templates_log")"
+if [[ "$node_templates_assertions" -ne 22 || "$node_templates_failures" -ne 0 ]]; then
+  fail "Expected 22 passing per-node template assertions, got $node_templates_assertions passing and $node_templates_failures failing"
+fi
+
+worker_health_assertions="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$worker_health_log")"
+worker_health_failures="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$worker_health_log")"
+if [[ "$worker_health_assertions" -ne 20 || "$worker_health_failures" -ne 0 ]]; then
+  fail "Expected 20 passing worker health assertions, got $worker_health_assertions passing and $worker_health_failures failing"
+fi
+
+lifecycle_assertions="$(awk '$1 == "ok" && $2 ~ /^[0-9]+$/ {count++} END {print count + 0}' "$lifecycle_log")"
+lifecycle_failures="$(awk '$1 == "not" && $2 == "ok" {count++} END {print count + 0}' "$lifecycle_log")"
+if [[ "$lifecycle_assertions" -ne 13 || "$lifecycle_failures" -ne 0 ]]; then
+  fail "Expected 13 passing lifecycle routing assertions, got $lifecycle_assertions passing and $lifecycle_failures failing"
+fi
+
 phase='Running two-session concurrency contract'
 printf '  %s\n' "$phase"
 if ! bash "$concurrency_test_path" "$container_name" >>"$log_file" 2>&1; then
@@ -156,4 +195,7 @@ fi
 
 printf 'PASS: 151 schema pgTAP assertions passed\n'
 printf 'PASS: 69 RPC pgTAP assertions passed\n'
+printf 'PASS: 22 per-node template pgTAP assertions passed\n'
+printf 'PASS: 20 worker health RPC pgTAP assertions passed\n'
+printf 'PASS: 13 lifecycle routing pgTAP assertions passed\n'
 printf 'PASS: 6 two-session concurrency assertions passed\n'

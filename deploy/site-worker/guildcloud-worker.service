@@ -1,0 +1,13 @@
+[Unit]
+Description=Run one bounded GuildCloud site-worker cycle
+After=network-online.target
+
+[Service]
+Type=oneshot
+# /opt/guildcloud-worker/current is the release symlink deploy-pull.sh
+# swaps atomically - see deploy/site-worker/README.md.
+# assertSecureWorkerEnvFile() (config.js) refuses to start unless this file
+# is root:root 0600 - EnvironmentFile itself doesn't enforce that.
+EnvironmentFile=/etc/guildcloud/worker.env
+WorkingDirectory=/opt/guildcloud-worker/current
+ExecStart=/usr/bin/node /opt/guildcloud-worker/current/index.js

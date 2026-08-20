@@ -2,5 +2,11 @@
   "name": "guildcloud-site-worker",
   "version": "1.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.109.0"
+  }
 }

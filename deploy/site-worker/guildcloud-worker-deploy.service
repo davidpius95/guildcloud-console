@@ -1,0 +1,7 @@
+[Unit]
+Description=Pull and deploy the latest GuildCloud site-worker from git
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/guildcloud-worker/deploy-pull.sh
