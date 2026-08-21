@@ -445,7 +445,13 @@ async function applyPendingProjectAcls(supabase) {
       policy.tagOwners[tag] = [config.tailscaleTagOwner];
       policy.grants = policy.grants ?? [];
       const exists = policy.grants.some((g) => g.src?.includes(tag));
-      if (!exists) policy.grants.push({ src: [tag], dst: [tag, "tag:guildcloud-mgmt"], ip: ["*"] });
+      // dst is the project's own tag ONLY. It used to also include
+      // tag:guildcloud-mgmt, which let a customer workload reach the
+      // Proxmox nodes, PBS, the site workers, and the router - the exact
+      // opposite of Master Plan §6's "Management: never customer
+      // reachable". Management still reaches tenants; that grant lives in
+      // infra/tailscale/policy.hujson and is deliberately one-directional.
+      if (!exists) policy.grants.push({ src: [tag], dst: [tag], ip: ["*"] });
       await ts(token, "POST", `tailnet/${config.tailscaleTailnet}/acl`, policy);
       await supabase.from("projects").update({ tailscale_acl_state: "applied" }).eq("id", project.id);
     } catch (e) {

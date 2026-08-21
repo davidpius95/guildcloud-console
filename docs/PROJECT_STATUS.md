@@ -98,9 +98,8 @@ the cluster/node instead of the worker assuming it).
 Plan: `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` (12
 tasks). Design: `docs/superpowers/specs/2026-08-18-multi-cluster-placement-design.md`.
 
-**Tasks 1-8 of 12: code complete**, sitting on branch
-`Davidcode/local-testing-proxmox-clusters-e520d5`, not yet merged to
-`main`. See `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` for
+**Tasks 1-8 of 12: code complete and merged to `main`** (PR #6, `bfdd7d8`).
+See `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` for
 the full list of what shipped and the two real bugs it fixed
 (snippet-node mismatch, a cross-cluster VM-deletion hazard). Verified:
 91 worker unit tests, 281 pgTAP assertions, typecheck, build — all green
@@ -210,8 +209,69 @@ one or two Guild-B nodes, since per-node templates mean redoing the
 backup/restore/replicate dance for every node added. Not started; explicitly
 deferred by the user, not forgotten.
 
+## Blocking right now: the Guild-B shared NFS export is full (2026-08-22)
+
+`192.168.8.126` hosts one 211 GB filesystem serving three Proxmox storages —
+`guild-snippets`, `guild-templates`, and the PBS datastore
+(`guild-a-standard`). It is at **203 GB used, 0 available**, so instance
+creates on Guild-B fail at `template_cloud_init` with
+`ENOSPC: no space left on device` while writing the cloud-init snippet. A
+real create failed this way on 2026-08-21 (instance `test`, VM 108 on podF);
+the night's backup run had already written three 1-byte truncated snapshots
+for the same reason.
+
+Breakdown: PBS datastore ~188 GB (7-8 daily snapshots each of the large
+legacy guests — vm/600 at 161 GB, vm/122 at 150 GB, vm/100, vm/120, vm/200 —
+i.e. G-14 workloads), `guild-templates` ~15 GB, snippets ~14 KB.
+
+Done so far: deleted the six one-off template backups from the 2026-08-20
+session (9101, 9111, 9121, 9131, 9141, 9151 — all six VMs still exist live
+as templates on podA) and the three 1-byte failed stubs. **This freed almost
+nothing (~540 KB) and that is expected** — PBS only unlinks snapshots from
+the index; the chunks are reclaimed when garbage collection runs. GC has not
+been run and cannot be triggered from the console side (PVE has no endpoint,
+the PBS API needs its own credentials, SSH to the box is key-refused). Run
+on the PBS host: `proxmox-backup-manager garbage-collection start guild-a-standard`.
+
+**Until GC runs, Guild-B creates still fail.** Tightening PBS retention on
+the big legacy guests is the durable fix.
+
+## Guild-B clone target moved to local-lvm (2026-08-22)
+
+Guild-B's template lives on the shared NFS (`guild-templates`), and every
+instance was a *linked* clone of it. Proxmox pins a linked clone to its
+base's storage, so customer disks landed on that same full 211 GB export
+while each node's own `local-lvm` sat at 0 bytes used with 1.6-3.5 TB free.
+
+Fixed (`a404de5`, on `main`): `buildCloneParams` in
+`deploy/site-worker/routing.js` passes a target `storage`, which Proxmox
+only honours for a **full** clone; Guild-B's rows in
+`catalog_image_cluster_templates` and `catalog_image_cluster_node_templates`
+moved to `clone_mode='full'` + `storage_id='local-lvm'` (applied directly to
+production). Guild-A is unaffected — `ceph-vm` is shared, its templates stay
+linked, and a linked row never sets `storage`. Placement now scores Guild-B
+against real per-node local disk instead of the hardcoded values still
+present in `deploy/site-worker/health-snapshot.js:61`, which report
+`guild-templates` as a flat 1 TB/10 GB regardless of reality — **that
+hardcode is still there and should be removed.**
+
+Note this does *not* unblock creates on its own: the ENOSPC came from the
+cloud-init snippet write, which still targets the full NFS.
+
 ## Open gaps worth knowing about (full list: `docs/phase-0/gap-register.md`)
 
+- **G-01** (Critical, **reopened 2026-08-22**): the tailnet wildcard grants
+  were never actually removed — `{src:["*"], dst:["*"], ip:["*"]}` still
+  sits above every tag rule, so any enrolled customer device can reach
+  `tag:guildcloud-mgmt` (Proxmox nodes, PBS, site workers, router), and live
+  SSH rules let `autogroup:member` in as `root`. The 2026-08-07 decision
+  kept them on the explicit grounds that no customer devices existed yet;
+  Phase 3 shipped, so that rationale expired. Corrected policy drafted at
+  `infra/tailscale/policy.proposed.hujson`, **not applied**. Related: the
+  console's `access_grants` table enforces nothing (display-only), and
+  `infra/tailscale/policy.hujson` has drifted from the live tailnet badly
+  enough that applying it would cut off every enrolled device. Full
+  reasoning: `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md`.
 - **G-14** (High, open): non-GuildCloud legacy workloads occupy real
   capacity on Guild-A's shared nodes — must move before any real
   capacity/pricing commitment is published.
@@ -231,6 +291,7 @@ deferred by the user, not forgotten.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-22 | Guild-B clones moved to local-lvm (`a404de5`); PBS one-off + failed-stub backups deleted (GC still needed); tailnet wildcard grants found still live, corrected policy drafted | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-19 | Multi-cluster placement Tasks 4-8 (code); Guild-B PBS fingerprint fix, siteworker identity, template backup+restore onto podA | `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` |
 | 2026-08-18 | Multi-cluster placement Tasks 1-3 (policy, schema, atomic RPC) | commits `453d2a5`..`8018f14` |
 | 2026-08-14 | Real device self-enrollment, real invite email, real access grants, SSH key retroactive push, network-attach root cause fix | `docs/dev-log/2026-08-14-*.md` |
@@ -239,6 +300,11 @@ deferred by the user, not forgotten.
 
 ## What's next
 
+0. **Run PBS garbage collection** on `192.168.8.126` — nothing on Guild-B
+   can provision until the export has free space. Then tighten retention on
+   the large legacy guests so it does not refill.
+0b. **Decide on `infra/tailscale/policy.proposed.hujson`** — until it is
+   applied, the management zone is reachable by any enrolled device.
 1. Deploy the generic worker (`deploy/site-worker/`) to Guild-A, replacing
    the old cluster-unaware code — this is the actual blocker on any
    further Guild-B placement testing (see the race-condition finding
