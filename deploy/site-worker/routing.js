@@ -73,3 +73,26 @@ export function resolveTemplate(rows, { imageId, clusterId, node }) {
   }
   return match;
 }
+
+// buildCloneParams(template, { newid, name, pool, targetNode }) -> params for
+// POST /nodes/{source_node}/qemu/{vmid}/clone
+//
+// The `storage` parameter is the reason this exists. Proxmox only honours it
+// for a FULL clone - a linked clone is pinned to the storage its base disk
+// lives on, with no way to redirect it. Guild-B's template sits on the shared
+// NFS export (guild-templates), so every linked clone landed its customer
+// disk on that same 211 GB export, which is also where the PBS datastore and
+// the cloud-init snippets live. It filled up, and instance creates started
+// failing with ENOSPC while each node's own local-lvm sat at 0 bytes used.
+//
+// So: a template row asking for a storage different from its base must be
+// clone_mode 'full', and we pass it through. Guild-A is unaffected - ceph-vm
+// is shared cluster-wide, its templates stay linked, and a linked row simply
+// never sets `storage`.
+export function buildCloneParams(template, { newid, name, pool, targetNode }) {
+  const full = template.clone_mode === "full";
+  const params = { newid, name, pool, full: full ? 1 : 0 };
+  if (full && template.storage_id) params.storage = template.storage_id;
+  if (template.source_node !== targetNode) params.target = targetNode;
+  return params;
+}

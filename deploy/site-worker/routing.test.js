@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertOperationOwnership, executionTarget, resolveTemplate } from "./routing.js";
+import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTemplate } from "./routing.js";
 
 // --- assertOperationOwnership -----------------------------------------
 //
@@ -115,4 +115,42 @@ test("resolveTemplate never matches across clusters even with the same node name
   assert.throws(() =>
     resolveTemplate(rows, { imageId: "ubuntu-2404", clusterId: "guild-b", node: "shared-name" }),
   );
+});
+
+// --- buildCloneParams ------------------------------------------------------
+//
+// Regression cover for the ENOSPC failure: guild-b's linked clones inherited
+// the template's shared NFS storage, filling the export that also holds the
+// PBS datastore and the cloud-init snippets.
+
+test("buildCloneParams sends the target storage for a full clone", () => {
+  const params = buildCloneParams(
+    templateRow({ cluster_id: "guild-b", node: "podF", source_node: "podA", clone_mode: "full", storage_id: "local-lvm" }),
+    { newid: 130, name: "test", pool: "guildcloud", targetNode: "podF" },
+  );
+
+  assert.equal(params.full, 1);
+  assert.equal(params.storage, "local-lvm");
+  assert.equal(params.target, "podF");
+});
+
+test("buildCloneParams never sends storage for a linked clone, which Proxmox would reject", () => {
+  const params = buildCloneParams(
+    templateRow({ storage_id: "ceph-vm", clone_mode: "linked" }),
+    { newid: 130, name: "test", pool: "guildcloud", targetNode: "nodeB" },
+  );
+
+  assert.equal(params.full, 0);
+  assert.equal("storage" in params, false);
+  assert.equal(params.target, "nodeB");
+});
+
+test("buildCloneParams omits target when the clone stays on the template's own node", () => {
+  const params = buildCloneParams(
+    templateRow({ clone_mode: "full", storage_id: "local-lvm" }),
+    { newid: 130, name: "test", pool: "guildcloud", targetNode: "nodeD" },
+  );
+
+  assert.equal("target" in params, false);
+  assert.equal(params.storage, "local-lvm");
 });

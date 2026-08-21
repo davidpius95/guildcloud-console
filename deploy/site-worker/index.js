@@ -20,7 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadWorkerConfig } from "./config.js";
-import { assertOperationOwnership, executionTarget, resolveTemplate } from "./routing.js";
+import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTemplate } from "./routing.js";
 import { collectClusterSnapshot } from "./health-snapshot.js";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -590,10 +590,9 @@ async function maintainWarmPool(supabase, token) {
       expirySeconds: 3600,
     });
 
-    const cloneParams = {
-      newid, name: hostname, pool: config.pvePoolId, full: t.clone_mode === "full" ? 1 : 0,
-    };
-    if (t.source_node !== warmPoolNode) cloneParams.target = warmPoolNode;
+    const cloneParams = buildCloneParams(t, {
+      newid, name: hostname, pool: config.pvePoolId, targetNode: warmPoolNode,
+    });
     const upid = await pve(token, "POST", `nodes/${t.source_node}/qemu/${t.proxmox_vmid}/clone`, cloneParams);
     await waitForTask(token, t.source_node, upid);
 
@@ -810,8 +809,7 @@ async function processOneStage(supabase, operation) {
           const t = resolveTemplate(templateRows ?? [], { imageId: inst.catalog_image_id, clusterId: config.clusterId, node });
           const nextid = await pve(token, "GET", "cluster/nextid");
           const newid = Number(nextid);
-          const cloneParams = { newid, name: inst.name, pool: config.pvePoolId, full: t.clone_mode === "full" ? 1 : 0 };
-          if (t.source_node !== node) cloneParams.target = node;
+          const cloneParams = buildCloneParams(t, { newid, name: inst.name, pool: config.pvePoolId, targetNode: node });
           const upid = await pve(token, "POST", `nodes/${t.source_node}/qemu/${t.proxmox_vmid}/clone`, cloneParams);
           await waitForTask(token, t.source_node, upid);
           await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: node, storage_id: t.storage_id }).eq("id", inst.id);
