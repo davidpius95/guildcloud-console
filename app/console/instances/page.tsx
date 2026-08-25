@@ -11,7 +11,7 @@ import {
   Th,
 } from "@/components/ui";
 import { RemoteAccessGuide } from "@/components/remote-access-guide";
-import { IconLock, IconPlus, OSLogo } from "@/components/icons";
+import { IconLock, IconPlus, IconServer, OSLogo } from "@/components/icons";
 import { formatDate } from "@/lib/mock-data";
 import { getCurrentUserOrg, getInstancesForOrg } from "@/lib/supabase/queries";
 import type { ResourceState } from "@/lib/types";
@@ -59,12 +59,20 @@ export default async function InstancesPage() {
           }
         />
         {instances.length === 0 ? (
-          <div className="px-5 py-10 text-center">
-            <p className="text-sm text-ink-500">No instances yet.</p>
-            <p className="mt-1 text-xs text-ink-400">
-              Create one to get a real Proxmox VM with a private IP and
-              hostname enrolled over Tailscale.
+          <div className="px-5 py-12 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-lemon-100 text-lemon-800 ring-8 ring-lemon-50">
+              <IconServer className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-semibold text-ink-900">No active instances</p>
+            <p className="mx-auto mt-1 max-w-sm text-xs text-ink-400">
+              Deploy your first private Proxmox VM with an automated Tailscale private hostname and end-to-end encryption.
             </p>
+            <div className="mt-5">
+              <Button href="/console/instances/new" size="sm">
+                <IconPlus className="h-4 w-4" />
+                Deploy instance
+              </Button>
+            </div>
           </div>
         ) : (
           <Table>

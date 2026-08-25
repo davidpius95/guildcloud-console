@@ -7,16 +7,9 @@ import { cx } from "./ui";
 const items = [
   { href: "/console", label: "Dashboard" },
   { href: "/console/projects", label: "Projects" },
-  { href: "/console/instances", label: "Instances" },
-  { href: "/console/kubernetes", label: "Kubernetes" },
-  { href: "/console/databases", label: "PostgreSQL" },
-  { href: "/console/storage", label: "Storage" },
+  { href: "/console/instances", label: "Guild Instances" },
   { href: "/console/volumes", label: "Volumes" },
-  { href: "/console/functions", label: "Functions" },
   { href: "/console/networking", label: "Networking" },
-  { href: "/console/monitoring", label: "Monitoring" },
-  { href: "/console/marketplace", label: "Marketplace" },
-  { href: "/console/migration", label: "Migration" },
   { href: "/console/billing", label: "Billing" },
   { href: "/console/settings", label: "Settings" },
   { href: "/console/support", label: "Support" },
@@ -36,7 +29,7 @@ export function MobileNav() {
             <li key={item.href}>
               <Link
                 href={item.href}
-                  className={cx(
+                className={cx(
                   "block whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-all duration-200",
                   active
                     ? "bg-[#171d36] font-medium text-white shadow-[0_8px_18px_rgba(23,29,54,0.16)]"

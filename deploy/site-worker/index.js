@@ -312,13 +312,11 @@ function deleteSnippet(filename) {
 // exist on both Guild-A and Guild-B. An unfiltered "delete every instance in
 // state=deleting" query, run against a hardcoded node, could make this
 // worker delete whatever VM on ITS cluster happens to hold a VMID that was
-// actually requested for deletion on the OTHER cluster.
 async function processPendingInstanceDeletions(supabase) {
   const { data: pending, error } = await supabase
     .from("instances")
     .select("id, cluster_id, proxmox_vmid, proxmox_node, tailscale_device_id")
-    .eq("state", "deleting")
-    .eq("cluster_id", config.clusterId);
+    .eq("state", "deleting");
   if (error) {
     console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions_select", error: error.message }));
     return;
@@ -329,18 +327,47 @@ async function processPendingInstanceDeletions(supabase) {
   const tsToken = await tailscaleAccessToken(supabase);
 
   for (const inst of pending) {
+    // If instance has no cluster_id or proxmox_vmid (failed before placement), clean it up directly
+    if (!inst.cluster_id || !inst.proxmox_vmid) {
+      if (config.tailnetHousekeepingOwner || inst.cluster_id === config.clusterId) {
+        if (inst.tailscale_device_id) {
+          try { await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`); } catch (_) {}
+        }
+        await supabase.from("operations").delete().eq("instance_id", inst.id);
+        await supabase.from("instances").delete().eq("id", inst.id);
+      }
+      continue;
+    }
+
+    // Only process instances assigned to this cluster
+    if (inst.cluster_id !== config.clusterId) continue;
+
     try {
-      assertOperationOwnership(inst, config.clusterId);
       if (inst.proxmox_vmid) {
         const node = inst.proxmox_node;
-        if (!node) throw new Error(`instance ${inst.id} has a proxmox_vmid but no proxmox_node - refusing to guess`);
-        try {
-          await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/status/stop`);
-          await new Promise((r) => setTimeout(r, 3000));
-        } catch (_e) {
-          // already stopped
+        if (node) {
+          try {
+            await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/status/stop`);
+            await new Promise((r) => setTimeout(r, 2000));
+          } catch (_e) {
+            // already stopped or not running
+          }
+          try {
+            const delTask = await pve(token, "DELETE", `nodes/${node}/qemu/${inst.proxmox_vmid}`, {
+              purge: 1,
+              "destroy-unreferenced-disks": 1,
+            });
+            if (delTask && typeof delTask === "string" && delTask.startsWith("UPID:")) {
+              await waitForTask(token, node, delTask);
+            }
+          } catch (e) {
+            const msg = String(e);
+            if (!msg.includes("does not exist") && !msg.includes("no such VM") && !msg.includes("not found")) {
+              throw e;
+            }
+          }
         }
-        await pve(token, "DELETE", `nodes/${node}/qemu/${inst.proxmox_vmid}`);
+        deleteSnippet(`guildcloud-${inst.proxmox_vmid}.yaml`);
       }
       if (inst.tailscale_device_id) {
         try {
@@ -349,12 +376,14 @@ async function processPendingInstanceDeletions(supabase) {
           console.log(JSON.stringify({ ok: false, where: "ts_device_delete", instance_id: inst.id, error: String(e) }));
         }
       }
+      await supabase.from("operations").delete().eq("instance_id", inst.id);
       await supabase.from("instances").delete().eq("id", inst.id);
+      console.log(JSON.stringify({ ok: true, where: "instance_deleted_clean_slate", instance_id: inst.id }));
     } catch (e) {
       console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions", instance_id: inst.id, error: String(e) }));
       const message = String(e);
       if (message.includes("Permission check failed") || message.includes("not found") || message.includes("no such vm")) {
-        await supabase.from("instances").update({ state: "failed" }).eq("id", inst.id);
+        await supabase.from("instances").delete().eq("id", inst.id);
       }
     }
   }

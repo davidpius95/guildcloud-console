@@ -164,6 +164,7 @@ export async function getInstancesForOrg(organizationId: string) {
       "id, name, state, site_id, private_ip, private_hostname, created_at, catalog_image_id, project_id, projects(name), catalog_images(name, version), catalog_plans(name, vcpu, memory_gb, disk_gb, hourly_price, monthly_max)",
     )
     .eq("organization_id", organizationId)
+    .neq("state", "deleting")
     .order("created_at", { ascending: false });
   if (error) throw error;
 
@@ -290,6 +291,7 @@ export async function getInstancesWithPrivateNetworkForOrg(organizationId: strin
     .from("instances")
     .select("id, name, private_ip, private_hostname, state, projects(name)")
     .eq("organization_id", organizationId)
+    .neq("state", "deleting")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map((row) => ({
