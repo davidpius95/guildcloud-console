@@ -261,7 +261,8 @@ function ResizeModal({
           </Button>
           <Button
             size="sm"
-            disabled={sameSize || isSubmitting}
+            disabled={sameSize}
+            loading={isSubmitting}
             onClick={() => onConfirm(target.id, target.name)}
           >
             {isSubmitting ? "Submitting..." : "Confirm resize"}
@@ -349,7 +350,8 @@ function SnapshotModal({
           </Button>
           <Button
             size="sm"
-            disabled={!name.trim() || isSubmitting}
+            disabled={!name.trim()}
+            loading={isSubmitting}
             onClick={() => onConfirm(name.trim())}
           >
             {isSubmitting ? "Creating..." : "Create snapshot"}
@@ -410,7 +412,8 @@ function RestoreModal({
           <Button
             size="sm"
             variant={mode === "replace" ? "danger" : "primary"}
-            disabled={!canConfirm || isSubmitting}
+            disabled={!canConfirm}
+            loading={isSubmitting}
             onClick={() => onConfirm(mode, selectedSnapshotId)}
           >
             {isSubmitting

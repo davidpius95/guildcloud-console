@@ -267,6 +267,21 @@ export function Td({
   );
 }
 
+// A single small spinner used everywhere something is processing - buttons,
+// inline notes, banners - so "this is working" always reads the same way
+// instead of every call site inventing its own animation.
+export function Spinner({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        "inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current/25 border-t-current",
+        className,
+      )}
+    />
+  );
+}
+
 export function Button({
   children,
   href,
@@ -276,6 +291,7 @@ export function Button({
   className,
   onClick,
   disabled,
+  loading,
   form,
 }: {
   children: React.ReactNode;
@@ -286,6 +302,10 @@ export function Button({
   className?: string;
   onClick?: () => void;
   disabled?: boolean;
+  // Shows a spinner in place of the button's own leading edge and disables
+  // it - pass the in-progress label as children (e.g. "Deleting…") so the
+  // spinner and the text stay in sync instead of drifting apart.
+  loading?: boolean;
   // Associates this button with a <form> elsewhere in the DOM by id -
   // needed when a form's submit control lives outside the <form> tag
   // itself, e.g. a Modal's separate footer slot.
@@ -303,24 +323,31 @@ export function Button({
     sm: "px-2.5 py-1.5 text-xs",
     md: "px-3.5 py-2 text-sm",
   };
+  const isDisabled = disabled || loading;
   const classes = cx(
     "inline-flex items-center justify-center gap-1.5 rounded-lg transition-all duration-200 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lemon-600",
     variants[variant],
     sizes[size],
-    disabled && "cursor-not-allowed opacity-60",
+    isDisabled && "cursor-not-allowed opacity-60",
     className,
+  );
+  const content = (
+    <>
+      {loading ? <Spinner /> : null}
+      {children}
+    </>
   );
 
   if (href) {
     return (
       <Link href={href} className={classes}>
-        {children}
+        {content}
       </Link>
     );
   }
   return (
-    <button type={type} form={form} className={classes} onClick={onClick} disabled={disabled}>
-      {children}
+    <button type={type} form={form} className={classes} onClick={onClick} disabled={isDisabled}>
+      {content}
     </button>
   );
 }

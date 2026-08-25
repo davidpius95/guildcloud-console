@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Modal } from "./modal";
-import { Badge, Button, Card, CardHeader, Note, Table, Td, Th } from "./ui";
+import { Badge, Button, Card, CardHeader, Note, Spinner, Table, Td, Th } from "./ui";
 import { CopyField } from "./copy-field";
 import type { Membership } from "@/lib/types";
 import { requestDeviceEnrollment } from "@/app/console/networking/actions";
@@ -92,8 +92,13 @@ export function EnrolledDevicesCard({
                 </Td>
                 <Td className="text-right">
                   {!m.deviceEnrolled && m.userId === currentUserId ? (
-                    <Button variant="ghost" size="sm" onClick={() => { setOpen(true); connect(); }}>
-                      Connect this device
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      loading={isPending && open}
+                      onClick={() => { setOpen(true); connect(); }}
+                    >
+                      {isPending && open ? "Generating…" : "Connect this device"}
                     </Button>
                   ) : null}
                 </Td>
@@ -126,7 +131,10 @@ export function EnrolledDevicesCard({
         ) : error ? (
           <Note tone="warning">{error}</Note>
         ) : (
-          <p className="text-sm text-ink-500">{isPending ? "Preparing…" : "…"}</p>
+          <p className="flex items-center gap-2 text-sm text-ink-500">
+            <Spinner />
+            Generating your connection command…
+          </p>
         )}
       </Modal>
     </>

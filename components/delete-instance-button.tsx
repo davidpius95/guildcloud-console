@@ -63,7 +63,8 @@ export function DeleteInstanceButton({
             <Button
               variant="danger"
               size="sm"
-              disabled={!canConfirm || isPending}
+              disabled={!canConfirm}
+              loading={isPending}
               onClick={onConfirm}
             >
               {isPending ? "Deleting…" : "Delete instance"}

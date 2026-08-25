@@ -577,7 +577,8 @@ export function CreateInstanceWizard({
               type={isReal ? "submit" : "button"}
               form={isReal ? "create-instance-form" : undefined}
               variant="primary"
-              disabled={!canCreate || pending}
+              disabled={!canCreate}
+              loading={pending}
               onClick={isReal ? undefined : () => setSubmitted(true)}
             >
               {pending ? "Creating…" : "Create instance"}

@@ -5,6 +5,7 @@ import { InstanceActions, RecoveryConsoleButton } from "@/components/instance-ac
 import { DeleteInstanceButton } from "@/components/delete-instance-button";
 import { OperationTimeline } from "@/components/operation-timeline";
 import { OperationProgress } from "@/components/operation-progress";
+import { DeletionProgress } from "@/components/deletion-progress";
 import { RevealPasswordButton } from "@/components/reveal-password-button";
 import { RemoteAccessGuide } from "@/components/remote-access-guide";
 import { getInstanceWithOperation, getCatalogPlans } from "@/lib/supabase/queries";
@@ -138,11 +139,7 @@ export default async function InstanceDetailPage({
 
         {realInstance.state === "deleting" ? (
           <div className="mb-6">
-            <Note tone="warning">
-              Deletion is in progress — the site worker is tearing down the
-              real Proxmox VM and Tailscale device. This page will 404 once
-              that finishes and the row is removed.
-            </Note>
+            <DeletionProgress />
           </div>
         ) : null}
 
