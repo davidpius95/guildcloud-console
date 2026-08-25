@@ -52,7 +52,18 @@ different agent. As of 2026-08-19:
   the real site-worker that executes it (`deploy/site-worker-guild-a/`,
   soon `deploy/site-worker/` — see below)
 - SSH keys, password-SSH reveal, instance snapshots/restore/resize/delete
-- Real device self-enrollment via Tailscale, real per-project ACL grants
+- Real device self-enrollment via Tailscale, real per-project ACL grants.
+  Enrollment links are reusable (90-day Tailscale authkey, not one-time —
+  user decision 2026-08-25) and one-click: the "Enroll device →" link in
+  `components/remote-access-guide.tsx` lands on
+  `/console/networking?connect=1`, which `EnrolledDevicesCard` auto-detects
+  and immediately generates the command — no longer requires a second click
+  on "Connect this device" after navigating there. The generated script
+  (`app/api/enroll/[token]/route.ts`) runs `tailscale up --reset ...` so
+  re-running it on a device that's already enrolled (the whole point of a
+  reusable link) doesn't hit Tailscale's "requires mentioning all
+  non-default flags" error. Verified live end-to-end 2026-08-25: real
+  laptop ran the generated command, connected successfully.
 - Real backups on both Proxmox clusters (PBS, daily, retention enforced —
   see gap register G-02, G-18)
 
@@ -300,6 +311,7 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-25 | One-click device enrollment: "Enroll device →" guide link now auto-triggers command generation (was a plain nav link requiring a second click); enrollment links made reusable (90-day authkey); enroll script now runs `tailscale up --reset` to fix a real re-enrollment error; verified live on a real laptop | — |
 | 2026-08-25 | Closed G-01 for real: shipped the tailnet wildcard-grant removal (PR #7, #8), verified live by direct re-read; confirmed generic worker deploy + `placement_settings.mode='multi'` already live (done by other sessions, undocumented until now); ran PBS GC to unblock Guild-B (9.73 GiB freed); cleaned up one 4-day-stuck orphaned instance | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-22 | Guild-B clones moved to local-lvm (`a404de5`); PBS one-off + failed-stub backups deleted (GC still needed); tailnet wildcard grants found still live, corrected policy drafted | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-19 | Multi-cluster placement Tasks 4-8 (code); Guild-B PBS fingerprint fix, siteworker identity, template backup+restore onto podA | `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` |
