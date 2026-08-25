@@ -97,6 +97,36 @@ export async function requestDeviceEnrollment(
   regenerate = false,
 ): Promise<{ command: string | null; error: string | null; reused?: boolean }> {
   const supabase = await createClient();
+
+  // Fast path, entirely inside this app. Minting a key needs the Tailscale
+  // credentials only the Edge Function holds, but *reusing* an already-valid
+  // link needs nothing except the token sitting on the caller's own
+  // membership row - which they can read under RLS because it is their row.
+  // Going out to the Edge Function for that was three network hops (Vercel ->
+  // Supabase Auth -> Postgres) to answer a question one query answers, and
+  // measured ~1.4s warm. Scoped to the signed-in user's own membership by
+  // user_id, so this can never surface another member's link.
+  if (!regenerate) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      const { data: own } = await supabase
+        .from("memberships")
+        .select("enrollment_token, enrollment_token_expires_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      const expiry = own?.enrollment_token_expires_at;
+      if (own?.enrollment_token && expiry && new Date(expiry).getTime() > Date.now()) {
+        return {
+          command: `curl -fsSL ${await getSiteUrl()}/api/enroll/${own.enrollment_token} | sh`,
+          error: null,
+          reused: true,
+        };
+      }
+    }
+  }
+
   // Pass this app's own known-good origin instead of relying on the
   // Edge Function's CONSOLE_URL secret - that secret never actually took
   // effect across several dashboard + CLI attempts (see PROJECT_STATUS.md,
