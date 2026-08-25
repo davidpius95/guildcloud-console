@@ -18,6 +18,25 @@ const TAILSCALE_TAILNET = "tail345216.ts.net";
 const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com";
 const MEMBER_TAG = "tag:guildcloud-member";
 
+// The CONSOLE_URL secret never actually took effect across several real
+// dashboard + CLI attempts (see PROJECT_STATUS.md, 2026-08-25) - this
+// function silently kept falling back to localhost regardless. The caller
+// now passes its own known-good origin in the request body instead (see
+// requestDeviceEnrollment in app/console/networking/actions.ts); CONSOLE_URL
+// stays as a legacy fallback in case that's ever unset for some other
+// caller, and the hardcoded fallback below points at the one confirmed-real
+// production deployment rather than localhost.
+function safeConsoleUrl(candidate: unknown): string | null {
+  if (typeof candidate !== "string") return null;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === "https:" || parsed.hostname === "localhost") return candidate;
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
 function serviceClient() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -105,6 +124,7 @@ Deno.serve(async (req) => {
     if (userError || !userData.user) return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401 });
 
     const supabase = serviceClient();
+    const body = await req.json().catch(() => ({}) as Record<string, unknown>);
 
     // Revocation path: an Owner/Admin removing a teammate needs that
     // teammate's device deauthorized too (the UI already promises this:
@@ -115,7 +135,6 @@ Deno.serve(async (req) => {
     // hygiene gap, not a live credential leak" trade-off - a failure here
     // must never block the membership row from being removed.
     if (req.method === "DELETE") {
-      const body = await req.json().catch(() => ({}));
       const targetMembershipId = body.membershipId as string | undefined;
       if (!targetMembershipId) return new Response(JSON.stringify({ error: "membershipId required" }), { status: 400 });
 
@@ -194,7 +213,10 @@ Deno.serve(async (req) => {
       p_secret_value: JSON.stringify({ key: key.key, hostname }),
     });
 
-    const consoleUrl = Deno.env.get("CONSOLE_URL") ?? "http://localhost:3100";
+    const consoleUrl =
+      safeConsoleUrl(body.consoleUrl) ??
+      Deno.env.get("CONSOLE_URL") ??
+      "https://guildcloud-console.vercel.app";
     return new Response(
       JSON.stringify({ command: `curl -fsSL ${consoleUrl}/api/enroll/${enrollmentToken} | sh` }),
       { headers: { "Content-Type": "application/json" } },

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserOrg } from "@/lib/supabase/queries";
+import { getSiteUrl } from "@/lib/site-url";
 import type { AccessResourceType } from "@/lib/types";
 
 export type NetworkingActionState = { error: string | null };
@@ -94,7 +95,18 @@ export async function removeAccessGrant(id: string) {
 // appears in this response, only inside the script itself once fetched.
 export async function requestDeviceEnrollment(): Promise<{ command: string | null; error: string | null }> {
   const supabase = await createClient();
-  const { data, error } = await supabase.functions.invoke("enroll-device", { method: "POST" });
+  // Pass this app's own known-good origin instead of relying on the
+  // Edge Function's CONSOLE_URL secret - that secret never actually took
+  // effect across several dashboard + CLI attempts (see PROJECT_STATUS.md,
+  // 2026-08-25), silently falling back to a hardcoded localhost URL that
+  // broke the generated command on every device but the one dev box.
+  // getSiteUrl() is already proven correct here (same fix as OAuth/invite
+  // redirects), so there's no reason to route this through a second,
+  // separately-configured source of truth.
+  const { data, error } = await supabase.functions.invoke("enroll-device", {
+    method: "POST",
+    body: { consoleUrl: await getSiteUrl() },
+  });
   if (error) return { command: null, error: error.message };
   if (data?.error) return { command: null, error: data.error };
   return { command: data?.command ?? null, error: null };
