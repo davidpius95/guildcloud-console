@@ -1,29 +1,41 @@
-// PROPOSED GuildCloud tailnet policy — DRAFT, NOT APPLIED.
+// GuildCloud tailnet policy — Guild-A.
 //
-// Deliberately named policy.proposed.hujson, not policy.hujson, so the
-// GitOps workflow (.github/workflows/tailscale-acl.yml, which triggers only
-// on policy.hujson) does NOT apply it. Review, then rename over
-// policy.hujson to ship it.
+// Source of truth. Do not edit this policy in the Tailscale admin console —
+// changes made there will be overwritten the next time this file is applied
+// and will not be reflected in git history.
 //
-// This draft exists for two reasons:
+// Managed via GitOps: .github/workflows/tailscale-acl.yml validates every
+// pull request that touches this file and applies it to the live tailnet on
+// merge to main.
 //
-// 1. The two wildcard grants in policy.hujson allow every device on the
-//    tailnet to reach every other device, including tag:guildcloud-mgmt.
-//    That contradicts Master Plan §6 ("Management — never customer
-//    reachable") and the console's own Networking page. Their committed
-//    rationale was explicit and honest: "this tailnet currently has only
-//    one real identity — GuildCloud has no customer devices enrolled yet
-//    (Phase 3 doesn't exist)." Phase 3 now exists. Real devices enrol as
+// This version (2026-08-25, replacing the previous policy.hujson) removes
+// the two tailnet-wide wildcard grants and reconciles drift between the
+// committed file and the live policy. Full reasoning:
+// docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md. Verified
+// against the live policy directly (`tailscale::manage_policy_file get`)
+// immediately before this change to confirm no further drift had occurred
+// since that decision was written — same 3 tenant-project tags, same single
+// enrolled-member grant.
+//
+// Two reasons this file changed:
+//
+// 1. The two wildcard grants allowed every device on the tailnet to reach
+//    every other device, including tag:guildcloud-mgmt. That contradicted
+//    Master Plan §6 ("Management — never customer reachable") and the
+//    console's own Networking page. Their original rationale was explicit
+//    and honest: "this tailnet currently has only one real identity —
+//    GuildCloud has no customer devices enrolled yet (Phase 3 doesn't
+//    exist)." Phase 3 now exists. Real devices enrol as
 //    tag:guildcloud-member, so the stated precondition no longer holds.
 //
-// 2. policy.hujson has DRIFTED from the live tailnet. The live policy
-//    carries tags and grants this file never had: tag:guildcloud-member,
+// 2. The previous policy.hujson had DRIFTED from the live tailnet. The live
+//    policy carried tags and grants that file never had: tag:guildcloud-member,
 //    tag:guildcloud-pool, and three tag:guildcloud-tenant-<slug> tags,
 //    added directly via the API by the site worker (applyPendingProjectAcls)
-//    and the enroll-device Edge Function. Applying policy.hujson as it
-//    stands today would DELETE all of them, instantly orphaning every
-//    instance tag and cutting off every enrolled device. This draft folds
-//    the live dynamic state back in so it is safe to apply.
+//    and the enroll-device Edge Function. Applying the old file as it stood
+//    would have DELETED all of them, instantly orphaning every instance tag
+//    and cutting off every enrolled device. This version folds the live
+//    dynamic state back in.
 //
 // NOTE ON COMMENTS: enroll-device and applyPendingProjectAcls both GET the
 // policy as JSON, mutate it, and POST it back. That round-trip STRIPS every
