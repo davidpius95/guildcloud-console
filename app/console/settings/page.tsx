@@ -11,6 +11,7 @@ import {
 } from "@/components/ui";
 import { TeamAccessCard } from "@/components/team-access-card";
 import { SshKeysCard } from "@/components/ssh-keys-card";
+import { ChangeConsolePasswordCard } from "@/components/change-console-password-card";
 import {
   getCurrentUserOrg,
   getMembersForOrg,
@@ -85,6 +86,10 @@ export default async function SettingsPage() {
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <SshKeysCard keys={sshKeys} />
 
+        <ChangeConsolePasswordCard />
+      </div>
+
+      <div className="mt-4">
         <Card>
           <CardHeader title="Support access" subtitle="There is no standing support access to your servers." />
           <div className="space-y-3 px-5 py-4">

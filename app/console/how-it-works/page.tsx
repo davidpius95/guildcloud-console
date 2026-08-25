@@ -10,6 +10,7 @@ import {
   IconWallet,
 } from "@/components/icons";
 import { Badge, Button, cx } from "@/components/ui";
+import { ConnectDeviceButton } from "@/components/connect-device-button";
 
 type Tone = "lemon" | "sky" | "amber" | "ink";
 type Icon = (props: { className?: string }) => React.JSX.Element;
@@ -109,7 +110,7 @@ export default function HowItWorksPage() {
       </section>
 
       <nav aria-label="Guide sections" className="mt-5 flex gap-2 overflow-x-auto pb-1">
-        {[ ["#provisioning", "Create a server"], ["#access", "Private access"], ["#care", "Care & visibility"], ["#costs", "Costs & control"], ["#questions", "Questions"] ].map(([href, label]) => <a key={href} href={href} className="shrink-0 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-xs font-medium text-ink-600 transition hover:-translate-y-px hover:border-lemon-300 hover:text-ink-900">{label}</a>)}
+        {[ ["#provisioning", "Create a server"], ["#first-access", "First access"], ["#passwords", "Passwords"], ["#care", "Care & visibility"], ["#costs", "Costs & control"], ["#questions", "Questions"] ].map(([href, label]) => <a key={href} href={href} className="shrink-0 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-xs font-medium text-ink-600 transition hover:-translate-y-px hover:border-lemon-300 hover:text-ink-900">{label}</a>)}
       </nav>
 
       <section id="provisioning" className="scroll-mt-20 pt-12">
@@ -153,6 +154,56 @@ export default function HowItWorksPage() {
               <p className="mt-5 text-center text-xs leading-5 text-ink-400">No public IP or inbound port needs to be opened for private access.</p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section id="first-access" className="scroll-mt-20 pt-14">
+        <div className="rounded-3xl border border-ink-100 bg-white p-6 shadow-[0_1px_2px_rgba(23,29,54,0.04)] sm:p-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-2xl">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-lemon-700">Your first connection</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink-900">The moment your server becomes reachable — and exactly what to do next.</h2>
+              <p className="mt-3 text-sm leading-6 text-ink-500">You can prepare your computer while the server is building. You can only connect after the instance page says <strong className="font-semibold text-ink-700">Ready</strong> and its Connect card shows a private hostname.</p>
+            </div>
+            <Badge tone="sky">About 5–10 minutes, once</Badge>
+          </div>
+
+          <div className="relative mt-8 grid gap-4 md:grid-cols-4">
+            <div className="pointer-events-none absolute left-[12%] right-[12%] top-6 hidden h-px bg-ink-200 md:block" />
+            {[
+              ["Before Ready", "Keep the instance page open", "The provisioning timeline will reach ‘Connecting it to your private network’ before it can show a private hostname."],
+              ["When Ready appears", "Enroll this computer", "Use the button below to get one command. It installs Tailscale if needed and joins this device to your private GuildCloud network."],
+              ["After the command finishes", "Confirm your device", "The command ends with ‘Connected.’ You only do this once for each computer or phone you want to use."],
+              ["Then connect", "Copy the SSH command", "Return to the instance’s Connect card, copy its private SSH command, and run it in your terminal."],
+            ].map(([when, title, detail], index) => <article key={title} className="relative z-10 rounded-2xl border border-ink-100 bg-ink-50/60 p-4"><span className="grid h-8 w-8 place-items-center rounded-full bg-ink-900 text-xs font-bold text-white">{index + 1}</span><p className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-ink-400">{when}</p><h3 className="mt-1 text-sm font-semibold text-ink-900">{title}</h3><p className="mt-2 text-xs leading-5 text-ink-500">{detail}</p></article>)}
+          </div>
+
+          <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div><p className="text-sm font-semibold text-sky-950">Do this on the computer you will use to reach your server.</p><p className="mt-1 text-sm leading-5 text-sky-800">The command is private to your membership. Do not forward it or paste it into a shared chat.</p></div>
+            <ConnectDeviceButton variant="secondary" className="shrink-0">Get my device connection command</ConnectDeviceButton>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-ink-500">The command can be reused on your own devices for 90 days. If you think it was shared, open the command again and choose “Generate a new link and retire this one.”</p>
+        </div>
+      </section>
+
+      <section id="passwords" className="scroll-mt-20 pt-14">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Passwords without confusion</p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-ink-900">There are two different passwords. Changing one never changes the other.</h2>
+        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+          <article className="rounded-3xl border border-ink-100 bg-white p-6">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-lemon-100 text-lemon-800"><IconLock className="h-5 w-5" /></div>
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-ink-400">GuildCloud sign-in password</p>
+            <h3 className="mt-1 text-lg font-semibold text-ink-900">This opens the GuildCloud console.</h3>
+            <ol className="mt-4 space-y-2 text-sm leading-6 text-ink-600"><li><span className="mr-2 font-semibold text-lemon-700">1.</span>Open <Link href="/console/settings" className="font-medium text-lemon-700 underline">Settings &amp; Keys</Link>.</li><li><span className="mr-2 font-semibold text-lemon-700">2.</span>Under <strong className="font-semibold text-ink-800">Sign-in security</strong>, select <strong className="font-semibold text-ink-800">Change console password</strong>.</li><li><span className="mr-2 font-semibold text-lemon-700">3.</span>Enter and confirm a new password of at least 12 characters.</li></ol>
+            <p className="mt-4 rounded-xl bg-ink-50 p-3 text-xs leading-5 text-ink-500">This does not change the password inside any server. It only changes how you sign in to GuildCloud.</p>
+          </article>
+          <article className="rounded-3xl bg-ink-950 p-6 text-white">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-300 text-amber-950"><IconServer className="h-5 w-5" /></div>
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-ink-400">Linux server password</p>
+            <h3 className="mt-1 text-lg font-semibold">This is only for optional password SSH.</h3>
+            <ol className="mt-4 space-y-2 text-sm leading-6 text-ink-300"><li><span className="mr-2 font-semibold text-amber-300">1.</span>Once the instance is <strong className="font-semibold text-white">Ready</strong>, open its Connect card and choose <strong className="font-semibold text-white">Reveal password (one-time)</strong>.</li><li><span className="mr-2 font-semibold text-amber-300">2.</span>Copy it immediately. GuildCloud deletes it after that one reveal and cannot show it again.</li><li><span className="mr-2 font-semibold text-amber-300">3.</span>Connect using the private SSH command. At the password prompt, enter the one-time password.</li><li><span className="mr-2 font-semibold text-amber-300">4.</span>Once connected, type <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-amber-200">passwd</code>, enter the current password once, then your new password twice.</li></ol>
+            <p className="mt-4 rounded-xl border border-white/10 bg-white/[0.06] p-3 text-xs leading-5 text-ink-300">Prefer SSH keys where possible. Add one in Settings &amp; Keys; keys are safer than passwords and avoid typing a server password at all.</p>
+          </article>
         </div>
       </section>
 

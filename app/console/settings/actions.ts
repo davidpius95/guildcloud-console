@@ -7,6 +7,32 @@ import { getSiteUrl } from "@/lib/site-url";
 import type { MemberRole } from "@/lib/types";
 
 export type SettingsActionState = { error: string | null };
+export type PasswordActionState = { error: string | null; success: boolean };
+
+export async function changeConsolePassword(
+  _prev: PasswordActionState,
+  formData: FormData,
+): Promise<PasswordActionState> {
+  const password = String(formData.get("password") ?? "");
+  const confirmation = String(formData.get("confirmation") ?? "");
+  if (password.length < 12) {
+    return { error: "Use at least 12 characters for your new password.", success: false };
+  }
+  if (password !== confirmation) {
+    return { error: "The two passwords do not match.", success: false };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Your session has ended. Sign in again and retry.", success: false };
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) return { error: error.message, success: false };
+
+  return { error: null, success: true };
+}
 
 export async function inviteMember(
   _prev: SettingsActionState,
