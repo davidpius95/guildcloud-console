@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { IconLock, IconChevron, IconShield, IconArrowRight } from "./icons";
 import { Card, CardHeader, Badge, Button } from "./ui";
+import { ConnectDeviceButton } from "./connect-device-button";
 
 export function RemoteAccessGuide({
   variant = "card",
@@ -65,14 +66,13 @@ export function RemoteAccessGuide({
               <div>
                 <p className="font-semibold text-ink-900">Join your private network</p>
                 <p className="text-ink-500">
-                  Go to{" "}
-                  <Link
-                    href="/console/networking?connect=1"
-                    className="font-medium text-lemon-700 underline hover:text-lemon-800"
+                  <ConnectDeviceButton
+                    unstyled
+                    className="font-medium text-lemon-700 underline hover:text-lemon-800 disabled:cursor-wait disabled:opacity-70"
                   >
-                    Networking
-                  </Link>{" "}
-                  to enroll your computer — the connection command generates automatically.
+                    Generate a connection command
+                  </ConnectDeviceButton>{" "}
+                  and run it on this computer to enroll it.
                 </p>
               </div>
             </div>
@@ -159,12 +159,12 @@ export function RemoteAccessGuide({
             </p>
           </div>
           <div className="mt-4 pt-2">
-            <Link
-              href="/console/networking?connect=1"
-              className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
+            <ConnectDeviceButton
+              unstyled
+              className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline disabled:cursor-wait disabled:opacity-70"
             >
               Enroll device &rarr;
-            </Link>
+            </ConnectDeviceButton>
           </div>
         </div>
 

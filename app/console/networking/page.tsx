@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import {
   Badge,
   Button,
@@ -113,9 +112,7 @@ export default async function NetworkingPage() {
           </div>
         </Card>
 
-        <Suspense fallback={<Card className="min-w-0"><div /></Card>}>
-          <EnrolledDevicesCard members={members} currentUserId={userOrg?.userId ?? null} />
-        </Suspense>
+        <EnrolledDevicesCard members={members} currentUserId={userOrg?.userId ?? null} />
       </div>
 
       <PrivateAddressTable instances={realInstances} />
