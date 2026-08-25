@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { cx } from "./ui";
 import {
   IconBucket,
+  IconCloud,
   IconCube,
   IconDatabase,
   IconDisk,
@@ -48,6 +49,7 @@ const groups: Array<{ heading?: string; items: NavItem[] }> = [
     items: [
       { href: "/console/billing", label: "Billing", icon: IconWallet },
       { href: "/console/settings", label: "Settings & Keys", icon: IconSettings },
+      { href: "/console/how-it-works", label: "How GuildCloud works", icon: IconCloud },
     ],
   },
   {

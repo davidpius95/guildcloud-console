@@ -6,6 +6,7 @@ import { Button, cx } from "./ui";
 import {
   IconBell,
   IconChevron,
+  IconCloud,
   IconGrid,
   IconNetwork,
   IconPlus,
@@ -27,6 +28,7 @@ const quickLaunch = [
   { href: "/console/projects", label: "Projects", icon: IconProjects },
   { href: "/console/networking", label: "Networking", icon: IconNetwork },
   { href: "/console/settings", label: "Settings & Keys", icon: IconSettings },
+  { href: "/console/how-it-works", label: "How GuildCloud works", icon: IconCloud },
 ];
 
 function initialsFor(email: string) {

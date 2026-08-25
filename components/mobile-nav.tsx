@@ -11,6 +11,7 @@ const items = [
   { href: "/console/networking", label: "Networking" },
   { href: "/console/billing", label: "Billing" },
   { href: "/console/settings", label: "Settings" },
+  { href: "/console/how-it-works", label: "How it works" },
 ];
 
 export function MobileNav() {
