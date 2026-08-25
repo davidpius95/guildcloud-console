@@ -6,11 +6,12 @@
 // It does NOT run `tailscale up` itself - there is no trusted execution
 // surface on a customer's own personal laptop the way there is on a VM
 // this platform already controls via the Proxmox guest agent. Instead it
-// mints a real ephemeral Tailscale auth key, stashes it behind a one-time
-// random token on the membership row, and returns a command pointing at
-// a public (but token-gated) Next.js route that serves the actual install
-// script - the word "Tailscale" never has to appear anywhere in the
-// console UI itself, only inside the script the user chooses to run.
+// mints a real reusable Tailscale auth key (90-day max expiry - Tailscale's
+// own ceiling, not a product choice), stashes it behind a random token on
+// the membership row, and returns a command pointing at a public (but
+// token-gated) Next.js route that serves the actual install script - the
+// word "Tailscale" never has to appear anywhere in the console UI itself,
+// only inside the script the user chooses to run.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const TAILSCALE_TAILNET = "tail345216.ts.net";
@@ -160,27 +161,34 @@ Deno.serve(async (req) => {
     await ensureMemberGrants(supabase, token, membership.organization_id as string);
 
     const hostname = `member-${(membership.id as string).slice(0, 8)}`;
-    // Unlike instance keys (ephemeral: true), a customer's own laptop
-    // going offline overnight must not deregister it - only the unused
-    // KEY expires fast, the resulting device stays enrolled indefinitely.
+    // Reusable, per user decision 2026-08-25 (see the reusable_enrollment_link
+    // migration): the same key can authenticate multiple `tailscale up`
+    // invocations, so this one link can be re-run on more than one device or
+    // re-run again later without coming back to regenerate it. 7776000s
+    // (90 days) is Tailscale's own max expirySeconds for an authkey - there
+    // is no "never expires" option at the API level, so 90 days is the
+    // longest a single link can stay valid; clicking "Connect this device"
+    // again mints a fresh key/link and the old one stops resolving (its
+    // membership row's enrollment_token gets overwritten), which is the
+    // actual revocation path today, not an expiry-driven one.
     const key = await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
       capabilities: {
-        devices: { create: { reusable: false, ephemeral: false, preauthorized: true, tags: [MEMBER_TAG] } },
+        devices: { create: { reusable: true, ephemeral: false, preauthorized: true, tags: [MEMBER_TAG] } },
       },
-      expirySeconds: 300,
+      expirySeconds: 7776000,
     });
 
     const enrollmentToken = crypto.randomUUID() + crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 7776000 * 1000).toISOString();
     await supabase
       .from("memberships")
       .update({ enrollment_token: enrollmentToken, enrollment_token_expires_at: expiresAt })
       .eq("id", membership.id);
 
-    // Stash the real key behind the one-time token rather than returning
-    // it directly - the enroll route (app/api/enroll/[token]) is what
-    // actually holds and redeems it, same reveal-once discipline as
-    // instance passwords.
+    // Stash the real key behind the token rather than returning it directly
+    // - the enroll route (app/api/enroll/[token]) is what actually holds and
+    // redeems it. No longer reveal-once (see redeem_enrollment_token) - the
+    // same token can be redeemed repeatedly until it's regenerated.
     await supabase.rpc("set_vault_secret", {
       p_secret_name: `enrollment_key_${enrollmentToken}`,
       p_secret_value: JSON.stringify({ key: key.key, hostname }),

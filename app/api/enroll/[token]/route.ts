@@ -2,11 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 
 // Public, token-gated route - hit by a bare `curl` from a customer's own
 // terminal, not a browser, so there's no session to authenticate with.
-// The one-time token in the URL is the credential (see
-// redeem_enrollment_token, a narrow SECURITY DEFINER RPC - this route
-// never touches the service-role key, which this app deliberately never
-// holds). Redeeming is single-use: a second request with the same token
-// gets a real 404, not the script again.
+// The token in the URL is the credential (see redeem_enrollment_token, a
+// narrow SECURITY DEFINER RPC - this route never touches the service-role
+// key, which this app deliberately never holds). Reusable per user
+// decision 2026-08-25: the same link resolves repeatedly until it expires
+// (90 days) or the member regenerates it from the console, which
+// overwrites the underlying token and makes the old link 404.
 export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
 

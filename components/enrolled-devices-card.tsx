@@ -86,7 +86,7 @@ export function EnrolledDevicesCard({
         open={open}
         onClose={close}
         title="Connect this device"
-        description="Run this in a terminal on the device you want to use — it only works once."
+        description="Run this in a terminal on any device you want to use — you can run it more than once."
         footer={
           <Button size="sm" onClick={close}>
             Done
@@ -97,8 +97,9 @@ export function EnrolledDevicesCard({
           <div className="space-y-3">
             <CopyField label="Command" value={command} />
             <Note>
-              This link works once. If you need to connect another device
-              later, come back here and click "Connect this device" again.
+              This link stays valid for 90 days and can be reused on more
+              than one device. Clicking "Connect this device" again
+              generates a new link and retires this one.
             </Note>
           </div>
         ) : error ? (
