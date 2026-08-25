@@ -93,7 +93,7 @@ export function Sidebar() {
         {groups.map((group, i) => (
           <div key={group.heading ?? i} className="mb-5">
             {group.heading ? (
-              <p className="mb-1.5 px-3 text-[0.65rem] font-semibold uppercase tracking-widest text-ink-500">
+              <p className="mb-1.5 px-3 text-[0.65rem] font-semibold uppercase tracking-widest text-ink-400">
                 {group.heading}
               </p>
             ) : null}
@@ -109,7 +109,7 @@ export function Sidebar() {
                   return (
                     <li key={item.label}>
                       <div
-                        className="flex items-center justify-between rounded-lg px-3 py-1.5 text-xs text-ink-500 cursor-not-allowed opacity-60"
+                        className="flex items-center justify-between rounded-lg px-3 py-1.5 text-xs text-ink-400 cursor-not-allowed opacity-60"
                         title="Coming Soon"
                       >
                         <div className="flex items-center gap-2.5">
