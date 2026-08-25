@@ -31,7 +31,7 @@ export function SshKeysCard({ keys }: { keys: SshKeyRow[] }) {
       />
       <div className="divide-y divide-ink-100 text-sm">
         {keys.length === 0 ? (
-          <p className="px-5 py-4 text-xs text-ink-400">
+          <p className="px-5 py-4 text-xs text-ink-500">
             No keys yet — instances can&rsquo;t be reached until you add one.
           </p>
         ) : (
@@ -39,7 +39,7 @@ export function SshKeysCard({ keys }: { keys: SshKeyRow[] }) {
             <div key={k.id} className="flex items-center justify-between px-5 py-3">
               <div>
                 <p className="font-medium text-ink-900">{k.name}</p>
-                <p className="text-xs text-ink-400">
+                <p className="text-xs text-ink-500">
                   {fingerprint(k.public_key)} · added {formatDate(k.created_at)}
                 </p>
               </div>

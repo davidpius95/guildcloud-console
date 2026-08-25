@@ -80,7 +80,7 @@ export function FunctionEnvVars({ initialVars }: { initialVars: FunctionEnvVar[]
             ))}
           </div>
         ) : (
-          <p className="px-5 py-6 text-sm text-ink-400">No environment variables set.</p>
+          <p className="px-5 py-6 text-sm text-ink-500">No environment variables set.</p>
         )}
       </Card>
 

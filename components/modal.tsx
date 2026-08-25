@@ -51,7 +51,7 @@ export function Modal({
             {title}
           </h2>
           {description ? (
-            <p className="mt-1 text-xs text-ink-400">{description}</p>
+            <p className="mt-1 text-xs text-ink-500">{description}</p>
           ) : null}
         </div>
         <div className="px-5 py-4">{children}</div>

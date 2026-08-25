@@ -14,7 +14,7 @@ export function PrivateAddressTable({ instances }: { instances: Row[] }) {
     <Card className="mt-4">
       <CardHeader title="Private address allocation" subtitle="One stable project IP and private DNS name per instance." />
       {instances.length === 0 ? (
-        <p className="px-5 py-6 text-sm text-ink-400">
+        <p className="px-5 py-6 text-sm text-ink-500">
           No instances yet — private addresses appear here once an instance
           finishes provisioning.
         </p>
@@ -36,7 +36,7 @@ export function PrivateAddressTable({ instances }: { instances: Row[] }) {
                 <Td className="text-ink-500">{i.projectName}</Td>
                 <Td className="font-mono text-xs">
                   {i.privateIp ?? (
-                    <span className="text-ink-400">
+                    <span className="text-ink-500">
                       {i.state === "provisioning" ? "Assigning…" : "—"}
                     </span>
                   )}

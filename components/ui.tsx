@@ -38,7 +38,7 @@ export function CardHeader({
       <div>
         <h2 className="text-sm font-semibold text-ink-900">{title}</h2>
         {subtitle ? (
-          <p className="mt-0.5 text-xs text-ink-400">{subtitle}</p>
+          <p className="mt-0.5 text-xs text-ink-500">{subtitle}</p>
         ) : null}
       </div>
       {action}
@@ -62,7 +62,7 @@ export function PageHeader({
           {title}
         </h1>
         {description ? (
-          <p className="mt-1 max-w-2xl text-sm text-ink-400">{description}</p>
+          <p className="mt-1 max-w-2xl text-sm text-ink-500">{description}</p>
         ) : null}
       </div>
       {action}
@@ -192,7 +192,7 @@ export function Stat({
 }) {
   return (
     <div className="px-5 py-4">
-      <p className="text-xs font-medium text-ink-400">{label}</p>
+      <p className="text-xs font-medium text-ink-500">{label}</p>
       <p
         className={cx(
           "mt-1 text-2xl font-semibold tabular-nums tracking-tight",
@@ -205,7 +205,7 @@ export function Stat({
       >
         {value}
       </p>
-      {hint ? <p className="mt-1 text-xs text-ink-400">{hint}</p> : null}
+      {hint ? <p className="mt-1 text-xs text-ink-500">{hint}</p> : null}
     </div>
   );
 }
@@ -372,7 +372,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-ink-200 bg-white/70 px-6 py-14 text-center shadow-[0_1px_2px_rgba(23,29,54,0.03)]">
       <h3 className="text-sm font-semibold text-ink-800">{title}</h3>
-      <p className="mt-1 max-w-sm text-sm text-ink-400">{description}</p>
+      <p className="mt-1 max-w-sm text-sm text-ink-500">{description}</p>
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );

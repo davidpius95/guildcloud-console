@@ -69,7 +69,7 @@ export default async function InstancesPage() {
               <IconServer className="h-6 w-6" />
             </div>
             <p className="text-sm font-semibold text-ink-900">No active instances</p>
-            <p className="mx-auto mt-1 max-w-sm text-xs text-ink-400">
+            <p className="mx-auto mt-1 max-w-sm text-xs text-ink-500">
               {canCreate
                 ? "Deploy your first private Proxmox VM with an automated Tailscale private hostname and end-to-end encryption."
                 : "Only organization Owners and Admins can deploy instances. Ask an Owner or Admin on your team."}
@@ -107,7 +107,7 @@ export default async function InstancesPage() {
                     >
                       {i.name}
                     </Link>
-                    <p className="text-xs text-ink-400">{i.projectName}</p>
+                    <p className="text-xs text-ink-500">{i.projectName}</p>
                   </Td>
                   <Td>
                     <StatePill state={i.state as ResourceState} />
@@ -115,7 +115,7 @@ export default async function InstancesPage() {
                   <Td>
                     <span className="whitespace-nowrap">{i.plan?.name ?? "—"}</span>
                     {i.plan ? (
-                      <p className="text-xs text-ink-400">
+                      <p className="text-xs text-ink-500">
                         {i.plan.vcpu} vCPU · {i.plan.memory_gb} GB · {i.plan.disk_gb} GB
                       </p>
                     ) : null}
@@ -133,10 +133,10 @@ export default async function InstancesPage() {
                         <span className="font-mono text-xs text-ink-600">
                           {i.privateHostname}
                         </span>
-                        <p className="font-mono text-xs text-ink-400">{i.privateIp ?? "—"}</p>
+                        <p className="font-mono text-xs text-ink-500">{i.privateIp ?? "—"}</p>
                       </>
                     ) : (
-                      <span className="text-xs text-ink-400">Assigning…</span>
+                      <span className="text-xs text-ink-500">Assigning…</span>
                     )}
                   </Td>
                   <Td className="whitespace-nowrap text-ink-500">{formatDate(i.createdAt)}</Td>
@@ -163,7 +163,7 @@ export default async function InstancesPage() {
             ].map(([title, detail]) => (
               <div key={title} className="px-5 py-3">
                 <p className="font-medium text-ink-900">{title}</p>
-                <p className="mt-0.5 text-xs text-ink-400">{detail}</p>
+                <p className="mt-0.5 text-xs text-ink-500">{detail}</p>
               </div>
             ))}
           </div>

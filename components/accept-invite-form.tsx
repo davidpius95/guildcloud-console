@@ -28,7 +28,7 @@ export function AcceptInviteForm({ email }: { email: string }) {
         </form>
       </div>
 
-      <div className="my-5 flex items-center gap-3 text-xs text-ink-400">
+      <div className="my-5 flex items-center gap-3 text-xs text-ink-500">
         <div className="h-px flex-1 bg-ink-100" />
         or
         <div className="h-px flex-1 bg-ink-100" />

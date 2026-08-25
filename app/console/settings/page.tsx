@@ -73,7 +73,7 @@ export default async function SettingsPage() {
                 table and nothing meters usage against one. This card used to
                 render fabricated used/limit pairs from lib/mock-data, which
                 read as a real allowance the customer was consuming. */}
-            <p className="px-5 py-6 text-sm leading-relaxed text-ink-400">
+            <p className="px-5 py-6 text-sm leading-relaxed text-ink-500">
               No quotas are enforced on this organization yet. Capacity is
               governed per site by its own reserve, shown on the Networking
               page.

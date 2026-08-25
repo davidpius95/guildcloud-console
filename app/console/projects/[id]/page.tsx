@@ -21,17 +21,17 @@ export default async function ProjectDetailPage({
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Card className="p-4">
-          <p className="text-xs text-ink-400">Created</p>
+          <p className="text-xs text-ink-500">Created</p>
           <p className="mt-1 text-sm font-medium text-ink-900">
             {formatDate(project.createdAt)}
           </p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs text-ink-400">Monthly spend</p>
+          <p className="text-xs text-ink-500">Monthly spend</p>
           <p className="mt-1 text-sm font-medium text-ink-900">{money(project.monthlySpend)}</p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs text-ink-400">Accent</p>
+          <p className="text-xs text-ink-500">Accent</p>
           <div className="mt-1">
             <Badge tone="lemon">{project.accent}</Badge>
           </div>

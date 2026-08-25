@@ -173,7 +173,7 @@ export function InstanceActions({
           } else {
             setModal(null);
             setNotice(
-              `Deletion scheduled for ${instance.name}. A documented recovery window applies before permanent deletion.`,
+              `Deletion scheduled for ${instance.name}. Teardown begins immediately and cannot be undone.`,
             );
           }
         }}
@@ -203,7 +203,7 @@ export function RecoveryConsoleButton({ instance }: { instance: Instance }) {
       >
         <div className="rounded-lg bg-[#0e1226] px-4 py-3 font-mono text-xs text-lemon-300">
           <p>Connecting to {instance.privateHostname}…</p>
-          <p className="mt-1 text-ink-400">
+          <p className="mt-1 text-ink-500">
             This is a mock console — no real serial/VNC session is opened. In
             the real product this pane streams a live terminal.
           </p>
@@ -309,7 +309,7 @@ function ResizeModal({
         </div>
 
         {sameSize ? (
-          <p className="text-xs text-ink-400">
+          <p className="text-xs text-ink-500">
             Choose a different plan to resize.
           </p>
         ) : (
@@ -370,7 +370,7 @@ function SnapshotModal({
           className="w-full rounded-lg bg-white px-3 py-2 font-mono text-sm text-ink-800 ring-1 ring-inset ring-ink-200 focus:outline-2 focus:outline-offset-2 focus:outline-lemon-600"
         />
       </label>
-      <p className="mt-3 text-xs text-ink-400">
+      <p className="mt-3 text-xs text-ink-500">
         Estimated additional cost: ~{money(((instance as Instance).diskGb ?? 40) * 0.1)}/mo while retained.
       </p>
     </Modal>
@@ -515,12 +515,17 @@ function DeleteModal({
   const [confirmText, setConfirmText] = useState("");
   const canConfirm = confirmText === instance.name;
 
+  // There is no recovery window. This dialog used to say "A documented
+  // recovery window applies before permanent deletion", which invited a
+  // confident destructive click by implying an undo that does not exist:
+  // request_instance_deletion marks the row and the site worker tears the real
+  // VM down within about a minute. Nothing restores it afterwards.
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={`Delete ${instance.name}`}
-      description="A documented recovery window applies before permanent deletion."
+      description="This permanently destroys the server. It cannot be undone."
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose} disabled={isSubmitting}>
@@ -538,8 +543,9 @@ function DeleteModal({
       }
     >
       <Note tone="warning">
-        This stops {instance.name} and starts its teardown. Attached
-        volumes are not deleted automatically.
+        Teardown of {instance.name} begins immediately and cannot be
+        cancelled or reversed. The disk and its data are destroyed with it —
+        restore from a snapshot afterwards is not possible.
       </Note>
       <label className="mt-4 block">
         <span className="mb-1.5 block text-xs font-medium text-ink-500">

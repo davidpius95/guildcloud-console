@@ -96,7 +96,7 @@ export default async function ProjectsPage() {
                           {instances.filter((r) => r.projectId === p.id).length} inst.
                         </Badge>
                       </div>
-                      <p className="mt-1 text-xs text-ink-400">
+                      <p className="mt-1 text-xs text-ink-500">
                         {p.description || "No description"}
                       </p>
                     </div>
@@ -107,7 +107,7 @@ export default async function ProjectsPage() {
                         <p className="text-sm font-semibold tabular-nums text-ink-900">
                           {c.n}
                         </p>
-                        <p className="text-[0.7rem] text-ink-400">{c.label}</p>
+                        <p className="text-[0.7rem] text-ink-500">{c.label}</p>
                       </div>
                     ))}
                   </div>

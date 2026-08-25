@@ -137,7 +137,7 @@ export default async function ConsoleDashboard() {
               <p className="text-sm font-semibold text-ink-900">
                 No instances yet
               </p>
-              <p className="mx-auto mt-1 max-w-sm text-xs text-ink-400">
+              <p className="mx-auto mt-1 max-w-sm text-xs text-ink-500">
                 {canCreate
                   ? "Create your first private server. It gets a stable private hostname and no public route."
                   : "Only Owners and Admins can create instances. Ask an Owner or Admin on your team."}
@@ -162,7 +162,7 @@ export default async function ConsoleDashboard() {
                     >
                       {i.name}
                     </Link>
-                    <p className="mt-0.5 truncate text-xs text-ink-400">
+                    <p className="mt-0.5 truncate text-xs text-ink-500">
                       {i.projectName} · {i.plan?.name ?? "—"} · created{" "}
                       {formatDate(i.createdAt)}
                     </p>
@@ -178,7 +178,7 @@ export default async function ConsoleDashboard() {
           <Card>
             <CardHeader title="Projects" />
             {projects.length === 0 ? (
-              <p className="px-5 py-6 text-sm text-ink-400">No projects yet.</p>
+              <p className="px-5 py-6 text-sm text-ink-500">No projects yet.</p>
             ) : (
               <ul className="divide-y divide-ink-100">
                 {projects.map((p) => (
@@ -189,7 +189,7 @@ export default async function ConsoleDashboard() {
                     >
                       {p.name}
                     </Link>
-                    <p className="mt-0.5 text-xs text-ink-400">
+                    <p className="mt-0.5 text-xs text-ink-500">
                       {instances.filter((i) => i.projectName === p.name).length}{" "}
                       instances
                     </p>
@@ -212,7 +212,7 @@ export default async function ConsoleDashboard() {
                   {userOrg.membership.deviceEnrolled ? "Enrolled" : "Not enrolled"}
                 </Badge>
               </div>
-              <p className="flex items-start gap-2 pt-1 text-xs text-ink-400">
+              <p className="flex items-start gap-2 pt-1 text-xs text-ink-500">
                 <IconLock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   Instances are reachable only from enrolled devices. Manage

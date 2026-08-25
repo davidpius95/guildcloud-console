@@ -32,7 +32,7 @@ export function RemoteAccessGuide({
             </span>
           </div>
           <IconChevron
-            className={`h-3.5 w-3.5 text-ink-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+            className={`h-3.5 w-3.5 text-ink-500 transition-transform ${isOpen ? "rotate-180" : ""}`}
           />
         </button>
 
@@ -117,7 +117,7 @@ export function RemoteAccessGuide({
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white dark:bg-ink-100 dark:text-ink-900">
                 1
               </span>
-              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-400">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-500">
                 Setup
               </span>
             </div>
@@ -147,7 +147,7 @@ export function RemoteAccessGuide({
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-lemon-600 text-xs font-bold text-ink-950">
                 2
               </span>
-              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-400">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-500">
                 Enrolment
               </span>
             </div>
@@ -175,7 +175,7 @@ export function RemoteAccessGuide({
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white dark:bg-ink-100 dark:text-ink-900">
                 3
               </span>
-              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-400">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-500">
                 Access
               </span>
             </div>
@@ -187,7 +187,7 @@ export function RemoteAccessGuide({
             </p>
           </div>
           <div className="mt-4 pt-2">
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-ink-500">
               <IconLock className="h-3 w-3 text-lemon-600" />
               Private & Encrypted
             </span>

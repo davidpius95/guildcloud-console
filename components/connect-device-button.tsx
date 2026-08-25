@@ -96,7 +96,7 @@ export function ConnectDeviceButton({
               type="button"
               onClick={() => start(true)}
               disabled={isPending}
-              className="text-xs font-medium text-ink-400 underline transition-colors hover:text-ink-700 disabled:cursor-wait"
+              className="text-xs font-medium text-ink-500 underline transition-colors hover:text-ink-700 disabled:cursor-wait"
             >
               Generate a new link and retire this one
             </button>

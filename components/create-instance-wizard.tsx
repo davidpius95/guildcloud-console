@@ -62,7 +62,7 @@ function Section({
         <div>
           <h2 className="text-sm font-semibold text-ink-900">{title}</h2>
           {description ? (
-            <p className="mt-0.5 text-xs text-ink-400">{description}</p>
+            <p className="mt-0.5 text-xs text-ink-500">{description}</p>
           ) : null}
         </div>
       </div>
@@ -242,7 +242,7 @@ export function CreateInstanceWizard({
           title="Image"
           description="Only images with a tested template at the selected site are shown."
         >
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-500">
             Operating systems
           </p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -270,7 +270,7 @@ export function CreateInstanceWizard({
                       </div>
                     </div>
                     {!available ? (
-                      <p className="mt-1 text-xs text-ink-400">
+                      <p className="mt-1 text-xs text-ink-500">
                         No tested template at {site.name}
                       </p>
                     ) : null}
@@ -279,7 +279,7 @@ export function CreateInstanceWizard({
               })}
           </div>
 
-          <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-ink-400">
+          <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-ink-500">
             Curated solutions
           </p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -304,7 +304,7 @@ export function CreateInstanceWizard({
                       </div>
                     </div>
                     {!available ? (
-                      <p className="mt-1 text-xs text-ink-400">
+                      <p className="mt-1 text-xs text-ink-500">
                         No tested template at {site.name}
                       </p>
                     ) : null}
@@ -358,7 +358,7 @@ export function CreateInstanceWizard({
               onChange={(e) => setVolumeGb(Number(e.target.value))}
               className="w-full accent-lemon-500"
             />
-            <span className="mt-1 block text-xs text-ink-400">
+            <span className="mt-1 block text-xs text-ink-500">
               Volumes expand later without downtime. Shrinking is not offered.
             </span>
           </label>
@@ -412,7 +412,7 @@ export function CreateInstanceWizard({
               className="w-full rounded-lg bg-white px-3 py-2 font-mono text-sm text-ink-800 ring-1 ring-inset ring-ink-200 placeholder:text-ink-300 focus:outline-2 focus:outline-offset-2 focus:outline-lemon-600"
             />
             {name ? (
-              <span className="mt-1.5 block font-mono text-xs text-ink-400">
+              <span className="mt-1.5 block font-mono text-xs text-ink-500">
                 {name.trim()}.
                 {projects.find((p) => p.id === projectId)!.name
                   .toLowerCase()
@@ -420,7 +420,7 @@ export function CreateInstanceWizard({
                 .guild.internal
               </span>
             ) : (
-              <span className="mt-1.5 block text-xs text-ink-400">
+              <span className="mt-1.5 block text-xs text-ink-500">
                 A private hostname is derived from the name and project.
               </span>
             )}
@@ -430,7 +430,7 @@ export function CreateInstanceWizard({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-ink-900">SSH keys</p>
-                <p className="text-xs text-ink-400">
+                <p className="text-xs text-ink-500">
                   {noKeysRegistered
                     ? "No keys registered yet — nothing to inject into this instance."
                     : "Every registered key is injected and used for the private route."}
@@ -491,7 +491,7 @@ export function CreateInstanceWizard({
               <span className="block text-sm font-medium text-ink-900">
                 Also allow password SSH over the private route
               </span>
-              <span className="mt-0.5 block text-xs text-ink-400">
+              <span className="mt-0.5 block text-xs text-ink-500">
                 {noKeysRegistered
                   ? "Required here since you have no SSH key registered — otherwise this instance would have no working credential at all. A one-time password is generated and shown on the instance page; change it (`passwd`) once you're in."
                   : "Opt-in. A generated password is shown once on the instance page after it's ready; change it (`passwd`) once you're in. Attempts are rate-limited and access is audited without recording the secret."}
@@ -592,12 +592,12 @@ export function CreateInstanceWizard({
             ) : null}
 
             {canCreate && !pending ? (
-              <p className="text-center text-xs text-ink-400">
+              <p className="text-center text-xs text-ink-500">
                 Takes about two to four minutes to be ready.
               </p>
             ) : null}
 
-            <div className="flex items-start gap-2 text-xs text-ink-400">
+            <div className="flex items-start gap-2 text-xs text-ink-500">
               <IconLock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
                 This instance gets no public IP. Access requires an enrolled

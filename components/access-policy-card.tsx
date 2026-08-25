@@ -96,7 +96,7 @@ export function AccessPolicyCard({
                       <span className="font-medium text-ink-900">
                         {member ? memberLabel(member) : "Unknown"}
                       </span>
-                      <p className="text-xs text-ink-400">{member?.role}</p>
+                      <p className="text-xs text-ink-500">{member?.role}</p>
                     </Td>
                     <Td className="text-ink-500">{projectName(grant.projectId)}</Td>
                     <Td>
@@ -110,7 +110,7 @@ export function AccessPolicyCard({
                             : grant.resourceId}
                         </p>
                       ) : (
-                        <p className="mt-1 text-xs text-ink-400">
+                        <p className="mt-1 text-xs text-ink-500">
                           All {grant.resourceType === "all" ? "resources" : `${grant.resourceType}s`} in project
                         </p>
                       )}
@@ -132,7 +132,7 @@ export function AccessPolicyCard({
             </tbody>
           </Table>
         ) : (
-          <p className="px-5 py-6 text-sm text-ink-400">
+          <p className="px-5 py-6 text-sm text-ink-500">
             No explicit grants yet. Developer, Billing, and Read-only members
             cannot reach any private resource until you add one.
           </p>

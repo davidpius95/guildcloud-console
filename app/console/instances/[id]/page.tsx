@@ -60,7 +60,7 @@ export default async function InstanceDetailPage({
 
     return (
       <>
-        <nav className="mb-4 text-xs text-ink-400">
+        <nav className="mb-4 text-xs text-ink-500">
           <Link href="/console/instances" className="hover:text-ink-700 hover:underline">
             Guild Instances
           </Link>
@@ -226,7 +226,7 @@ export default async function InstanceDetailPage({
                   realInstance.state === "ready" ? (
                     <div className="space-y-2">
                       <RevealPasswordButton instanceId={realInstance.id} />
-                      <p className="text-xs text-ink-400">
+                      <p className="text-xs text-ink-500">
                         Change this (<code className="font-mono">passwd</code>) once
                         you're in, and{" "}
                         <Link
@@ -239,7 +239,7 @@ export default async function InstanceDetailPage({
                       </p>
                     </div>
                   ) : (
-                    <p className="text-xs text-ink-400">
+                    <p className="text-xs text-ink-500">
                       Password SSH is enabled — the password can be revealed
                       once this instance reaches Ready.
                     </p>

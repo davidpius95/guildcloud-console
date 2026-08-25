@@ -107,7 +107,7 @@ export default async function NetworkingPage() {
                   <p className="text-sm font-medium text-ink-900">{z.name}</p>
                   <Badge tone={z.tone}>{z.reachable}</Badge>
                 </div>
-                <p className="mt-1 text-xs text-ink-400">{z.purpose}</p>
+                <p className="mt-1 text-xs text-ink-500">{z.purpose}</p>
               </div>
             ))}
           </div>

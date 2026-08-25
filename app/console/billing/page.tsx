@@ -50,7 +50,7 @@ export default async function BillingPage() {
           subtitle="Billed hourly for actual use. The monthly maximum is a ceiling, not a forecast."
         />
         {billable.length === 0 ? (
-          <p className="px-5 py-10 text-center text-sm text-ink-400">
+          <p className="px-5 py-10 text-center text-sm text-ink-500">
             No billable instances yet.
           </p>
         ) : (
@@ -112,7 +112,7 @@ export default async function BillingPage() {
       <div className="mt-4">
         <Note>
           Stopped instances still bill for retained storage. Deleting an
-          instance releases its storage after the documented recovery window.
+          instance destroys its disk immediately and stops its charges.
         </Note>
       </div>
     </>
