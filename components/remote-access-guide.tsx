@@ -114,7 +114,7 @@ export function RemoteAccessGuide({
         <div className="relative flex flex-col justify-between rounded-lg border border-ink-100 bg-ink-50/40 p-4 transition-colors hover:bg-ink-50/80">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white dark:bg-ink-100 dark:text-ink-900">
                 1
               </span>
               <span className="text-[11px] font-medium uppercase tracking-wider text-ink-400">
@@ -155,7 +155,7 @@ export function RemoteAccessGuide({
               Connect Your Device
             </h3>
             <p className="mt-1 text-xs leading-relaxed text-ink-500">
-              Generate a one-click connection command from the Networking page to link your device.
+              Generate a connection command and run it on this device. Takes one command, once.
             </p>
           </div>
           <div className="mt-4 pt-2">
@@ -163,7 +163,7 @@ export function RemoteAccessGuide({
               unstyled
               className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline disabled:cursor-wait disabled:opacity-70"
             >
-              Enroll device &rarr;
+              Generate connection command
             </ConnectDeviceButton>
           </div>
         </div>
@@ -172,7 +172,7 @@ export function RemoteAccessGuide({
         <div className="relative flex flex-col justify-between rounded-lg border border-ink-100 bg-ink-50/40 p-4 transition-colors hover:bg-ink-50/80">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white dark:bg-ink-100 dark:text-ink-900">
                 3
               </span>
               <span className="text-[11px] font-medium uppercase tracking-wider text-ink-400">

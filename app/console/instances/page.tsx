@@ -39,7 +39,9 @@ export default async function InstancesPage() {
         }
       />
 
-      <RemoteAccessGuide className="mb-6" />
+      {userOrg?.membership.deviceEnrolled ? null : (
+        <RemoteAccessGuide className="mb-6" />
+      )}
 
       <div className="mb-5">
         <Note>

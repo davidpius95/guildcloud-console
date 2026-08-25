@@ -46,8 +46,17 @@ export function EnrolledDevicesCard({
                 </Badge>
               </Td>
               <Td className="text-right">
-                {!m.deviceEnrolled && m.userId === currentUserId ? (
-                  <ConnectDeviceButton>Connect this device</ConnectDeviceButton>
+                {/* Shown whether or not this member is already enrolled. The
+                    action used to disappear once device_enrolled flipped true,
+                    which left an enrolled member with no route to the command
+                    at all - even though the link is deliberately reusable
+                    across several devices, so "I have a new laptop" was a
+                    dead end. Still only ever offered for the caller's own
+                    row: enroll-device enrolls whoever calls it. */}
+                {m.userId === currentUserId ? (
+                  <ConnectDeviceButton>
+                    {m.deviceEnrolled ? "Add another device" : "Connect this device"}
+                  </ConnectDeviceButton>
                 ) : null}
               </Td>
             </tr>

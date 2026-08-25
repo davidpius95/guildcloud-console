@@ -100,7 +100,13 @@ export default async function ConsoleDashboard() {
         </div>
       ) : null}
 
-      <RemoteAccessGuide className="mb-5" />
+      {/* The 3-step onboarding guide is for someone who has not connected a
+          device yet. Once enrolled it is pure noise in the most valuable slot
+          on the page, every visit, forever - so it stands down and the
+          Networking page keeps the "add another device" route. */}
+      {userOrg.membership.deviceEnrolled ? null : (
+        <RemoteAccessGuide className="mb-5" />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="min-w-0 lg:col-span-2">
