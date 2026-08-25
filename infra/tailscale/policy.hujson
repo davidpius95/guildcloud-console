@@ -1,152 +1,212 @@
-// GuildCloud tailnet policy — Guild-A
+// PROPOSED GuildCloud tailnet policy — DRAFT, NOT APPLIED.
 //
-// Source of truth. Do not edit this policy in the Tailscale admin console —
-// changes made there will be overwritten the next time this file is applied
-// and will not be reflected in git history.
+// Deliberately named policy.proposed.hujson, not policy.hujson, so the
+// GitOps workflow (.github/workflows/tailscale-acl.yml, which triggers only
+// on policy.hujson) does NOT apply it. Review, then rename over
+// policy.hujson to ship it.
 //
-// Managed via GitOps: .github/workflows/tailscale-acl.yml validates every
-// pull request that touches this file and applies it to the live tailnet on
-// merge to main. See docs/decisions/2026-08-07-tailscale-tenancy-model.md
-// for why this policy is shaped the way it is, and
-// infra/tailscale/README.md for setup and the manual-apply fallback.
+// This draft exists for two reasons:
 //
-// Master Plan references: §6 (zone table: Management/Tenant/Backup/Future
-// edge), §16 ("choose and document the Tailscale tenancy model"), §17
-// (same, as an explicit planning action).
+// 1. The two wildcard grants in policy.hujson allow every device on the
+//    tailnet to reach every other device, including tag:guildcloud-mgmt.
+//    That contradicts Master Plan §6 ("Management — never customer
+//    reachable") and the console's own Networking page. Their committed
+//    rationale was explicit and honest: "this tailnet currently has only
+//    one real identity — GuildCloud has no customer devices enrolled yet
+//    (Phase 3 doesn't exist)." Phase 3 now exists. Real devices enrol as
+//    tag:guildcloud-member, so the stated precondition no longer holds.
 //
-// GitOps workflow verified end-to-end 2026-08-07: TS_OAUTH_CLIENT_ID and
-// TS_OAUTH_CLIENT_SECRET repo secrets confirmed set, this comment-only PR
-// exercises the "test" (validate) job, and merging it exercises "apply".
+// 2. policy.hujson has DRIFTED from the live tailnet. The live policy
+//    carries tags and grants this file never had: tag:guildcloud-member,
+//    tag:guildcloud-pool, and three tag:guildcloud-tenant-<slug> tags,
+//    added directly via the API by the site worker (applyPendingProjectAcls)
+//    and the enroll-device Edge Function. Applying policy.hujson as it
+//    stands today would DELETE all of them, instantly orphaning every
+//    instance tag and cutting off every enrolled device. This draft folds
+//    the live dynamic state back in so it is safe to apply.
+//
+// NOTE ON COMMENTS: enroll-device and applyPendingProjectAcls both GET the
+// policy as JSON, mutate it, and POST it back. That round-trip STRIPS every
+// comment in this file. Expect these comments to vanish from the live
+// policy the first time anyone enrols a device or creates a project — the
+// file stays the readable source of truth, the live copy will not be.
 
 {
 	"tagOwners": {
-		// Pre-existing tag, unrelated to GuildCloud's zone model. Left as-is
-		// per an explicit 2026-08-07 decision — see the Decision Record.
+		// Pre-existing, unrelated to GuildCloud. Left as-is.
 		"tag:gean-devnet": ["davidpius95@gmail.com"],
 
-		// GuildCloud zone tags, added 2026-08-07.
-		"tag:guildcloud-mgmt": ["davidpius95@gmail.com"],
-		"tag:operator":        ["davidpius95@gmail.com"],
-
-		// Phase 3 tenant umbrella tag, added 2026-08-09. Every real customer
-		// instance and, later, every enrolled customer device carries this
-		// tag. Per-project tags (tag:guildcloud-tenant-<slug>) are declared
-		// dynamically by the site worker itself via the Tailscale API at
-		// project-creation time, NOT here — see the Decision Record addendum
-		// and docs/phase-3/threat-model.md for why: they can't wait on a
-		// human merging a PR, and there's no bounded set to enumerate ahead
-		// of time. This file stays the source of truth for the STATIC tags
-		// and grants (this one, mgmt, operator, backup); the worker's
-		// direct-API per-project additions are an accepted, documented
-		// exception to the "no direct API calls" rule below, not a silent
-		// bypass of it.
+		// GuildCloud zone tags.
+		"tag:guildcloud-mgmt":   ["davidpius95@gmail.com"],
+		"tag:operator":          ["davidpius95@gmail.com"],
 		"tag:guildcloud-tenant": ["davidpius95@gmail.com"],
+
+		// Added live by enroll-device. Every enrolled customer device
+		// carries this. Absent from policy.hujson — see note 2 above.
+		"tag:guildcloud-member": ["davidpius95@gmail.com"],
+
+		// Added live by the warm-pool path in the site worker.
+		"tag:guildcloud-pool": ["davidpius95@gmail.com"],
+
+		// Added live by applyPendingProjectAcls, one per real project.
+		// This list will grow without touching this file; that drift is
+		// expected and documented, not a mistake.
+		"tag:guildcloud-tenant-project-b44c4107": ["davidpius95@gmail.com"],
+		"tag:guildcloud-tenant-project-076fcbd6": ["davidpius95@gmail.com"],
+		"tag:guildcloud-tenant-project-5e81b859": ["davidpius95@gmail.com"],
+	},
+
+	"groups": {
+		// These seven identities reached tag:gean-devnet ONLY through the
+		// wildcard grants being removed below. Without this explicit group
+		// they would silently lose access — the SSH rule alone is not
+		// enough, an SSH connection still needs a network grant.
+		"group:gean-devnet-users": [
+			"manbankat@gmail.com",
+			"shaaibusuleiman9@gmail.com",
+			"itodosimonitodo1@gmail.com",
+			"dimkayilrit@gmail.com",
+			"kefasiceking@gmail.com",
+			"nodebridgeafric@gmail.com",
+			"developerlongs@gmail.com",
+		],
 	},
 
 	"acls": [],
 
 	"grants": [
-		// --- Pre-existing owner-level access, kept unchanged ---
-		// This is what currently lets davidpius95@'s own devices reach
-		// personal/non-GuildCloud services (homeassistant, jellyfin,
-		// coolify, etc.) on this shared tailnet. Removing it today would
-		// break those services for no real security benefit, since this
-		// tailnet currently has only one real identity — GuildCloud has no
-		// customer devices enrolled yet (Phase 3 doesn't exist). Real
-		// per-project isolation is enforced by NOT granting future
-		// customer-tagged devices this same broad access — see the tenant
-		// tag note below.
+		// --- Replaces the two wildcard grants -------------------------------
+		// Tailnet admins keep unrestricted reach, so operating the fleet and
+		// the owner's personal services (homeassistant, deepseek, guild-gpu,
+		// agent-knowledge-bank, netalertx, usher-node, ...) is unaffected.
+		// Tagged devices are NOT autogroup:admin, so no customer device and
+		// no instance matches this.
 		{
-			"src": ["*", "autogroup:member"],
-			"dst": ["*", "autogroup:admin", "autogroup:member"],
-			"ip": ["*", "tcp:*", "ipv4:*"],
+			"src": ["autogroup:admin"],
+			"dst": ["*"],
+			"ip":  ["*"],
+		},
+		// Every other tailnet user reaches their own devices, and nothing
+		// else. This is the line that actually replaces "* -> *".
+		{
+			"src": ["autogroup:member"],
+			"dst": ["autogroup:self"],
+			"ip":  ["*"],
+		},
+		// Preserves the gean-devnet access the wildcards were providing.
+		{
+			"src": ["group:gean-devnet-users"],
+			"dst": ["tag:gean-devnet"],
+			"ip":  ["*"],
 		},
 		{
-			"src": ["*", "autogroup:member", "autogroup:shared", "autogroup:network-admin"],
-			"dst": ["*", "autogroup:member", "autogroup:it-admin", "autogroup:owner"],
-			"ip": ["*", "tcp:*", "ipv4:*"],
+			"src": ["tag:gean-devnet"],
+			"dst": ["tag:gean-devnet"],
+			"ip":  ["*"],
 		},
 
-		// --- New GuildCloud zone scaffolding, added 2026-08-07 ---
-		// Management zone (§6): "never customer reachable" — only
-		// tag:operator (davidpius95@'s own devices, explicitly) and other
-		// management-zone devices can reach it. When Phase 3 enrolls real
-		// customer devices as tag:guildcloud-tenant-<project> (not yet
-		// created — no real tenants exist), they will NOT match this grant,
-		// which is the actual isolation mechanism.
+		// --- Management zone (§6): never customer reachable -----------------
 		{
 			"src": ["tag:operator"],
 			"dst": ["tag:guildcloud-mgmt"],
-			"ip": ["*"],
+			"ip":  ["*"],
 		},
 		{
 			"src": ["tag:guildcloud-mgmt"],
 			"dst": ["tag:guildcloud-mgmt"],
-			"ip": ["*"],
+			"ip":  ["*"],
+		},
+		// Management reaches tenant workloads (worker-initiated operations),
+		// deliberately one-directional — the reverse is NOT granted below.
+		{
+			"src": ["tag:guildcloud-mgmt"],
+			"dst": ["tag:guildcloud-tenant", "tag:guildcloud-pool"],
+			"ip":  ["*"],
 		},
 
-		// Tenant zone (§6): per-project grants (one entry per real project,
-		// scoped to that project's own tag) are added dynamically by the
-		// site worker via the live Tailscale API when a project is created,
-		// not committed here — see the tag:guildcloud-tenant note above.
-		// This file will drift from the live grants list for that reason;
-		// a periodic sync-back job (not yet built) is meant to read the
-		// live policy and commit it here for audit, on a schedule, not as
-		// enforcement. Shape of what the worker adds, for reference:
-		//   { "src": ["tag:guildcloud-tenant-<slug>"],
-		//     "dst": ["tag:guildcloud-tenant-<slug>", "tag:guildcloud-mgmt"],
-		//     "ip": ["*"] }
+		// --- Tenant zone (§6) ------------------------------------------------
+		// CHANGED vs live: dst no longer includes tag:guildcloud-mgmt. A
+		// customer workload must not be able to reach Proxmox nodes, PBS, the
+		// site workers, or the router. The live grants have that dst today
+		// because site-worker/index.js:448 writes it for every new project —
+		// that line needs the same edit or this regresses one project at a
+		// time. (applyPendingProjectAcls only checks whether a grant with
+		// that src exists, so these three tightened entries will NOT be
+		// rewritten; only newly created projects would reintroduce it.)
+		{
+			"src": ["tag:guildcloud-tenant-project-b44c4107"],
+			"dst": ["tag:guildcloud-tenant-project-b44c4107"],
+			"ip":  ["*"],
+		},
+		{
+			"src": ["tag:guildcloud-tenant-project-076fcbd6"],
+			"dst": ["tag:guildcloud-tenant-project-076fcbd6"],
+			"ip":  ["*"],
+		},
+		{
+			"src": ["tag:guildcloud-tenant-project-5e81b859"],
+			"dst": ["tag:guildcloud-tenant-project-5e81b859"],
+			"ip":  ["*"],
+		},
 
-		// Backup zone (§6): intentionally absent — no backup target exists
-		// yet (gap G-02). Add a tag:guildcloud-backup grant, reachable only
-		// from tag:guildcloud-mgmt, when a real backup target is stood up.
+		// --- Enrolled customer devices ---------------------------------------
+		// Written live by enroll-device (ensureMemberGrants), one per project
+		// whose ACL state is 'applied'. Reproduced here so applying this file
+		// does not delete it. NOTE: memberships are org-wide today, so this
+		// grants an enrolled member reachability to every project in the org
+		// regardless of what access_grants says — access_grants is currently
+		// display-only and enforces nothing. Narrowing that needs a
+		// per-project membership concept first; it is not fixed here.
+		{
+			"src": ["tag:guildcloud-member"],
+			"dst": ["tag:guildcloud-tenant-project-b44c4107"],
+			"ip":  ["*"],
+		},
+
+		// Backup zone (§6): still intentionally absent. guild-pbs currently
+		// carries tag:guildcloud-mgmt rather than a dedicated backup tag.
 	],
 
 	"ssh": [
-		// Pre-existing entries, kept exactly as-is per an explicit
-		// 2026-08-07 decision not to touch them in this change — see the
-		// Decision Record for the specific external-account grant this
-		// includes and why it was kept rather than removed.
+		// Each user into their own devices.
 		{
 			"action": "accept",
-			"src": ["autogroup:member", "autogroup:admin", "autogroup:tagged"],
-			"dst": ["autogroup:self", "autogroup:tagged"],
-			"users": ["autogroup:nonroot", "root"],
+			"src":    ["autogroup:member", "autogroup:admin"],
+			"dst":    ["autogroup:self"],
+			"users":  ["autogroup:nonroot", "root"],
 		},
+		// CHANGED vs live: autogroup:member removed from management SSH. The
+		// live rule lets any tailnet user SSH into tag:guildcloud-mgmt as
+		// root — that is the Proxmox nodes, PBS, the site workers, and the
+		// router. Operators only now.
 		{
 			"action": "accept",
-			"src": ["autogroup:member", "autogroup:admin", "davidpius95@gmail.com"],
-			"dst": ["autogroup:tagged", "davidpius95@gmail.com", "autogroup:self"],
-			"users": ["root", "autogroup:nonroot"],
+			"src":    ["tag:operator", "tag:guildcloud-mgmt", "davidpius95@gmail.com"],
+			"dst":    ["tag:guildcloud-mgmt"],
+			"users":  ["root", "autogroup:nonroot"],
 		},
+		// CHANGED vs live: customer SSH into instances is non-root only.
+		// Instances are cloned with a non-root cloud-init user (guildvm), so
+		// root here buys nothing and costs containment.
 		{
 			"action": "accept",
-			"src": [
-				"manbankat@gmail.com",
-				"shaaibusuleiman9@gmail.com",
-				"itodosimonitodo1@gmail.com",
-				"dimkayilrit@gmail.com",
-				"kefasiceking@gmail.com",
-				"nodebridgeafric@gmail.com",
-				"developerlongs@gmail.com",
-			],
-			"dst": ["tag:gean-devnet"],
-			"users": ["root", "autogroup:nonroot"],
+			"src":    ["tag:guildcloud-member", "tag:operator"],
+			"dst":    ["tag:guildcloud-tenant", "tag:guildcloud-pool"],
+			"users":  ["autogroup:nonroot"],
 		},
-
-		// New: operator SSH into the management zone.
+		// Pre-existing, unchanged.
 		{
 			"action": "accept",
-			"src": ["tag:operator"],
-			"dst": ["tag:guildcloud-mgmt"],
-			"users": ["autogroup:nonroot", "root"],
+			"src":    ["group:gean-devnet-users"],
+			"dst":    ["tag:gean-devnet"],
+			"users":  ["root", "autogroup:nonroot"],
 		},
 	],
 
 	"nodeAttrs": [
 		{
 			"target": ["autogroup:member"],
-			"attr": ["funnel"],
+			"attr":   ["funnel"],
 		},
 	],
 }
