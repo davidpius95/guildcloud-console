@@ -34,6 +34,15 @@ export async function createInstance(
   const userOrg = await getCurrentUserOrg();
   if (!userOrg) return { error: "No organization found." };
 
+  // Mirrors the "owners/admins can create instances" RLS policy on the
+  // instances table - checked here too so a Developer/Billing/Read-only
+  // member gets a real explanation instead of the raw Postgres
+  // "new row violates row-level security policy" error the insert below
+  // would otherwise surface.
+  if (userOrg.membership.role !== "Owner" && userOrg.membership.role !== "Admin") {
+    return { error: "Only organization Owners and Admins can create instances." };
+  }
+
   const supabase = await createClient();
 
   // Idempotency check first: if this exact submission already created an

@@ -22,6 +22,7 @@ export default async function InstancesPage() {
   const userOrg = await getCurrentUserOrg();
   const instances = userOrg ? await getInstancesForOrg(userOrg.organization.id) : [];
   const totalMonthly = instances.reduce((sum, i) => sum + (i.plan?.monthly_max ?? 0), 0);
+  const canCreate = userOrg?.membership.role === "Owner" || userOrg?.membership.role === "Admin";
 
   return (
     <>
@@ -29,10 +30,12 @@ export default async function InstancesPage() {
         title="Guild Instances"
         description="Private virtual servers on a stable project IP and private hostname. No public VPS IP or public SSH exists in the MVP."
         action={
-          <Button href="/console/instances/new">
-            <IconPlus className="h-4 w-4" />
-            Create instance
-          </Button>
+          canCreate ? (
+            <Button href="/console/instances/new">
+              <IconPlus className="h-4 w-4" />
+              Create instance
+            </Button>
+          ) : undefined
         }
       />
 
@@ -65,14 +68,18 @@ export default async function InstancesPage() {
             </div>
             <p className="text-sm font-semibold text-ink-900">No active instances</p>
             <p className="mx-auto mt-1 max-w-sm text-xs text-ink-400">
-              Deploy your first private Proxmox VM with an automated Tailscale private hostname and end-to-end encryption.
+              {canCreate
+                ? "Deploy your first private Proxmox VM with an automated Tailscale private hostname and end-to-end encryption."
+                : "Only organization Owners and Admins can deploy instances. Ask an Owner or Admin on your team."}
             </p>
-            <div className="mt-5">
-              <Button href="/console/instances/new" size="sm">
-                <IconPlus className="h-4 w-4" />
-                Deploy instance
-              </Button>
-            </div>
+            {canCreate ? (
+              <div className="mt-5">
+                <Button href="/console/instances/new" size="sm">
+                  <IconPlus className="h-4 w-4" />
+                  Deploy instance
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <Table>

@@ -1,5 +1,5 @@
 import { CreateInstanceWizard } from "@/components/create-instance-wizard";
-import { PageHeader } from "@/components/ui";
+import { Note, PageHeader } from "@/components/ui";
 import {
   getCatalogTemplateAvailability,
   getCurrentUserOrg,
@@ -9,6 +9,26 @@ import {
 
 export default async function NewInstancePage() {
   const userOrg = await getCurrentUserOrg();
+
+  // Mirrors the "owners/admins can create instances" RLS policy - a
+  // Developer/Billing/Read-only member gets a real explanation here instead
+  // of filling out the whole wizard and only failing at submit.
+  if (userOrg && userOrg.membership.role !== "Owner" && userOrg.membership.role !== "Admin") {
+    return (
+      <>
+        <PageHeader
+          title="Create a Guild Instance"
+          description="Choose a site, image, plan, protection, and access method. The hourly price and monthly maximum are shown before anything is created."
+        />
+        <Note>
+          Only organization Owners and Admins can create instances. Ask an
+          Owner or Admin on your team, or have your role changed in{" "}
+          Settings &rarr; Team.
+        </Note>
+      </>
+    );
+  }
+
   const projects = userOrg ? await getProjectsForOrg(userOrg.organization.id) : [];
   const sshKeyCount = userOrg ? (await getSshKeysForOrg(userOrg.organization.id)).length : 0;
   const templateAvailability = await getCatalogTemplateAvailability();
