@@ -53,9 +53,10 @@
 		"tag:operator":          ["davidpius95@gmail.com"],
 		"tag:guildcloud-tenant": ["davidpius95@gmail.com"],
 
-		// Added live by enroll-device. Every enrolled customer device
-		// carries this. Absent from policy.hujson — see note 2 above.
-		"tag:guildcloud-member": ["davidpius95@gmail.com"],
+		// Customer-device tags are now membership-specific and are reconciled
+		// by the site worker: tag:guildcloud-member-<membership-id8>. Do not
+		// add a generic customer-member tag here; it would make it possible to
+		// grant every enrolled device project-wide reachability by accident.
 
 		// Added live by the warm-pool path in the site worker.
 		"tag:guildcloud-pool": ["davidpius95@gmail.com"],
@@ -177,18 +178,11 @@
 		},
 
 		// --- Enrolled customer devices ---------------------------------------
-		// Written live by enroll-device (ensureMemberGrants), one per project
-		// whose ACL state is 'applied'. Reproduced here so applying this file
-		// does not delete it. NOTE: memberships are org-wide today, so this
-		// grants an enrolled member reachability to every project in the org
-		// regardless of what access_grants says — access_grants is currently
-		// display-only and enforces nothing. Narrowing that needs a
-		// per-project membership concept first; it is not fixed here.
-		{
-			"src": ["tag:guildcloud-member"],
-			"dst": ["tag:guildcloud-tenant-project-b44c4107"],
-			"ip":  ["*"],
-		},
+		// No generic member grant exists. The housekeeping worker derives one
+		// narrow tag:guildcloud-member-<membership> ->
+		// tag:guildcloud-instance-<instance> grant for each Owner/Admin or
+		// explicit access_grants row. A customer device cannot reach a project
+		// tag, management tag, or any unrelated tailnet device by default.
 
 		// Backup zone (§6): still intentionally absent. guild-pbs currently
 		// carries tag:guildcloud-mgmt rather than a dedicated backup tag.
@@ -212,15 +206,10 @@
 			"dst":    ["tag:guildcloud-mgmt"],
 			"users":  ["root", "autogroup:nonroot"],
 		},
-		// CHANGED vs live: customer SSH into instances is non-root only.
-		// Instances are cloned with a non-root cloud-init user (guildvm), so
-		// root here buys nothing and costs containment.
-		{
-			"action": "accept",
-			"src":    ["tag:guildcloud-member", "tag:operator"],
-			"dst":    ["tag:guildcloud-tenant", "tag:guildcloud-pool"],
-			"users":  ["autogroup:nonroot"],
-		},
+		// Customer SSH is deliberately not declared as a generic member rule.
+		// The site worker creates matching membership-specific, non-root rules
+		// only for the instance tags that the member is permitted to reach.
+		// Operators retain their support access through the explicit rule above.
 		// Pre-existing, unchanged.
 		{
 			"action": "accept",

@@ -16,7 +16,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const TAILSCALE_TAILNET = "tail345216.ts.net";
 const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com";
-const MEMBER_TAG = "tag:guildcloud-member";
+const MEMBER_TAG_PREFIX = "tag:guildcloud-member-";
 
 // The CONSOLE_URL secret never actually took effect across several real
 // dashboard + CLI attempts (see PROJECT_STATUS.md, 2026-08-25) - this
@@ -75,38 +75,18 @@ async function ts(token: string, method: string, path: string, body?: unknown) {
   return json;
 }
 
-// Ensures tag:guildcloud-member can reach every applied project's tenant
-// tag in this org. There's no per-project membership concept in this
-// schema yet (memberships are org-wide) so this grants reachability to
-// every project in the org, same scope access_grants records today
-// without yet enforcing. Same GitOps-exception precedent as
-// applyPendingProjectAcls in site-worker-guild-a - per-tag grants can't
-// wait on a human merging a PR.
-async function ensureMemberGrants(supabase: ReturnType<typeof createClient>, token: string, organizationId: string) {
-  const { data: projects } = await supabase
-    .from("projects")
-    .select("slug")
-    .eq("organization_id", organizationId)
-    .eq("tailscale_acl_state", "applied");
-  if (!projects || projects.length === 0) return;
-
+// A device gets a tag unique to its membership. It intentionally receives no
+// broad grant here: the site worker derives member->instance grants from the
+// access_grants table. This means joining the tailnet alone never grants a
+// route to other customer VMs, management devices, or unrelated services.
+async function ensureMemberTag(token: string, membershipId: string) {
+  const memberTag = `${MEMBER_TAG_PREFIX}${membershipId.slice(0, 8)}`;
   const policy = await ts(token, "GET", `tailnet/${TAILSCALE_TAILNET}/acl`);
   policy.tagOwners = policy.tagOwners ?? {};
-  policy.tagOwners[MEMBER_TAG] = policy.tagOwners[MEMBER_TAG] ?? [TAILSCALE_TAG_OWNER];
-  policy.grants = policy.grants ?? [];
-
-  let changed = false;
-  for (const project of projects as { slug: string }[]) {
-    const tenantTag = `tag:guildcloud-tenant-${project.slug}`;
-    const exists = (policy.grants as Array<{ src?: string[]; dst?: string[] }>).some(
-      (g) => g.src?.includes(MEMBER_TAG) && g.dst?.includes(tenantTag),
-    );
-    if (!exists) {
-      policy.grants.push({ src: [MEMBER_TAG], dst: [tenantTag], ip: ["*"] });
-      changed = true;
-    }
-  }
-  if (changed) await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/acl`, policy);
+  if (policy.tagOwners[memberTag]) return memberTag;
+  policy.tagOwners[memberTag] = [TAILSCALE_TAG_OWNER];
+  await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/acl`, policy);
+  return memberTag;
 }
 
 Deno.serve(async (req) => {
@@ -207,7 +187,7 @@ Deno.serve(async (req) => {
     }
 
     const token = await tailscaleAccessToken(supabase);
-    await ensureMemberGrants(supabase, token, membership.organization_id as string);
+    const memberTag = await ensureMemberTag(token, membership.id as string);
 
     const hostname = `member-${(membership.id as string).slice(0, 8)}`;
     // Reusable, per user decision 2026-08-25 (see the reusable_enrollment_link
@@ -222,7 +202,7 @@ Deno.serve(async (req) => {
     // actual revocation path today, not an expiry-driven one.
     const key = await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
       capabilities: {
-        devices: { create: { reusable: true, ephemeral: false, preauthorized: true, tags: [MEMBER_TAG] } },
+        devices: { create: { reusable: true, ephemeral: false, preauthorized: true, tags: [memberTag] } },
       },
       expirySeconds: 7776000,
     });
