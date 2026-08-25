@@ -1,8 +1,9 @@
 [Unit]
 Description=Run a GuildCloud site-worker cycle every 3 minutes
 # index.js's LOOP_BUDGET_MS bounds one run() invocation to 150s; the 3-minute
-# cadence below always leaves a gap rather than racing the next cycle's start
-# against the previous one still finishing.
+# cadence below leaves a gap rather than racing the next cycle's start against
+# the previous one still finishing. Empty queues are polled inside that bounded
+# run, so a create request usually waits seconds, not the full timer interval.
 
 [Timer]
 OnBootSec=30s

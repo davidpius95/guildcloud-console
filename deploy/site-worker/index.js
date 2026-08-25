@@ -90,7 +90,8 @@ loadEnv();
 const config = loadWorkerConfig(process.env);
 
 const LOOP_BUDGET_MS = 150000;
-const VERIFY_RETRY_MS = 4000;
+const IDLE_QUEUE_POLL_MS = 5000;
+const VERIFY_RETRY_MS = 1500;
 const HEARTBEAT_INTERVAL_MS = 20000;
 // Real-world ceiling for the network_access_attach install+join script.
 // apt dist-upgrade can trigger a systemd package upgrade, which triggers a
@@ -127,6 +128,10 @@ const STAGE_ORDER = [
   "backup_monitoring_attach", "automated_verification", "ready",
 ];
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isTransientFetchError(error) {
   const message = String(error);
   return (
@@ -150,7 +155,7 @@ async function fetchWithRetry(url, init, label, attempts = 5) {
       if (attempt === attempts || !isTransientFetchError(error)) {
         throw error;
       }
-      await new Promise((r) => setTimeout(r, attempt * 500));
+      await sleep(attempt * 500);
     }
   }
   throw new Error(`${label} failed: ${String(lastError)}`);
@@ -169,9 +174,14 @@ function serviceClient() {
   });
 }
 
+const vaultSecretCache = new Map();
+let tailscaleTokenCache = null;
+
 async function getVaultSecret(supabase, name) {
+  if (vaultSecretCache.has(name)) return vaultSecretCache.get(name);
   const { data, error } = await supabase.rpc("get_vault_secret", { secret_name: name });
   if (error || !data) throw new Error(`could not read vault secret ${name}: ${error?.message}`);
+  vaultSecretCache.set(name, data);
   return data;
 }
 
@@ -220,7 +230,7 @@ async function waitForTask(token, node, upid, maxWaitMs = 120000) {
       if (status.exitstatus !== "OK") throw new Error(`Proxmox task failed: ${status.exitstatus}`);
       return;
     }
-    await new Promise((r) => setTimeout(r, 1500));
+    await sleep(1500);
   }
   throw new Error(`Proxmox task ${upid} did not finish within ${maxWaitMs}ms`);
 }
@@ -233,12 +243,15 @@ async function waitForGuestExec(token, node, vmid, pid, maxWaitMs = 180000) {
       if (status.exitcode !== 0) throw new Error(`guest exec pid ${pid} failed (exit ${status.exitcode}): ${status["err-data"] ?? status["out-data"] ?? ""}`);
       return status;
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await sleep(1000);
   }
   throw new Error(`guest exec pid ${pid} did not finish within ${maxWaitMs}ms`);
 }
 
 async function tailscaleAccessToken(supabase) {
+  if (tailscaleTokenCache && tailscaleTokenCache.expiresAt > Date.now() + 60000) {
+    return tailscaleTokenCache.accessToken;
+  }
   const clientId = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_id");
   const clientSecret = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_secret");
   const resp = await fetchWithRetry("https://api.tailscale.com/api/v2/oauth/token", {
@@ -248,6 +261,11 @@ async function tailscaleAccessToken(supabase) {
   }, "tailscale oauth token exchange");
   const json = await resp.json();
   if (!resp.ok) throw new Error(`tailscale oauth token exchange -> ${resp.status}: ${JSON.stringify(json)}`);
+  const expiresInSeconds = Number.isFinite(Number(json.expires_in)) ? Number(json.expires_in) : 3600;
+  tailscaleTokenCache = {
+    accessToken: json.access_token,
+    expiresAt: Date.now() + Math.max(60, expiresInSeconds - 60) * 1000,
+  };
   return json.access_token;
 }
 
@@ -348,7 +366,7 @@ async function processPendingInstanceDeletions(supabase) {
         if (node) {
           try {
             await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/status/stop`);
-            await new Promise((r) => setTimeout(r, 2000));
+            await sleep(2000);
           } catch (_e) {
             // already stopped or not running
           }
@@ -865,7 +883,7 @@ async function processOneStage(supabase, operation) {
             break;
           } catch (e) {
             lastErr = e;
-            await new Promise((r) => setTimeout(r, 3000));
+            await sleep(3000);
           }
         }
         if (!rebooted) {
@@ -1486,17 +1504,22 @@ async function run() {
   const heartbeat = startHeartbeat(supabase);
   const deadline = Date.now() + LOOP_BUDGET_MS;
   const log = [];
+  let lastSnapshotAt = 0;
+  const refreshSnapshot = async (stage) => {
+    try {
+      await publishSnapshot(supabase, await proxmoxToken(supabase));
+      lastSnapshotAt = Date.now();
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, stage, error: String(e) }));
+    }
+  };
 
   // Refreshed at cycle start and again after the operation loop below, so a
   // reservation committed or released mid-cycle is reflected before the next
   // placement decision - see place_next_pending_operation's 60s freshness
   // window in the RPC, and collectClusterSnapshot's shared-storage
   // deduplication in health-snapshot.js.
-  try {
-    await publishSnapshot(supabase, await proxmoxToken(supabase));
-  } catch (e) {
-    console.log(JSON.stringify({ ok: false, stage: "publish_snapshot_start", error: String(e) }));
-  }
+  await refreshSnapshot("publish_snapshot_start");
 
   try {
     // Tailnet-wide housekeeping (ACLs, device enrolment) is cluster-
@@ -1540,9 +1563,26 @@ async function run() {
     console.log(JSON.stringify({ ok: false, stage: "maintain_warm_pool", error: String(e) }));
   }
 
+  let idlePollLogged = false;
   while (Date.now() < deadline) {
+    if (Date.now() - lastSnapshotAt > 45000) {
+      await refreshSnapshot("publish_snapshot_idle");
+    }
     const pendingOps = await claimPendingOperations(supabase);
-    if (!pendingOps.length) { log.push({ ok: true, message: "no pending operations" }); break; }
+    if (!pendingOps.length) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= IDLE_QUEUE_POLL_MS) {
+        log.push({ ok: true, message: "no pending operations" });
+        break;
+      }
+      if (!idlePollLogged) {
+        log.push({ ok: true, message: "no pending operations; polling idle queue", poll_ms: IDLE_QUEUE_POLL_MS });
+        idlePollLogged = true;
+      }
+      await sleep(Math.min(IDLE_QUEUE_POLL_MS, remainingMs));
+      continue;
+    }
+    idlePollLogged = false;
 
     let processedAny = false;
     for (const operation of pendingOps) {
@@ -1556,18 +1596,14 @@ async function run() {
         continue;
       }
       processedAny = true;
-      if (outcome.status === "retry_wait") await new Promise((r) => setTimeout(r, outcome.waitMs));
+      if (outcome.status === "retry_wait") await sleep(outcome.waitMs);
       break;
     }
 
     if (!processedAny) break;
   }
 
-  try {
-    await publishSnapshot(supabase, await proxmoxToken(supabase));
-  } catch (e) {
-    console.log(JSON.stringify({ ok: false, stage: "publish_snapshot_end", error: String(e) }));
-  }
+  await refreshSnapshot("publish_snapshot_end");
 
   clearInterval(heartbeat);
   console.log(JSON.stringify({ ok: true, log }));
