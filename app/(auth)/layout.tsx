@@ -16,7 +16,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           </Link>
 
           <div className="max-w-xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-lemon-700">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-lemon-700 dark:text-lemon-400">
               Private cloud access
             </p>
             <h1 className="mt-3 text-4xl font-semibold tracking-tight text-ink-900">

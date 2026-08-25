@@ -69,7 +69,7 @@ export default async function BillingPage() {
                   <Td>
                     <Link
                       href={`/console/instances/${i.id}`}
-                      className="font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                      className="font-medium text-ink-900 hover:text-lemon-700 dark:text-lemon-400 hover:underline"
                     >
                       {i.name}
                     </Link>
@@ -100,7 +100,7 @@ export default async function BillingPage() {
           <div className="mt-5">
             <Link
               href="/console/support"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 dark:text-lemon-400 hover:text-lemon-800 hover:underline"
             >
               How to reach support
               <IconArrowRight className="h-3.5 w-3.5" />

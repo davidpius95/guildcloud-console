@@ -103,7 +103,7 @@ export default async function InstancesPage() {
                   <Td>
                     <Link
                       href={`/console/instances/${i.id}`}
-                      className="font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                      className="font-medium text-ink-900 hover:text-lemon-700 dark:text-lemon-400 hover:underline"
                     >
                       {i.name}
                     </Link>

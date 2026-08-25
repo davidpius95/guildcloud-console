@@ -171,7 +171,7 @@ export function TeamAccessCard({ members }: { members: Membership[] }) {
           </div>
 
           {inviteState.error ? (
-            <p className="text-xs text-rose-600">{inviteState.error}</p>
+            <p className="text-xs text-rose-600 dark:text-rose-400">{inviteState.error}</p>
           ) : null}
         </form>
       </Modal>

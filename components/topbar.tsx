@@ -114,7 +114,7 @@ export function Topbar({
             <div className="mt-1 border-t border-ink-100 px-3 py-2">
               <Link
                 href="/console/projects"
-                className="text-xs font-medium text-lemon-700 hover:underline"
+                className="text-xs font-medium text-lemon-700 dark:text-lemon-400 hover:underline"
                 onClick={() => setProjectOpen(false)}
               >
                 Manage all projects
@@ -129,7 +129,7 @@ export function Topbar({
           href="/console/billing"
             className="hidden items-center gap-2 rounded-lg bg-lemon-50 px-3 py-1.5 text-sm ring-1 ring-inset ring-lemon-200 transition-all duration-200 hover:-translate-y-px hover:bg-lemon-100 sm:flex"
         >
-          <IconWallet className="h-4 w-4 text-lemon-700" />
+          <IconWallet className="h-4 w-4 text-lemon-700 dark:text-lemon-400" />
           <span className="text-lemon-800">Wallet</span>
           <span className="font-semibold tabular-nums text-lemon-900">
             {walletLabel}
@@ -191,7 +191,7 @@ export function Topbar({
                     onClick={() => setLaunchOpen(false)}
                     className="flex flex-col items-start gap-2 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-ink-50"
                   >
-                    <Icon className="h-4 w-4 text-lemon-700" />
+                    <Icon className="h-4 w-4 text-lemon-700 dark:text-lemon-400" />
                     <span className="text-xs font-medium text-ink-800">
                       {item.label}
                     </span>

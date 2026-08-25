@@ -291,7 +291,7 @@ function ResizeModal({
                 {p.vcpu} vCPU · {p.memoryGb} GB · {p.diskGb} GB
               </span>
               {p.id === currentPlanId ? (
-                <span className="mt-1 block text-[0.65rem] font-semibold uppercase tracking-wide text-lemon-700">
+                <span className="mt-1 block text-[0.65rem] font-semibold uppercase tracking-wide text-lemon-700 dark:text-lemon-400">
                   Current
                 </span>
               ) : null}

@@ -197,9 +197,9 @@ export function Stat({
         className={cx(
           "mt-1 text-2xl font-semibold tabular-nums tracking-tight",
           tone === "lemon"
-            ? "text-lemon-700"
+            ? "text-lemon-700 dark:text-lemon-400"
             : tone === "rose"
-              ? "text-rose-600"
+              ? "text-rose-600 dark:text-rose-400"
               : "text-ink-900",
         )}
       >
@@ -317,7 +317,7 @@ export function Button({
     secondary:
       "bg-white text-ink-700 hover:bg-ink-50 ring-1 ring-inset ring-ink-200",
     ghost: "text-ink-500 hover:bg-ink-100 hover:text-ink-800",
-    danger: "bg-white text-rose-600 hover:bg-rose-50 ring-1 ring-inset ring-rose-200",
+    danger: "bg-white text-rose-600 dark:text-rose-400 hover:bg-rose-50 ring-1 ring-inset ring-rose-200",
   };
   const sizes = {
     sm: "px-2.5 py-1.5 text-xs",

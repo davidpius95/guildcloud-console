@@ -346,7 +346,7 @@ export default function LandingPage() {
                   <span
                     className={
                       tone === "lemon"
-                        ? "text-right text-xs font-medium text-lemon-700"
+                        ? "text-right text-xs font-medium text-lemon-700 dark:text-lemon-400"
                         : tone === "amber"
                           ? "text-right text-xs font-medium text-amber-600"
                           : "text-right text-xs text-ink-400"

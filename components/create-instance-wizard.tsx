@@ -210,7 +210,7 @@ export function CreateInstanceWizard({
                 <p className="mt-0.5 text-xs opacity-70">{s.location}</p>
                 <p className="mt-2 text-xs">
                   {s.acceptingNewWork ? (
-                    <span className="text-lemon-700">Accepting new work</span>
+                    <span className="text-lemon-700 dark:text-lemon-400">Accepting new work</span>
                   ) : (
                     <span className="text-amber-600">Admission paused</span>
                   )}
@@ -461,7 +461,7 @@ export function CreateInstanceWizard({
               <button
                 type="button"
                 onClick={() => setAddKeyModalOpen(true)}
-                className="mt-2 text-xs font-medium text-lemon-700 underline hover:text-lemon-800"
+                className="mt-2 text-xs font-medium text-lemon-700 dark:text-lemon-400 underline hover:text-lemon-800"
               >
                 Add another key
               </button>
@@ -534,7 +534,7 @@ export function CreateInstanceWizard({
                 {money(cost.monthly)}
               </span>
             </div>
-            <p className="mt-2 text-xs text-lemon-700">
+            <p className="mt-2 text-xs text-lemon-700 dark:text-lemon-400">
               Billed hourly for actual use. The monthly maximum is the ceiling if
               the instance runs the whole month.
             </p>

@@ -26,7 +26,7 @@ const accents: Record<string, string> = {
 };
 
 const accentIconTones: Record<string, string> = {
-  lemon: "text-lemon-700",
+  lemon: "text-lemon-700 dark:text-lemon-400",
   sky: "text-sky-700",
   violet: "text-violet-700",
   amber: "text-amber-700",

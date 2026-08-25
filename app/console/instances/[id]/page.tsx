@@ -231,7 +231,7 @@ export default async function InstanceDetailPage({
                         you're in, and{" "}
                         <Link
                           href="/console/settings"
-                          className="font-medium text-lemon-700 underline hover:text-lemon-800"
+                          className="font-medium text-lemon-700 dark:text-lemon-400 underline hover:text-lemon-800"
                         >
                           add an SSH key
                         </Link>{" "}

@@ -50,7 +50,7 @@ export function RemoteAccessGuide({
                     href="https://tailscale.com/download"
                     target="_blank"
                     rel="noreferrer"
-                    className="font-medium text-lemon-700 underline hover:text-lemon-800"
+                    className="font-medium text-lemon-700 dark:text-lemon-400 underline hover:text-lemon-800"
                   >
                     tailscale.com
                   </a>{" "}
@@ -68,7 +68,7 @@ export function RemoteAccessGuide({
                 <p className="text-ink-500">
                   <ConnectDeviceButton
                     unstyled
-                    className="font-medium text-lemon-700 underline hover:text-lemon-800 disabled:cursor-wait disabled:opacity-70"
+                    className="font-medium text-lemon-700 dark:text-lemon-400 underline hover:text-lemon-800 disabled:cursor-wait disabled:opacity-70"
                   >
                     Generate a connection command
                   </ConnectDeviceButton>{" "}
@@ -102,7 +102,7 @@ export function RemoteAccessGuide({
         action={
           <Link
             href="/console/networking"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 dark:text-lemon-400 hover:text-lemon-800 hover:underline"
           >
             Manage enrolled devices
             <IconArrowRight className="h-3.5 w-3.5" />
@@ -133,7 +133,7 @@ export function RemoteAccessGuide({
               href="https://tailscale.com/download"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
+              className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 dark:text-lemon-400 hover:text-lemon-800 hover:underline"
             >
               Download Tailscale &rarr;
             </a>
@@ -161,7 +161,7 @@ export function RemoteAccessGuide({
           <div className="mt-4 pt-2">
             <ConnectDeviceButton
               unstyled
-              className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline disabled:cursor-wait disabled:opacity-70"
+              className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 dark:text-lemon-400 hover:text-lemon-800 hover:underline disabled:cursor-wait disabled:opacity-70"
             >
               Generate connection command
             </ConnectDeviceButton>

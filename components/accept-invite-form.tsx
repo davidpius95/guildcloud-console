@@ -55,7 +55,7 @@ export function AcceptInviteForm({ email }: { email: string }) {
             className="mt-1 w-full rounded-lg border border-ink-200 px-3 py-2 text-sm text-ink-900 outline-none focus:border-lemon-500 focus:ring-1 focus:ring-lemon-500"
           />
         </label>
-        {state.error ? <p className="text-xs text-rose-600">{state.error}</p> : null}
+        {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
         <Button type="submit" className="w-full justify-center">
           Accept invite &amp; create account
         </Button>

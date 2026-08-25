@@ -79,7 +79,7 @@ export function AddSshKeyModal({
             className="w-full rounded-lg bg-white px-3 py-2 font-mono text-xs text-ink-800 ring-1 ring-inset ring-ink-200 placeholder:text-ink-300 focus:outline-2 focus:outline-offset-2 focus:outline-lemon-600"
           />
         </label>
-        {state.error ? <p className="text-xs text-rose-600">{state.error}</p> : null}
+        {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
         <Button type="submit" size="sm" disabled={pending || !name.trim() || !publicKey.trim()}>
           {pending ? "Adding…" : "Add key"}
         </Button>

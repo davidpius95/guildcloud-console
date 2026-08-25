@@ -121,7 +121,7 @@ export default async function ConsoleDashboard() {
               instances.length ? (
                 <Link
                   href="/console/instances"
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 dark:text-lemon-400 hover:text-lemon-800 hover:underline"
                 >
                   View all
                   <IconArrowRight className="h-3.5 w-3.5" />
@@ -158,7 +158,7 @@ export default async function ConsoleDashboard() {
                   <div className="min-w-0">
                     <Link
                       href={`/console/instances/${i.id}`}
-                      className="text-sm font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                      className="text-sm font-medium text-ink-900 hover:text-lemon-700 dark:text-lemon-400 hover:underline"
                     >
                       {i.name}
                     </Link>
@@ -185,7 +185,7 @@ export default async function ConsoleDashboard() {
                   <li key={p.id} className="px-5 py-3">
                     <Link
                       href={`/console/projects/${p.id}`}
-                      className="text-sm font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                      className="text-sm font-medium text-ink-900 hover:text-lemon-700 dark:text-lemon-400 hover:underline"
                     >
                       {p.name}
                     </Link>
@@ -219,7 +219,7 @@ export default async function ConsoleDashboard() {
                   yours from{" "}
                   <Link
                     href="/console/networking"
-                    className="font-medium text-lemon-700 hover:underline"
+                    className="font-medium text-lemon-700 dark:text-lemon-400 hover:underline"
                   >
                     Networking
                   </Link>

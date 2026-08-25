@@ -67,7 +67,7 @@ export function SshKeysCard({ keys }: { keys: SshKeyRow[] }) {
           rows={2}
           className="w-full rounded-lg bg-white px-3 py-2 font-mono text-xs text-ink-800 ring-1 ring-inset ring-ink-200 placeholder:text-ink-300 focus:outline-2 focus:outline-offset-2 focus:outline-lemon-600"
         />
-        {state.error ? <p className="text-xs text-rose-600">{state.error}</p> : null}
+        {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
         <Button type="submit" variant="secondary" size="sm">
           <IconPlus className="h-3.5 w-3.5" />
           Add key

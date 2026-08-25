@@ -326,7 +326,7 @@ function AddRuleModal({
           </Note>
         )}
 
-        {addState.error ? <p className="text-xs text-rose-600">{addState.error}</p> : null}
+        {addState.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{addState.error}</p> : null}
       </form>
     </Modal>
   );
