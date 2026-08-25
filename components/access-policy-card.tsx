@@ -67,7 +67,7 @@ export function AccessPolicyCard({
       <Card className="min-w-0">
         <CardHeader
           title="Access policy"
-          subtitle="Defines which identities can reach which resources. Owners and Admins always have full project access; other roles need an explicit grant below."
+          subtitle="Every rule grants one identity access to one Guild Instance. Organization roles and projects do not grant private-network access by themselves."
           action={
             <Button size="sm" onClick={() => setAddOpen(true)} disabled={grantable.length === 0}>
               <IconPlus className="h-3.5 w-3.5" />
@@ -205,7 +205,7 @@ function AddRuleModal({
   onSubmitted: () => void;
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
-  const [resourceType, setResourceType] = useState<AccessResourceType | "all">("all");
+  const [resourceType, setResourceType] = useState<AccessResourceType | "all">("instance");
   const [resourceId, setResourceId] = useState<string>("");
   const [isPending, startTransition] = useTransition();
 
@@ -219,7 +219,7 @@ function AddRuleModal({
       open={open}
       onClose={onClose}
       title="Add access rule"
-      description="Grants one identity reachability to a resource scope inside a project."
+      description="Grants one identity private access to one Guild Instance."
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose} disabled={isPending}>
@@ -237,7 +237,7 @@ function AddRuleModal({
           startTransition(async () => {
             await addAction(formData);
             onSubmitted();
-            setResourceType("all");
+            setResourceType("instance");
             setResourceId("");
           });
         }}
@@ -276,56 +276,24 @@ function AddRuleModal({
           </select>
         </label>
 
+        <input type="hidden" name="resourceType" value="instance" />
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-ink-500">Resource scope</span>
+          <span className="mb-1.5 block text-xs font-medium text-ink-500">Specific Guild Instance</span>
           <select
-            name="resourceType"
-            value={resourceType}
-            onChange={(e) => {
-              setResourceType(e.target.value as AccessResourceType | "all");
-              setResourceId("");
-            }}
+            name="resourceId"
+            value={resourceId}
+            onChange={(e) => setResourceId(e.target.value)}
             className="w-full rounded-lg bg-white px-3 py-2 text-sm text-ink-800 ring-1 ring-inset ring-ink-200 focus:outline-2 focus:outline-offset-2 focus:outline-lemon-600"
           >
-            {(Object.keys(resourceTypeLabel) as Array<AccessResourceType | "all">).map((t) => (
-              <option key={t} value={t}>
-                {resourceTypeLabel[t]}
+            <option value="">Choose an instance</option>
+            {scopedInstances.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.name}
               </option>
             ))}
           </select>
         </label>
-
-        {resourceType === "instance" ? (
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ink-500">
-              Specific instance (optional — leave blank for all instances)
-            </span>
-            <select
-              name="resourceId"
-              value={resourceId}
-              onChange={(e) => setResourceId(e.target.value)}
-              className="w-full rounded-lg bg-white px-3 py-2 text-sm text-ink-800 ring-1 ring-inset ring-ink-200 focus:outline-2 focus:outline-offset-2 focus:outline-lemon-600"
-            >
-              <option value="">All instances in this project</option>
-              {scopedInstances.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : resourceType !== "all" ? (
-          <Note>
-            {resourceTypeLabel[resourceType]} is still a mock resource type in
-            this console — the grant is recorded, but there's nothing real to
-            pick a specific one from yet.
-          </Note>
-        ) : (
-          <Note tone="warning">
-            This grants reachability to every resource in the project — use a
-            narrower scope unless the member genuinely needs it.
-          </Note>
-        )}
+        <Note>This creates access to this VM only. Create a separate rule for every additional VM.</Note>
 
         {addState.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{addState.error}</p> : null}
       </form>

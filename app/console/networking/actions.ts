@@ -24,6 +24,9 @@ export async function addAccessGrant(
 
   if (!projectId) return { error: "Project is required." };
   if (!membershipId) return { error: "Member is required." };
+  if (resourceType !== "instance" || !resourceIdRaw) {
+    return { error: "Choose one specific Guild Instance. Project-wide access is not available." };
+  }
 
   const userOrg = await getCurrentUserOrg();
   if (!userOrg) return { error: "No organization found." };
@@ -139,38 +142,11 @@ export async function removeAccessGrant(id: string) {
 // device - never a raw Tailscale key, and the word "Tailscale" never
 // appears in this response, only inside the script itself once fetched.
 export async function requestDeviceEnrollment(
+  instanceId: string,
   regenerate = false,
 ): Promise<{ command: string | null; error: string | null; reused?: boolean }> {
+  if (!instanceId) return { command: null, error: "Choose the specific Ready VM you want to connect to." };
   const supabase = await createClient();
-
-  // Fast path, entirely inside this app. Minting a key needs the Tailscale
-  // credentials only the Edge Function holds, but *reusing* an already-valid
-  // link needs nothing except the token sitting on the caller's own
-  // membership row - which they can read under RLS because it is their row.
-  // Going out to the Edge Function for that was three network hops (Vercel ->
-  // Supabase Auth -> Postgres) to answer a question one query answers, and
-  // measured ~1.4s warm. Scoped to the signed-in user's own membership by
-  // user_id, so this can never surface another member's link.
-  if (!regenerate) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      const { data: own } = await supabase
-        .from("memberships")
-        .select("enrollment_token, enrollment_token_expires_at")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const expiry = own?.enrollment_token_expires_at;
-      if (own?.enrollment_token && expiry && new Date(expiry).getTime() > Date.now()) {
-        return {
-          command: `curl -fsSL ${await getSiteUrl()}/api/enroll/${own.enrollment_token} | sh`,
-          error: null,
-          reused: true,
-        };
-      }
-    }
-  }
 
   // Pass this app's own known-good origin instead of relying on the
   // Edge Function's CONSOLE_URL secret - that secret never actually took
@@ -182,7 +158,7 @@ export async function requestDeviceEnrollment(
   // separately-configured source of truth.
   const { data, error } = await supabase.functions.invoke("enroll-device", {
     method: "POST",
-    body: { consoleUrl: await getSiteUrl(), regenerate },
+    body: { consoleUrl: await getSiteUrl(), instanceId, regenerate },
   });
   if (error) return { command: null, error: error.message };
   if (data?.error) return { command: null, error: data.error };

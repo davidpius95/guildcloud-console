@@ -44,35 +44,25 @@ function grantKey(src, dst) {
   return `${src}\u0000${dst}`;
 }
 
-// Owners/Admins retain access to every instance in their own organization.
-// All other members get only explicit instance grants, or an explicit
-// project-wide "all" grant. This produces network policy from the same
-// access_grants records the console displays instead of treating that UI as
-// advisory metadata.
+// Only an explicit instance grant creates reachability. Organization role or
+// project membership alone never opens a route: a device-enrollment URL is
+// tied to one VM, so its tailnet identity must be able to reach that VM and
+// nothing else unless another distinct VM grant is created later.
 export function desiredMemberInstanceGrants({ memberships, instances, accessGrants }) {
   const membersById = new Map(memberships.map((member) => [member.id, member]));
   const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
   const desired = new Map();
 
-  for (const member of memberships) {
-    if (member.role !== "Owner" && member.role !== "Admin") continue;
-    for (const instance of instances) {
-      if (instance.organization_id !== member.organization_id) continue;
-      const src = memberTag(member.id);
-      const dst = instanceTag(instance.id);
-      desired.set(grantKey(src, dst), { src: [src], dst: [dst], ip: ["*"] });
-    }
-  }
-
   for (const accessGrant of accessGrants) {
     const member = membersById.get(accessGrant.membership_id);
-    if (!member || member.role === "Owner" || member.role === "Admin") continue;
+    if (!member || accessGrant.resource_type !== "instance" || !accessGrant.resource_id) continue;
     const src = memberTag(member.id);
-    const eligible = instances.filter((instance) => {
-      if (instance.organization_id !== member.organization_id || instance.project_id !== accessGrant.project_id) return false;
-      if (accessGrant.resource_type === "all") return true;
-      return accessGrant.resource_type === "instance" && accessGrant.resource_id === instance.id;
-    });
+    const eligible = instances.filter(
+      (instance) =>
+        instance.organization_id === member.organization_id &&
+        instance.project_id === accessGrant.project_id &&
+        instance.id === accessGrant.resource_id,
+    );
     for (const instance of eligible) {
       const dst = instanceTag(instance.id);
       desired.set(grantKey(src, dst), { src: [src], dst: [dst], ip: ["*"] });

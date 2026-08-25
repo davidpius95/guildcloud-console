@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
 
     const { data: membership, error: membershipError } = await supabase
       .from("memberships")
-      .select("id, organization_id, device_enrolled, enrollment_token, enrollment_token_expires_at")
+      .select("id, organization_id, role")
       .eq("user_id", userData.user.id)
       .maybeSingle();
     if (membershipError || !membership) {
@@ -161,19 +161,54 @@ Deno.serve(async (req) => {
       Deno.env.get("CONSOLE_URL") ??
       "https://guildcloud-console.vercel.app";
 
-    // Fast path. The link this returns is deliberately reusable for 90 days,
-    // yet every click used to mint a brand new Tailscale auth key, rewrite the
-    // vault secret, and overwrite the membership token - roughly ten sequential
-    // network round trips (two vault reads, an OAuth exchange, an ACL read, a
-    // key create, two writes), which measured ~3s before the command appeared.
-    // Worse, it silently retired the previous link, so a link the member had
-    // already saved or shared stopped working every time they looked at it
-    // again, and each rotation orphaned another vault secret.
-    //
-    // If a valid, unexpired token already exists, hand back the same command.
-    // Rotation is now explicit: pass regenerate: true.
-    const existingToken = membership.enrollment_token as string | null;
-    const existingExpiry = membership.enrollment_token_expires_at as string | null;
+    const instanceId = typeof body.instanceId === "string" ? body.instanceId : "";
+    if (!instanceId) return new Response(JSON.stringify({ error: "instanceId required" }), { status: 400 });
+
+    const { data: instance } = await supabase
+      .from("instances")
+      .select("id, organization_id, project_id, state, private_hostname")
+      .eq("id", instanceId)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle();
+    if (!instance || instance.state !== "ready" || !instance.private_hostname) {
+      return new Response(JSON.stringify({ error: "This instance is not ready for private access yet." }), { status: 409 });
+    }
+
+    // Owners/Admins may create a connection for a VM in their organization,
+    // but that decision is materialized as one exact instance grant. Everyone
+    // else must already have that exact grant; a project-wide or role-only
+    // entitlement never turns into a tailnet route.
+    const { data: exactGrant } = await supabase
+      .from("access_grants")
+      .select("id")
+      .eq("membership_id", membership.id)
+      .eq("project_id", instance.project_id)
+      .eq("resource_type", "instance")
+      .eq("resource_id", instance.id)
+      .maybeSingle();
+    if (!exactGrant && membership.role !== "Owner" && membership.role !== "Admin") {
+      return new Response(JSON.stringify({ error: "You have not been granted access to this instance." }), { status: 403 });
+    }
+    if (!exactGrant) {
+      const { error: grantError } = await supabase.from("access_grants").insert({
+        organization_id: membership.organization_id,
+        project_id: instance.project_id,
+        membership_id: membership.id,
+        resource_type: "instance",
+        resource_id: instance.id,
+        created_by: userData.user.id,
+      });
+      if (grantError && grantError.code !== "23505") throw new Error(`could not grant instance access: ${grantError.message}`);
+    }
+
+    const { data: existingLink } = await supabase
+      .from("instance_enrollment_links")
+      .select("token, expires_at")
+      .eq("membership_id", membership.id)
+      .eq("instance_id", instance.id)
+      .maybeSingle();
+    const existingToken = existingLink?.token ?? null;
+    const existingExpiry = existingLink?.expires_at ?? null;
     const stillValid =
       existingToken && existingExpiry && new Date(existingExpiry).getTime() > Date.now();
     if (stillValid && body.regenerate !== true) {
@@ -189,17 +224,10 @@ Deno.serve(async (req) => {
     const token = await tailscaleAccessToken(supabase);
     const memberTag = await ensureMemberTag(token, membership.id as string);
 
-    const hostname = `member-${(membership.id as string).slice(0, 8)}`;
-    // Reusable, per user decision 2026-08-25 (see the reusable_enrollment_link
-    // migration): the same key can authenticate multiple `tailscale up`
-    // invocations, so this one link can be re-run on more than one device or
-    // re-run again later without coming back to regenerate it. 7776000s
-    // (90 days) is Tailscale's own max expirySeconds for an authkey - there
-    // is no "never expires" option at the API level, so 90 days is the
-    // longest a single link can stay valid; clicking "Connect this device"
-    // again mints a fresh key/link and the old one stops resolving (its
-    // membership row's enrollment_token gets overwritten), which is the
-    // actual revocation path today, not an expiry-driven one.
+    // The key is reusable only for this membership's devices. Its sole
+    // network/SSH reachability is the exact VM grant above, not the tailnet
+    // or a whole project. Do not force a shared hostname: a member can use
+    // the same VM connection URL on more than one personal device.
     const key = await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/keys`, {
       capabilities: {
         devices: { create: { reusable: true, ephemeral: false, preauthorized: true, tags: [memberTag] } },
@@ -209,19 +237,19 @@ Deno.serve(async (req) => {
 
     const enrollmentToken = crypto.randomUUID() + crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 7776000 * 1000).toISOString();
-    await supabase
-      .from("memberships")
-      .update({ enrollment_token: enrollmentToken, enrollment_token_expires_at: expiresAt })
-      .eq("id", membership.id);
-
-    // Stash the real key behind the token rather than returning it directly
-    // - the enroll route (app/api/enroll/[token]) is what actually holds and
-    // redeems it. No longer reveal-once (see redeem_enrollment_token) - the
-    // same token can be redeemed repeatedly until it's regenerated.
     await supabase.rpc("set_vault_secret", {
-      p_secret_name: `enrollment_key_${enrollmentToken}`,
-      p_secret_value: JSON.stringify({ key: key.key, hostname }),
+      p_secret_name: `instance_enrollment_key_${enrollmentToken}`,
+      p_secret_value: JSON.stringify({ key: key.key }),
     });
+    const { error: linkError } = await supabase.from("instance_enrollment_links").upsert({
+      membership_id: membership.id,
+      instance_id: instance.id,
+      token: enrollmentToken,
+      expires_at: expiresAt,
+      created_by: userData.user.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "membership_id,instance_id" });
+    if (linkError) throw new Error(`could not save instance enrollment link: ${linkError.message}`);
 
     return new Response(
       JSON.stringify({ command: `curl -fsSL ${consoleUrl}/api/enroll/${enrollmentToken} | sh`, reused: false }),

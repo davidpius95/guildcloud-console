@@ -8,6 +8,7 @@ import { OperationProgress } from "@/components/operation-progress";
 import { DeletionProgress } from "@/components/deletion-progress";
 import { RevealPasswordButton } from "@/components/reveal-password-button";
 import { RemoteAccessGuide } from "@/components/remote-access-guide";
+import { ConnectDeviceButton } from "@/components/connect-device-button";
 import { getInstanceWithOperation, getCatalogPlans } from "@/lib/supabase/queries";
 import {
   Badge,
@@ -185,6 +186,9 @@ export default async function InstanceDetailPage({
               <div className="space-y-4 px-5 py-4">
                 {realInstance.private_hostname ? (
                   <>
+                    <ConnectDeviceButton instanceId={realInstance.id} variant="secondary" className="w-full">
+                      Connect a device to this VM
+                    </ConnectDeviceButton>
                     <CopyField
                       label="SSH command"
                       value={`ssh guildvm@${realInstance.private_hostname}`}

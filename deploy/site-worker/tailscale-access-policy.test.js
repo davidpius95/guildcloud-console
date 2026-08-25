@@ -24,22 +24,18 @@ test("an explicit instance grant reaches only that instance", () => {
   assert.deepEqual(grants, [{ src: [memberTag(developer.id)], dst: [instanceTag(vmA.id)], ip: ["*"] }]);
 });
 
-test("a project-wide grant reaches every instance in that project only", () => {
+test("a project-wide grant does not create VM reachability", () => {
   const grants = desiredMemberInstanceGrants({
     memberships: [developer],
     instances: [vmA, vmB, vmC],
     accessGrants: [{ membership_id: developer.id, project_id: "project-a", resource_type: "all", resource_id: null }],
   });
-  assert.equal(grants.length, 2);
-  assert.ok(grants.every((grant) => grant.dst[0] !== instanceTag(vmC.id)));
+  assert.deepEqual(grants, []);
 });
 
-test("owners remain limited to their own organization", () => {
+test("owners require an explicit instance grant too", () => {
   const grants = desiredMemberInstanceGrants({ memberships: [owner, otherOrg], instances: [vmA, vmC], accessGrants: [] });
-  assert.deepEqual(grants.map((grant) => [grant.src[0], grant.dst[0]]), [
-    [memberTag(owner.id), instanceTag(vmA.id)],
-    [memberTag(otherOrg.id), instanceTag(vmC.id)],
-  ]);
+  assert.deepEqual(grants, []);
 });
 
 test("reconciliation removes legacy broad grants and preserves unrelated policy", () => {

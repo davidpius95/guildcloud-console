@@ -17,12 +17,16 @@ import { requestDeviceEnrollment } from "@/app/console/networking/actions";
 // user sees is the one that was ever actually necessary.
 export function ConnectDeviceButton({
   children,
+  instanceId,
   variant = "ghost",
   size = "sm",
   className,
   unstyled = false,
 }: {
   children: React.ReactNode;
+  // Enrollment has to start from one VM's Connect card. Other surfaces may
+  // render this as education, but they cannot create a tailnet credential.
+  instanceId?: string;
   variant?: "primary" | "secondary" | "ghost" | "danger";
   size?: "sm" | "md";
   className?: string;
@@ -41,8 +45,12 @@ export function ConnectDeviceButton({
     setOpen(true);
     setError(null);
     setCommand(null);
+    if (!instanceId) {
+      setError("Choose the specific Ready VM you want to connect to, then use its Connect card.");
+      return;
+    }
     startTransition(async () => {
-      const result = await requestDeviceEnrollment(regenerate);
+      const result = await requestDeviceEnrollment(instanceId, regenerate);
       if (result.error) setError(result.error);
       else setCommand(result.command);
     });
@@ -77,7 +85,7 @@ export function ConnectDeviceButton({
         open={open}
         onClose={close}
         title="Connect this device"
-        description="Run this in a terminal on any device you want to use — you can run it more than once."
+        description={instanceId ? "This command connects your device to this VM only. You can run it on your own devices." : "Choose a Ready VM and use its Connect card to create a VM-only command."}
         footer={
           <Button size="sm" onClick={close}>
             Done
@@ -88,9 +96,9 @@ export function ConnectDeviceButton({
           <div className="space-y-3">
             <CopyField label="Command" value={command} />
             <Note>
-              This link stays valid for 90 days and can be run on as many
-              devices as you like. Opening this dialog again shows the same
-              link — it is not rotated behind your back.
+              This link stays valid for 90 days and can be run on your own
+              devices. It grants access to this VM only; it does not grant
+              access to other GuildCloud or tailnet machines.
             </Note>
             <button
               type="button"
