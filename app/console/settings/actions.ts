@@ -3,13 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserOrg } from "@/lib/supabase/queries";
+import { getSiteUrl } from "@/lib/site-url";
 import type { MemberRole } from "@/lib/types";
 
 export type SettingsActionState = { error: string | null };
-
-function siteUrl() {
-  return process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3100";
-}
 
 export async function inviteMember(
   _prev: SettingsActionState,
@@ -55,7 +52,7 @@ export async function inviteMember(
       body: {
         to: email,
         organizationName: userOrg.organization.name,
-        acceptUrl: `${siteUrl()}/accept-invite/${inviteToken}`,
+        acceptUrl: `${await getSiteUrl()}/accept-invite/${inviteToken}`,
       },
     });
     if (sendError) console.error("send-invite-email failed", sendError);
