@@ -171,14 +171,19 @@ sequenceDiagram
 ### Access control model
 
 - There is no public IP or inbound public SSH route for a Guild Instance.
-- Project membership and `access_grants` decide the intended access scope.
+- Each enrolled device receives a membership-specific Tailscale tag. Each
+  instance receives an instance-specific tag. The housekeeping worker derives
+  an exact member-to-instance network and Tailscale SSH rule from the member's
+  role and `access_grants`: Owners/Admins receive their own organization's
+  instances; other roles receive only explicit instance grants or an explicit
+  project-wide grant. There is no generic member-to-project rule.
 - A single worker deployment is the **tailnet housekeeping owner**, avoiding
   concurrent edits to the shared Tailscale ACL policy.
 - The enrollment command is a bearer credential. It is reusable for the
   member's devices until expiry or explicit regeneration; it must not be sent
   in email, ticket comments, or chat.
-- A new enrollment command retires the preceding one. Removing a member
-  triggers the device-revocation path as best effort.
+- A regenerated enrollment command retires the preceding one. Removing a
+  member triggers the device-revocation path as best effort.
 
 ## 4. Lifecycle and reconciliation loop
 

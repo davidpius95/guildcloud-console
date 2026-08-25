@@ -140,8 +140,9 @@ export function AccessPolicyCard({
 
         <div className="border-t border-ink-100 px-5 py-3">
           <Note>
-            Removing a grant here takes effect immediately for future
-            connections. It does not disconnect an already-open session.
+            Rules are synchronized to the private network by the site worker.
+            Removing a grant blocks new connections after the next sync; it
+            does not disconnect an already-open session.
           </Note>
         </div>
       </Card>

@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { loadWorkerConfig } from "./config.js";
 import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTemplate } from "./routing.js";
 import { collectClusterSnapshot } from "./health-snapshot.js";
+import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale-access-policy.js";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -464,8 +465,7 @@ async function processPendingSshKeySyncs(supabase) {
 async function syncMemberDeviceEnrollment(supabase) {
   const { data: pending, error } = await supabase
     .from("memberships")
-    .select("id")
-    .eq("device_enrolled", false)
+    .select("id, device_enrolled")
     .not("user_id", "is", null);
   if (error) {
     console.log(JSON.stringify({ ok: false, where: "syncMemberDeviceEnrollment_select", error: error.message }));
@@ -479,38 +479,76 @@ async function syncMemberDeviceEnrollment(supabase) {
 
   for (const member of pending) {
     const hostname = `member-${member.id.slice(0, 8)}`;
-    const device = deviceList.find((d) => d.hostname === hostname && (d.tags ?? []).includes("tag:guildcloud-member"));
+    const device = deviceList.find((d) => d.hostname === hostname);
     if (!device) continue;
-    await supabase.from("memberships").update({ device_enrolled: true, tailscale_device_id: device.id }).eq("id", member.id);
+    const tag = memberTag(member.id);
+    if (!(device.tags ?? []).includes(tag)) {
+      await ts(tsToken, "POST", `device/${device.id}/tags`, { tags: [tag] });
+    }
+    if (!member.device_enrolled) {
+      await supabase.from("memberships").update({ device_enrolled: true, tailscale_device_id: device.id }).eq("id", member.id);
+    }
   }
 }
 
-// Tailnet-wide and cluster-independent, same as syncMemberDeviceEnrollment
-// above - gated behind config.tailnetHousekeepingOwner in run().
-async function applyPendingProjectAcls(supabase) {
-  const { data: pending } = await supabase.from("projects").select("id, slug").eq("tailscale_acl_state", "pending");
-  if (!pending || pending.length === 0) return;
+// Tailnet-wide and cluster-independent. Membership tags now map to individual
+// VM tags derived from access_grants; no customer device gets a broad project
+// or tailnet grant. This runs only on the designated housekeeping owner so
+// two site workers never race a read-modify-write of the same Tailscale policy.
+async function reconcileTailnetAccess(supabase) {
+  const results = await Promise.all([
+    supabase.from("projects").select("id, organization_id, slug, tailscale_acl_state"),
+    supabase.from("memberships").select("id, organization_id, role"),
+    supabase.from("instances").select("id, organization_id, project_id, tailscale_device_id"),
+    supabase.from("access_grants").select("membership_id, project_id, resource_type, resource_id"),
+  ]);
+  const [projectsResult, membershipsResult, instancesResult, accessGrantsResult] = results;
+  const queryError = results.find((result) => result.error)?.error;
+  if (queryError) throw new Error(`tailnet access data query failed: ${queryError.message}`);
+  const projects = projectsResult.data;
+  const memberships = membershipsResult.data;
+  const instances = instancesResult.data;
+  const accessGrants = accessGrantsResult.data;
+  if (!projects || !memberships || !instances || !accessGrants) return;
   const token = await tailscaleAccessToken(supabase);
-  for (const project of pending) {
-    try {
-      const policy = await ts(token, "GET", `tailnet/${config.tailscaleTailnet}/acl`);
-      const tag = `tag:guildcloud-tenant-${project.slug}`;
-      policy.tagOwners = policy.tagOwners ?? {};
-      policy.tagOwners[tag] = [config.tailscaleTagOwner];
-      policy.grants = policy.grants ?? [];
-      const exists = policy.grants.some((g) => g.src?.includes(tag));
-      // dst is the project's own tag ONLY. It used to also include
-      // tag:guildcloud-mgmt, which let a customer workload reach the
-      // Proxmox nodes, PBS, the site workers, and the router - the exact
-      // opposite of Master Plan §6's "Management: never customer
-      // reachable". Management still reaches tenants; that grant lives in
-      // infra/tailscale/policy.hujson and is deliberately one-directional.
-      if (!exists) policy.grants.push({ src: [tag], dst: [tag], ip: ["*"] });
-      await ts(token, "POST", `tailnet/${config.tailscaleTailnet}/acl`, policy);
-      await supabase.from("projects").update({ tailscale_acl_state: "applied" }).eq("id", project.id);
-    } catch (e) {
-      console.log(JSON.stringify({ ok: false, project_id: project.id, error: String(e) }));
+  const policy = await ts(token, "GET", `tailnet/${config.tailscaleTailnet}/acl`);
+  policy.tagOwners = policy.tagOwners ?? {};
+  policy.grants = policy.grants ?? [];
+  for (const project of projects) {
+    const tag = `tag:guildcloud-tenant-${project.slug}`;
+    policy.tagOwners[tag] = [config.tailscaleTagOwner];
+    if (!policy.grants.some((grant) => grant.src?.includes(tag) && grant.dst?.includes(tag))) {
+      policy.grants.push({ src: [tag], dst: [tag], ip: ["*"] });
     }
+  }
+  const next = reconcileScopedAccessPolicy(policy, {
+    memberships,
+    instances,
+    accessGrants,
+    tagOwner: config.tailscaleTagOwner,
+  });
+  if (JSON.stringify(next) !== JSON.stringify(policy)) {
+    await ts(token, "POST", `tailnet/${config.tailscaleTailnet}/acl`, next);
+  }
+  for (const project of projects.filter((project) => project.tailscale_acl_state !== "applied")) {
+    await supabase.from("projects").update({ tailscale_acl_state: "applied" }).eq("id", project.id);
+  }
+}
+
+async function syncInstanceDeviceTags(supabase) {
+  const [{ data: instances }, { data: projects }] = await Promise.all([
+    supabase.from("instances").select("id, project_id, tailscale_device_id").not("tailscale_device_id", "is", null),
+    supabase.from("projects").select("id, slug"),
+  ]);
+  if (!instances || !projects) return;
+  const projectById = new Map(projects.map((project) => [project.id, project]));
+  const token = await tailscaleAccessToken(supabase);
+  for (const instance of instances) {
+    const project = projectById.get(instance.project_id);
+    if (!project) continue;
+    await ts(token, "POST", `device/${instance.tailscale_device_id}/tags`, {
+      tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(instance.id)],
+    });
   }
 }
 
@@ -974,7 +1012,7 @@ async function processOneStage(supabase, operation) {
         const { data: project } = await supabase.from("projects").select("slug").eq("id", inst.project_id).single();
         const hostname = `instance-${inst.id.slice(0, 8)}`;
         const tsKey = await ts(tsToken, "POST", `tailnet/${config.tailscaleTailnet}/keys`, {
-          capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
+          capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)] } } },
           expirySeconds: 3600,
         });
         // This goes in vendor-data, NOT user-data. cicustom entries *replace*
@@ -1147,7 +1185,7 @@ async function processOneStage(supabase, operation) {
           // VM is pool-tagged and not reachable as tenant infrastructure, so
           // this is the step that actually grants the customer access.
           await ts(tsToken, "POST", `device/${deviceId}/tags`, {
-            tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`],
+            tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)],
           });
 
           const privateIp = warmDetail.private_ip ?? null;
@@ -1244,7 +1282,7 @@ async function processOneStage(supabase, operation) {
             try {
               const tsToken = await tailscaleAccessToken(supabase);
               key = await ts(tsToken, "POST", `tailnet/${config.tailscaleTailnet}/keys`, {
-                capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`] } } },
+                capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)] } } },
                 expirySeconds: 600,
               });
             } catch (e) {
@@ -1534,10 +1572,10 @@ async function run() {
     // workers racing to edit the same Tailscale ACL policy. Exactly one
     // deployment is configured as the owner.
     if (config.tailnetHousekeepingOwner) {
-      await applyPendingProjectAcls(supabase);
+      await reconcileTailnetAccess(supabase);
     }
   } catch (e) {
-    log.push({ ok: false, stage: "apply_pending_project_acls", error: String(e) });
+    log.push({ ok: false, stage: "reconcile_tailnet_access", error: String(e) });
   }
 
   try {
@@ -1555,9 +1593,10 @@ async function run() {
   try {
     if (config.tailnetHousekeepingOwner) {
       await syncMemberDeviceEnrollment(supabase);
+      await syncInstanceDeviceTags(supabase);
     }
   } catch (e) {
-    console.log(JSON.stringify({ ok: false, stage: "sync_member_device_enrollment", error: String(e) }));
+    console.log(JSON.stringify({ ok: false, stage: "sync_tailnet_device_tags", error: String(e) }));
   }
 
   // Refill after the operation loop below would have drained it, so a claim

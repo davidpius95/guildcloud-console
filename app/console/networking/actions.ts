@@ -30,6 +30,23 @@ export async function addAccessGrant(
 
   const supabase = await createClient();
 
+  const [{ data: project }, { data: membership }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("id")
+      .eq("id", projectId)
+      .eq("organization_id", userOrg.organization.id)
+      .maybeSingle(),
+    supabase
+      .from("memberships")
+      .select("id")
+      .eq("id", membershipId)
+      .eq("organization_id", userOrg.organization.id)
+      .maybeSingle(),
+  ]);
+  if (!project) return { error: "That project was not found in this organization." };
+  if (!membership) return { error: "That member was not found in this organization." };
+
   // Never trust the client alone for "does this resource actually exist
   // and belong to this org" - same discipline as createInstance's
   // server-side template re-check. Only 'instance' is a real resource
@@ -38,11 +55,12 @@ export async function addAccessGrant(
   if (resourceId && resourceType === "instance") {
     const { data: instance } = await supabase
       .from("instances")
-      .select("id")
+      .select("id, project_id")
       .eq("id", resourceId)
       .eq("organization_id", userOrg.organization.id)
       .maybeSingle();
     if (!instance) return { error: "That instance was not found in this organization." };
+    if (instance.project_id !== projectId) return { error: "That instance does not belong to the selected project." };
   }
 
   const { error } = await supabase.from("access_grants").insert({
@@ -57,6 +75,15 @@ export async function addAccessGrant(
     if (error.code === "23505") return { error: "This member already has this exact grant." };
     return { error: error.message };
   }
+
+  // The tailnet policy is reconciled by the designated site worker. Marking
+  // this project pending gives the customer a truthful state while that
+  // worker turns this database grant into a narrow member->instance route.
+  await supabase
+    .from("projects")
+    .update({ tailscale_acl_state: "pending" })
+    .eq("id", projectId)
+    .eq("organization_id", userOrg.organization.id);
 
   await supabase.rpc("log_audit_event", {
     p_organization_id: userOrg.organization.id,
@@ -75,8 +102,26 @@ export async function removeAccessGrant(id: string) {
   if (!userOrg) return;
   const supabase = await createClient();
 
+  const { data: target } = await supabase
+    .from("access_grants")
+    .select("project_id, organization_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!target || target.organization_id !== userOrg.organization.id) return;
+
   const { error } = await supabase.from("access_grants").delete().eq("id", id);
   if (error) return;
+
+  // Reconcile the affected project after revocation as well. Read it through
+  // the org-scoped RLS policy rather than trusting a project id from the UI.
+  if (target?.project_id) {
+    await supabase
+      .from("projects")
+      .update({ tailscale_acl_state: "pending" })
+      .eq("id", target.project_id)
+      .eq("organization_id", userOrg.organization.id);
+  }
 
   await supabase.rpc("log_audit_event", {
     p_organization_id: userOrg.organization.id,
