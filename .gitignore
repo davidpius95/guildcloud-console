@@ -12,3 +12,4 @@ supabase/.temp/
 # Local Claude Code state (launch.json is intentionally tracked)
 .claude/settings.local.json
 .claude/*.lock
+.vercel
