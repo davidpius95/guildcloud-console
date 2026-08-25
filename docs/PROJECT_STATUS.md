@@ -67,20 +67,37 @@ different agent. As of 2026-08-19:
 - Real backups on both Proxmox clusters (PBS, daily, retention enforced —
   see gap register G-02, G-18)
 
-**Still mock** (`lib/mock-data.ts`, no backing API): Kubernetes, managed
-PostgreSQL, Object Storage, Volumes, Functions, Marketplace, Migration,
-Monitoring dashboards, Billing/wallet analytics, Support tickets. The
-console dashboard's sidebar carries a static "Mock data — no live
-infrastructure is attached" banner (`components/sidebar.tsx`) that is
-now **only accurate for these subsystems**, not the whole app — it
-predates the real instance flow and hasn't been updated to say which
-parts are real. Worth fixing so it doesn't mislead the next person who
-reads it.
+**No longer mock — `lib/mock-data.ts` is deleted (2026-08-25).** Every
+console surface now renders either the signed-in customer's real data or an
+explicit "Not available yet" state. What that removed:
 
-The root `README.md` claimed "no control plane, no Proxmox integration"
-as of 2026-08-19 — that was stale by weeks and has been corrected as part
-of this update. If you find another doc making the same claim, fix it the
-same way rather than trusting it.
+- The **topbar**, on every page, showed a hardcoded stranger's name
+  ("Saurabh Rapatwar"), a fabricated `$412.60` wallet, a fabricated unread
+  alert badge, and a project switcher listing projects belonging to nobody.
+- The **dashboard** — the first page after login — greeted every user as
+  "Northwind Labs" and reported invented instance counts, spend, quotas,
+  alerts, and site health.
+- The **create wizard** offered "Abuja 1" and "Amsterdam 1" as selectable,
+  "Accepting new work" sites. No cluster has ever existed at either: both
+  real clusters (guild-a, guild-b) map to `lag-1`. A create there passed the
+  wizard's own gate and then failed placement server-side. Sites now come
+  from `list_admittable_sites()`.
+- **Volumes, Billing, Support** sat in the main nav as working features
+  while rendering entirely invented rows.
+- The **instance detail page** had a ~200-line mock rendering path (fake
+  utilisation meters, fake volumes, fake cost, a fake "recovery console")
+  reachable by visiting any hardcoded mock id.
+
+Genuinely unbuilt surfaces (Volumes, PostgreSQL, Object Storage, Kubernetes,
+Functions, Monitoring, Marketplace, Migration, Support) now say so via a
+shared `ComingSoon` component and are grouped under "Coming soon" in the nav
+instead of being mixed into active groups. Billing shows the real wallet
+balance and the real committed monthly maximum, with invoices/payment
+methods explicitly marked unbuilt.
+
+Real formatters moved to `lib/format.ts`; the plan/image catalogue (a display
+mirror of real seeded `catalog_plans`/`catalog_images` rows) to
+`lib/catalog.ts`.
 
 ## Architecture
 
@@ -356,6 +373,7 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-25 | Deleted `lib/mock-data.ts` and every fabricated surface (4,938 lines removed): real identity in the topbar/dashboard, real sites via a new `list_admittable_sites()` RPC, honest "Coming soon" states for the 9 unbuilt features, real billing figures. Fixed alongside it: enrollment link re-minted on every click (~3s → ~900ms, and it no longer silently retires a link the member may have saved), no route to enroll a second device once enrolled, dark-mode-invisible step numerals, stale onboarding copy | — |
 | 2026-08-25 | First real production deployment: `guildcloud-console.vercel.app` had no deployment at all until today (`DEPLOYMENT_NOT_FOUND`) — linked a real Vercel project, set env vars, deployed; fixed Supabase Auth's stale `localhost:3000` Site URL/missing Redirect URL that was breaking Google sign-in from any other machine; verified live end-to-end on the real production domain (sign-in, create instance, ready, delete) | — |
 | 2026-08-25 | One-click device enrollment: "Enroll device →" guide link now auto-triggers command generation (was a plain nav link requiring a second click); enrollment links made reusable (90-day authkey); enroll script now runs `tailscale up --reset` to fix a real re-enrollment error; verified live on a real laptop | — |
 | 2026-08-25 | Closed G-01 for real: shipped the tailnet wildcard-grant removal (PR #7, #8), verified live by direct re-read; confirmed generic worker deploy + `placement_settings.mode='multi'` already live (done by other sessions, undocumented until now); ran PBS GC to unblock Guild-B (9.73 GiB freed); cleaned up one 4-day-stuck orphaned instance | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
