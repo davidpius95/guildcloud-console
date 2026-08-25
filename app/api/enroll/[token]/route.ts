@@ -36,7 +36,7 @@ if ! command -v tailscale >/dev/null 2>&1; then
   curl -fsSL https://tailscale.com/install.sh | sh
 fi
 echo "Connecting this device..."
-sudo tailscale up --reset --authkey ${key} --hostname ${hostname} --accept-dns=true
+sudo tailscale up --reset --force-reauth --authkey ${key} --hostname ${hostname} --accept-dns=true
 echo "Connected."
 `;
 
