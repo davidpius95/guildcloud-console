@@ -23,3 +23,7 @@ docs/
 3. Read the most recent `docs/dev-log/` entry for what's happened most
    recently.
 4. `.claude/skills/README.md` for how to work on this project going forward.
+
+For a maintained internal visual map of the implemented system, read
+[architecture.md](architecture.md). It complements the status and phase
+evidence; it does not replace the live capacity/admission records.
