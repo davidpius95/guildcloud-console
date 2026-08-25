@@ -3,7 +3,7 @@
 import { useActionState, useTransition } from "react";
 import { Button, Card, CardHeader } from "./ui";
 import { IconPlus } from "./icons";
-import { formatDate } from "@/lib/mock-data";
+import { formatDate } from "@/lib/format";
 import {
   addSshKey,
   removeSshKey,

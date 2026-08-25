@@ -169,11 +169,41 @@ Deno.serve(async (req) => {
 
     const { data: membership, error: membershipError } = await supabase
       .from("memberships")
-      .select("id, organization_id, device_enrolled")
+      .select("id, organization_id, device_enrolled, enrollment_token, enrollment_token_expires_at")
       .eq("user_id", userData.user.id)
       .maybeSingle();
     if (membershipError || !membership) {
       return new Response(JSON.stringify({ error: "no membership found for this user" }), { status: 404 });
+    }
+
+    const consoleUrl =
+      safeConsoleUrl(body.consoleUrl) ??
+      Deno.env.get("CONSOLE_URL") ??
+      "https://guildcloud-console.vercel.app";
+
+    // Fast path. The link this returns is deliberately reusable for 90 days,
+    // yet every click used to mint a brand new Tailscale auth key, rewrite the
+    // vault secret, and overwrite the membership token - roughly ten sequential
+    // network round trips (two vault reads, an OAuth exchange, an ACL read, a
+    // key create, two writes), which measured ~3s before the command appeared.
+    // Worse, it silently retired the previous link, so a link the member had
+    // already saved or shared stopped working every time they looked at it
+    // again, and each rotation orphaned another vault secret.
+    //
+    // If a valid, unexpired token already exists, hand back the same command.
+    // Rotation is now explicit: pass regenerate: true.
+    const existingToken = membership.enrollment_token as string | null;
+    const existingExpiry = membership.enrollment_token_expires_at as string | null;
+    const stillValid =
+      existingToken && existingExpiry && new Date(existingExpiry).getTime() > Date.now();
+    if (stillValid && body.regenerate !== true) {
+      return new Response(
+        JSON.stringify({
+          command: `curl -fsSL ${consoleUrl}/api/enroll/${existingToken} | sh`,
+          reused: true,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
 
     const token = await tailscaleAccessToken(supabase);
@@ -213,12 +243,8 @@ Deno.serve(async (req) => {
       p_secret_value: JSON.stringify({ key: key.key, hostname }),
     });
 
-    const consoleUrl =
-      safeConsoleUrl(body.consoleUrl) ??
-      Deno.env.get("CONSOLE_URL") ??
-      "https://guildcloud-console.vercel.app";
     return new Response(
-      JSON.stringify({ command: `curl -fsSL ${consoleUrl}/api/enroll/${enrollmentToken} | sh` }),
+      JSON.stringify({ command: `curl -fsSL ${consoleUrl}/api/enroll/${enrollmentToken} | sh`, reused: false }),
       { headers: { "Content-Type": "application/json" } },
     );
   } catch (e) {

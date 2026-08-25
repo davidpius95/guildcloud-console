@@ -11,7 +11,6 @@ import {
 } from "@/components/ui";
 import { TeamAccessCard } from "@/components/team-access-card";
 import { SshKeysCard } from "@/components/ssh-keys-card";
-import { quotas } from "@/lib/mock-data";
 import {
   getCurrentUserOrg,
   getMembersForOrg,
@@ -66,32 +65,19 @@ export default async function SettingsPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Quotas" subtitle="Higher limits are approved after capacity and payment review." />
-            <Table minWidth="0">
-              <thead>
-                <tr>
-                  <Th>Resource</Th>
-                  <Th className="text-right">Used</Th>
-                  <Th className="text-right">Limit</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {quotas.map((q) => (
-                  <tr key={q.label}>
-                    <Td className="text-ink-700">{q.label}</Td>
-                    <Td className="text-right tabular-nums">{q.used}</Td>
-                    <Td className="text-right tabular-nums font-medium">
-                      {q.limit}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-            <div className="px-5 py-3">
-              <Button variant="secondary" size="sm">
-                Request higher limits
-              </Button>
-            </div>
+            <CardHeader
+              title="Quotas"
+              subtitle="Higher limits are approved after capacity and payment review."
+            />
+            {/* Quota accounting is not implemented - there is no per-org limit
+                table and nothing meters usage against one. This card used to
+                render fabricated used/limit pairs from lib/mock-data, which
+                read as a real allowance the customer was consuming. */}
+            <p className="px-5 py-6 text-sm leading-relaxed text-ink-400">
+              No quotas are enforced on this organization yet. Capacity is
+              governed per site by its own reserve, shown on the Networking
+              page.
+            </p>
           </Card>
         </div>
       </div>

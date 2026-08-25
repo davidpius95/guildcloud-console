@@ -1,6 +1,6 @@
 import { Badge, Card, CardHeader, EmptyState, PageHeader, Table, Td, Th, Mono } from "@/components/ui";
 import { getCurrentUserOrg, getAuditLogForOrg } from "@/lib/supabase/queries";
-import { formatDateTime } from "@/lib/mock-data";
+import { formatDateTime } from "@/lib/format";
 
 const actionTones: Record<string, "lemon" | "amber" | "rose" | "sky" | "neutral"> = {
   "org.created": "lemon",

@@ -2,12 +2,9 @@
 
 import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  images,
-  money,
-  plans,
-  sites,
-} from "@/lib/mock-data";
+import { images, plans } from "@/lib/catalog";
+import { money } from "@/lib/format";
+import type { RealSite } from "@/lib/supabase/queries";
 import type { ProtectionTier } from "@/lib/types";
 import { createInstance } from "@/app/console/instances/actions";
 import { Badge, Button, Card, CardHeader, Note, cx } from "./ui";
@@ -108,6 +105,7 @@ export function CreateInstanceWizard({
   projects,
   sshKeyCount,
   templateAvailability,
+  sites,
 }: {
   // Real projects (uuid ids) for the signed-in org - createInstance
   // writes project_id into a real uuid column, so this can never be the
@@ -128,8 +126,13 @@ export function CreateInstanceWizard({
   // pass the wizard's own gate and fail server-side. This is the real
   // catalog_image_site_templates data instead.
   templateAvailability: { catalogImageId: string; siteId: string }[];
+  // Real sites, derived from infrastructure_clusters. This used to come from
+  // lib/mock-data.ts, which offered Abuja 1 and Amsterdam 1 as selectable and
+  // "Accepting new work" when no cluster has ever existed at either - the
+  // wizard let you pick one and the create then failed placement server-side.
+  sites: RealSite[];
 }) {
-  const [siteId, setSiteId] = useState(sites[0].id);
+  const [siteId, setSiteId] = useState(sites[0]?.id ?? "");
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [imageId, setImageId] = useState("ubuntu-2404");
   const [planId, setPlanId] = useState("std-2");
@@ -152,7 +155,7 @@ export function CreateInstanceWizard({
     error: null,
   });
 
-  const site = sites.find((s) => s.id === siteId)!;
+  const site = sites.find((s) => s.id === siteId) ?? sites[0];
   const plan = plans.find((p) => p.id === planId)!;
   const image = images.find((i) => i.id === imageId)!;
   const tier = protectionOptions.find((p) => p.id === protection)!;

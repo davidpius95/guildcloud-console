@@ -12,7 +12,7 @@ import {
 } from "@/components/ui";
 import { RemoteAccessGuide } from "@/components/remote-access-guide";
 import { IconLock, IconPlus, IconServer, OSLogo } from "@/components/icons";
-import { formatDate } from "@/lib/mock-data";
+import { formatDate } from "@/lib/format";
 import { getCurrentUserOrg, getInstancesForOrg } from "@/lib/supabase/queries";
 import type { ResourceState } from "@/lib/types";
 

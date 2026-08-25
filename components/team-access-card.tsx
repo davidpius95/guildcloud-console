@@ -4,7 +4,7 @@ import { useActionState, useState, useTransition } from "react";
 import { Modal } from "./modal";
 import { Badge, Button, Card, CardHeader, Table, Td, Th, cx } from "./ui";
 import { IconPlus } from "./icons";
-import { formatDate } from "@/lib/mock-data";
+import { formatDate } from "@/lib/format";
 import type { Membership, MemberRole } from "@/lib/types";
 import {
   inviteMember,

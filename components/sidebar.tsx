@@ -37,10 +37,9 @@ const groups: Array<{ heading?: string; items: NavItem[] }> = [
     ],
   },
   {
-    heading: "Compute (Active)",
+    heading: "Compute",
     items: [
       { href: "/console/instances", label: "Guild Instances", icon: IconServer },
-      { href: "/console/volumes", label: "Volumes", icon: IconDisk },
       { href: "/console/networking", label: "Networking & Mesh", icon: IconNetwork },
     ],
   },
@@ -49,18 +48,26 @@ const groups: Array<{ heading?: string; items: NavItem[] }> = [
     items: [
       { href: "/console/billing", label: "Billing", icon: IconWallet },
       { href: "/console/settings", label: "Settings & Keys", icon: IconSettings },
-      { href: "/console/support", label: "Support", icon: IconSupport },
     ],
   },
   {
-    heading: "Future Services",
+    // These route to real pages that state plainly they are not built yet,
+    // rather than to fabricated data. They stay reachable on purpose: a
+    // dead, unclickable nav item tells the reader less than a page that
+    // says what the feature will do. "Volumes" and "Support" moved here
+    // from the active groups above - both were listed as working features
+    // while rendering entirely invented content.
+    heading: "Coming soon",
     items: [
-      { href: "/console/databases", label: "PostgreSQL", icon: IconDatabase, badge: "Soon", disabled: true },
-      { href: "/console/storage", label: "Object Storage", icon: IconBucket, badge: "Soon", disabled: true },
-      { href: "/console/kubernetes", label: "Kubernetes", icon: IconCube, badge: "Soon", disabled: true },
-      { href: "/console/functions", label: "Functions", icon: IconFunction, badge: "Soon", disabled: true },
-      { href: "/console/marketplace", label: "Marketplace", icon: IconStore, badge: "Soon", disabled: true },
-      { href: "/console/migration", label: "Migration", icon: IconTransfer, badge: "Soon", disabled: true },
+      { href: "/console/volumes", label: "Volumes", icon: IconDisk, badge: "Soon" },
+      { href: "/console/databases", label: "PostgreSQL", icon: IconDatabase, badge: "Soon" },
+      { href: "/console/storage", label: "Object Storage", icon: IconBucket, badge: "Soon" },
+      { href: "/console/kubernetes", label: "Kubernetes", icon: IconCube, badge: "Soon" },
+      { href: "/console/functions", label: "Functions", icon: IconFunction, badge: "Soon" },
+      { href: "/console/monitoring", label: "Monitoring", icon: IconPulse, badge: "Soon" },
+      { href: "/console/marketplace", label: "Marketplace", icon: IconStore, badge: "Soon" },
+      { href: "/console/migration", label: "Migration", icon: IconTransfer, badge: "Soon" },
+      { href: "/console/support", label: "Support", icon: IconSupport, badge: "Soon" },
     ],
   },
 ];

@@ -315,3 +315,57 @@ export async function getAuditLogForOrg(organizationId: string, limit = 100) {
   if (error) throw error;
   return (data ?? []).map(toAuditLogEntry);
 }
+
+export type RealSite = {
+  id: string;
+  name: string;
+  location: string;
+  acceptingNewWork: boolean;
+  capacityReservePct: number;
+};
+
+// Real sites, derived from infrastructure_clusters rather than the fictional
+// lib/mock-data.ts `sites` array. That array listed Abuja 1 and Amsterdam 1
+// as selectable, "Accepting new work" sites when no cluster has ever existed
+// at either - the create wizard would happily accept them and then fail
+// placement server-side. A site is real here only if at least one cluster
+// reports it, and it accepts work only if a cluster there is admitting.
+export async function getRealSites(): Promise<RealSite[]> {
+  const supabase = await createClient();
+  // Cast: lib/supabase/types.ts is generated and currently predates the
+  // multi-cluster migration, so it has no infrastructure_clusters entry.
+  // Regenerating it is the real fix - tracked separately - but one narrow
+  // cast here is preferable to leaving the fictional site list in place.
+  const { data, error } = await (supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => Promise<{
+        data: Array<{ id: string; site_id: string; admission_state: string }> | null;
+        error: { message: string } | null;
+      }>;
+    };
+  })
+    .from("infrastructure_clusters")
+    .select("id, site_id, admission_state");
+  if (error) throw new Error(error.message);
+
+  const bySite = new Map<string, boolean>();
+  for (const row of data ?? []) {
+    const open = row.admission_state === "open";
+    bySite.set(row.site_id, (bySite.get(row.site_id) ?? false) || open);
+  }
+
+  return [...bySite.entries()].map(([id, accepting]) => ({
+    id,
+    name: SITE_DISPLAY[id]?.name ?? id,
+    location: SITE_DISPLAY[id]?.location ?? "—",
+    acceptingNewWork: accepting,
+    capacityReservePct: 30,
+  }));
+}
+
+// Customer-facing labels for real site ids. Adding a site here without a
+// matching cluster row does not make it selectable - getRealSites only ever
+// returns sites that real clusters report.
+const SITE_DISPLAY: Record<string, { name: string; location: string }> = {
+  "lag-1": { name: "Lagos 1", location: "Lagos, Nigeria" },
+};

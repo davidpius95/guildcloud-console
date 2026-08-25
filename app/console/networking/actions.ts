@@ -93,7 +93,9 @@ export async function removeAccessGrant(id: string) {
 // does) and returns a one-shot install command for the caller's own
 // device - never a raw Tailscale key, and the word "Tailscale" never
 // appears in this response, only inside the script itself once fetched.
-export async function requestDeviceEnrollment(): Promise<{ command: string | null; error: string | null }> {
+export async function requestDeviceEnrollment(
+  regenerate = false,
+): Promise<{ command: string | null; error: string | null; reused?: boolean }> {
   const supabase = await createClient();
   // Pass this app's own known-good origin instead of relying on the
   // Edge Function's CONSOLE_URL secret - that secret never actually took
@@ -105,9 +107,9 @@ export async function requestDeviceEnrollment(): Promise<{ command: string | nul
   // separately-configured source of truth.
   const { data, error } = await supabase.functions.invoke("enroll-device", {
     method: "POST",
-    body: { consoleUrl: await getSiteUrl() },
+    body: { consoleUrl: await getSiteUrl(), regenerate },
   });
   if (error) return { command: null, error: error.message };
   if (data?.error) return { command: null, error: data.error };
-  return { command: data?.command ?? null, error: null };
+  return { command: data?.command ?? null, error: null, reused: data?.reused === true };
 }

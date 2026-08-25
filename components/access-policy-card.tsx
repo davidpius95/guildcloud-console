@@ -4,7 +4,7 @@ import { useActionState, useMemo, useState, useTransition } from "react";
 import { Modal } from "./modal";
 import { Badge, Button, Card, CardHeader, Note, Table, Td, Th } from "./ui";
 import { IconPlus } from "./icons";
-import { formatDate } from "@/lib/mock-data";
+import { formatDate } from "@/lib/format";
 import type { AccessResourceType, Membership } from "@/lib/types";
 import { addAccessGrant, removeAccessGrant, type NetworkingActionState } from "@/app/console/networking/actions";
 

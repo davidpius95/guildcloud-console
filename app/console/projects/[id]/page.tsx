@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { Card, CardHeader, PageHeader, Badge, EmptyState } from "@/components/ui";
-import { formatDate, money } from "@/lib/mock-data";
+import { formatDate, money } from "@/lib/format";
 import { getProjectById } from "@/lib/supabase/queries";
 
 export default async function ProjectDetailPage({

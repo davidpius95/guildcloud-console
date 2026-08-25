@@ -14,7 +14,6 @@ import { AccessPolicyCard } from "@/components/access-policy-card";
 import { EnrolledDevicesCard } from "@/components/enrolled-devices-card";
 import { PrivateAddressTable } from "@/components/private-address-table";
 import { RemoteAccessGuide } from "@/components/remote-access-guide";
-import { sites } from "@/lib/mock-data";
 import {
   getAccessGrantsForOrg,
   getCurrentUserOrg,
@@ -22,6 +21,7 @@ import {
   getInstancesWithPrivateNetworkForOrg,
   getMembersForOrg,
   getProjectsForOrg,
+  getRealSites,
 } from "@/lib/supabase/queries";
 
 const zones = [
@@ -53,6 +53,7 @@ const zones = [
 
 export default async function NetworkingPage() {
   const userOrg = await getCurrentUserOrg();
+  const sites = await getRealSites();
   const realInstances = userOrg
     ? await getInstancesWithPrivateNetworkForOrg(userOrg.organization.id)
     : [];
@@ -135,8 +136,8 @@ export default async function NetworkingPage() {
                 <Td className="font-medium text-ink-900">{s.name}</Td>
                 <Td className="text-ink-500">{s.location}</Td>
                 <Td>
-                  <Badge tone={s.status === "healthy" ? "lemon" : "amber"}>
-                    {s.status === "healthy" ? "Healthy" : "Admission paused"}
+                  <Badge tone={s.acceptingNewWork ? "lemon" : "amber"}>
+                    {s.acceptingNewWork ? "Healthy" : "Admission paused"}
                   </Badge>
                 </Td>
                 <Td className="text-ink-500">

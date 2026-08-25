@@ -8,11 +8,9 @@ const items = [
   { href: "/console", label: "Dashboard" },
   { href: "/console/projects", label: "Projects" },
   { href: "/console/instances", label: "Guild Instances" },
-  { href: "/console/volumes", label: "Volumes" },
   { href: "/console/networking", label: "Networking" },
   { href: "/console/billing", label: "Billing" },
   { href: "/console/settings", label: "Settings" },
-  { href: "/console/support", label: "Support" },
 ];
 
 export function MobileNav() {

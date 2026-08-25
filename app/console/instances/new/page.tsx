@@ -4,6 +4,7 @@ import {
   getCatalogTemplateAvailability,
   getCurrentUserOrg,
   getProjectsForOrg,
+  getRealSites,
   getSshKeysForOrg,
 } from "@/lib/supabase/queries";
 
@@ -32,6 +33,7 @@ export default async function NewInstancePage() {
   const projects = userOrg ? await getProjectsForOrg(userOrg.organization.id) : [];
   const sshKeyCount = userOrg ? (await getSshKeysForOrg(userOrg.organization.id)).length : 0;
   const templateAvailability = await getCatalogTemplateAvailability();
+  const sites = await getRealSites();
 
   return (
     <>
@@ -43,6 +45,7 @@ export default async function NewInstancePage() {
         projects={projects}
         sshKeyCount={sshKeyCount}
         templateAvailability={templateAvailability}
+        sites={sites}
       />
     </>
   );

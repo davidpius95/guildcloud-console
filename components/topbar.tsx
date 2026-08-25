@@ -2,40 +2,67 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { alerts, currentUser, money, organization, projects } from "@/lib/mock-data";
 import { Button, cx } from "./ui";
 import {
   IconBell,
-  IconBucket,
   IconChevron,
-  IconCube,
-  IconDatabase,
-  IconFunction,
   IconGrid,
+  IconNetwork,
   IconPlus,
+  IconProjects,
   IconServer,
-  IconStore,
-  IconSupport,
+  IconSettings,
   IconWallet,
 } from "./icons";
 import { ThemeToggle } from "./theme-toggle";
 
+export type TopbarProject = { id: string; name: string };
+
+// Quick launch only lists surfaces that actually exist and work. It used to
+// link to Kubernetes/PostgreSQL/Object Storage/Functions/Marketplace, none of
+// which are built - a shortcut into an unbuilt page is a dead end, not a
+// feature.
 const quickLaunch = [
   { href: "/console/instances", label: "Guild Instances", icon: IconServer },
-  { href: "/console/kubernetes", label: "Kubernetes", icon: IconCube },
-  { href: "/console/databases", label: "PostgreSQL", icon: IconDatabase },
-  { href: "/console/storage", label: "Object Storage", icon: IconBucket },
-  { href: "/console/functions", label: "Functions", icon: IconFunction },
-  { href: "/console/marketplace", label: "Marketplace", icon: IconStore },
-  { href: "/console/support", label: "Support", icon: IconSupport },
+  { href: "/console/projects", label: "Projects", icon: IconProjects },
+  { href: "/console/networking", label: "Networking", icon: IconNetwork },
+  { href: "/console/settings", label: "Settings & Keys", icon: IconSettings },
 ];
 
-export function Topbar() {
+function initialsFor(email: string) {
+  const handle = email.split("@")[0] ?? "";
+  const parts = handle.split(/[.\-_+]/).filter(Boolean);
+  const letters = parts.length >= 2 ? parts[0][0] + parts[1][0] : handle.slice(0, 2);
+  return (letters || "?").toUpperCase();
+}
+
+// Every value here used to come from lib/mock-data - a real signed-in user
+// saw a stranger's name ("Saurabh Rapatwar"), a fabricated wallet balance,
+// and a project switcher listing projects that were not theirs, on every
+// single console page. All of it is now the caller's real organization,
+// passed down from the console layout which already loads it.
+export function Topbar({
+  userEmail,
+  organizationName,
+  walletBalanceCents,
+  projects,
+}: {
+  userEmail: string;
+  organizationName: string;
+  walletBalanceCents: number;
+  projects: TopbarProject[];
+}) {
   const [projectOpen, setProjectOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [launchOpen, setLaunchOpen] = useState(false);
-  const [activeProject, setActiveProject] = useState(projects[0]);
-  const unread = alerts.filter((a) => !a.acknowledged).length;
+  const [activeProject, setActiveProject] = useState<TopbarProject | null>(
+    projects[0] ?? null,
+  );
+  // There is no real alerts/monitoring backend yet, so there is nothing
+  // genuine to badge. Showing a fabricated unread count trained users to
+  // ignore the bell before it ever meant anything.
+  const unread = 0;
+  const walletLabel = `$${(walletBalanceCents / 100).toFixed(2)}`;
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-ink-100/80 bg-white/85 px-4 backdrop-blur-md sm:px-6 dark:border-white/5 dark:bg-[#171d36]/80">
@@ -57,12 +84,17 @@ export function Topbar() {
         >
           <span className="hidden text-ink-400 sm:inline">Project</span>
           <span className="truncate font-medium text-ink-900">
-            {activeProject.name}
+            {activeProject?.name ?? "No project"}
           </span>
           <IconChevron className={cx("h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform duration-200", projectOpen && "rotate-180")} />
         </button>
         {projectOpen ? (
           <div className="absolute left-0 top-11 w-64 overflow-hidden rounded-xl border border-ink-100 bg-white py-1 shadow-lg animate-fade-up">
+            {projects.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-ink-400">
+                No projects yet.
+              </p>
+            ) : null}
             {projects.map((p) => (
               <button
                 key={p.id}
@@ -72,14 +104,11 @@ export function Topbar() {
                   setProjectOpen(false);
                 }}
                 className={cx(
-                  "flex w-full flex-col items-start px-3 py-2 text-left transition-colors hover:bg-ink-50",
-                  p.id === activeProject.id && "bg-ink-100",
+                  "flex w-full items-start px-3 py-2 text-left transition-colors hover:bg-ink-50",
+                  p.id === activeProject?.id && "bg-ink-100",
                 )}
               >
                 <span className="text-sm font-medium text-ink-900">{p.name}</span>
-                <span className="text-xs text-ink-400">
-                  {p.resourceCount} resources · {money(p.monthlySpend)}/mo
-                </span>
               </button>
             ))}
             <div className="mt-1 border-t border-ink-100 px-3 py-2">
@@ -103,7 +132,7 @@ export function Topbar() {
           <IconWallet className="h-4 w-4 text-lemon-700" />
           <span className="text-lemon-800">Wallet</span>
           <span className="font-semibold tabular-nums text-lemon-900">
-            {money(organization.walletBalance)}
+            {walletLabel}
           </span>
         </Link>
 
@@ -126,23 +155,12 @@ export function Topbar() {
           {notifOpen ? (
             <div className="absolute right-0 top-11 w-80 overflow-hidden rounded-xl border border-ink-100 bg-white shadow-lg animate-fade-up">
               <div className="border-b border-ink-100 px-4 py-2.5 text-xs font-semibold text-ink-500">
-                {unread} unacknowledged alert{unread === 1 ? "" : "s"}
+                Notifications
               </div>
-              {alerts.slice(0, 4).map((a) => (
-                <div key={a.id} className="border-b border-ink-50 px-4 py-2.5 last:border-0">
-                  <p className="text-sm font-medium text-ink-900">{a.title}</p>
-                  <p className="mt-0.5 text-xs text-ink-400">
-                    {a.resource} · {a.openedAt}
-                  </p>
-                </div>
-              ))}
-              <Link
-                href="/console/monitoring"
-                className="block px-4 py-2.5 text-xs font-medium text-lemon-700 hover:underline"
-                onClick={() => setNotifOpen(false)}
-              >
-                View monitoring and alerts
-              </Link>
+              <p className="px-4 py-4 text-xs leading-relaxed text-ink-400">
+                No alerts. Instance health and capacity alerting arrive with
+                monitoring — you&rsquo;ll see real events here once that ships.
+              </p>
             </div>
           ) : null}
         </div>
@@ -194,14 +212,12 @@ export function Topbar() {
           className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-all duration-200 hover:-translate-y-px hover:bg-ink-50"
         >
           <span className="grid h-7 w-7 place-items-center rounded-full bg-[#171d36] text-xs font-semibold text-lemon-400">
-            {currentUser.name
-              .split(" ")
-              .map((n) => n[0])
-              .join("")}
+            {initialsFor(userEmail)}
           </span>
-          <span className="hidden text-sm font-medium text-ink-800 xl:block">
-            {currentUser.name}
+          <span className="hidden max-w-[14rem] truncate text-sm font-medium text-ink-800 xl:block">
+            {userEmail}
           </span>
+          <span className="sr-only">Signed in to {organizationName}</span>
         </Link>
       </div>
     </header>

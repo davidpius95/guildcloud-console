@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Modal } from "./modal";
 import { Button, Note, cx } from "./ui";
-import { money, plans } from "@/lib/mock-data";
+import { money } from "@/lib/format";
+import { plans } from "@/lib/catalog";
 import type { Instance } from "@/lib/types";
 
 import {

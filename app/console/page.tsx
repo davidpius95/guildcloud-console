@@ -1,466 +1,229 @@
 import Link from "next/link";
-import { OperationTimeline } from "@/components/operation-timeline";
-import { SpendChart } from "@/components/spend-chart";
 import {
   Badge,
   Button,
   Card,
   CardHeader,
-  Meter,
   Note,
   PageHeader,
   Stat,
   StatePill,
-  cx,
 } from "@/components/ui";
+import { IconArrowRight, IconLock, IconPlus, IconServer } from "@/components/icons";
+import { RemoteAccessGuide } from "@/components/remote-access-guide";
+import { formatDate } from "@/lib/format";
 import {
-  IconArrowRight,
-  IconCloud,
-  IconPlus,
-  IconShield,
-  IconSupport,
-  IconWallet,
-} from "@/components/icons";
-import {
-  alerts,
-  instances,
-  money,
-  operations,
-  organization,
-  projects,
-  quotas,
-  sites,
-} from "@/lib/mock-data";
+  getCurrentUserOrg,
+  getInstancesForOrg,
+  getProjectsForOrg,
+} from "@/lib/supabase/queries";
+import type { ResourceState } from "@/lib/types";
 
-const accents: Record<string, string> = {
-  lemon: "from-lemon-200 to-lemon-100",
-  sky: "from-sky-200 to-sky-100",
-  violet: "from-violet-200 to-violet-100",
-  amber: "from-amber-200 to-amber-100",
-};
+const money = (value: number) => `$${value.toFixed(2)}`;
 
-const accentIconTones: Record<string, string> = {
-  lemon: "text-lemon-700",
-  sky: "text-sky-700",
-  violet: "text-violet-700",
-  amber: "text-amber-700",
-};
+// Rewritten to show only real data. This was previously the most misleading
+// page in the console: it greeted the user as a fabricated organization
+// ("Northwind Labs"), and every figure on it - instance counts, spend,
+// quotas, alerts, site health - came from lib/mock-data rather than the
+// signed-in customer's own infrastructure. It is the first page seen after
+// login, so it was also the page most likely to be believed.
+export default async function ConsoleDashboard() {
+  const userOrg = await getCurrentUserOrg();
+  if (!userOrg) return null;
 
-export default function DashboardPage() {
-  const runningOp = operations.find((o) => o.state === "running");
-  const openAlerts = alerts.filter((a) => !a.acknowledged);
-  const readyInstances = instances.filter((i) => i.state === "ready").length;
-  const healthySites = sites.filter((s) => s.status === "healthy").length;
-  const protectedInstances = instances.filter(
-    (i) => i.protection === "protected",
-  ).length;
-  const monthlyProjectSpend = projects.reduce(
-    (total, project) => total + project.monthlySpend,
-    0,
+  const [instances, projects] = await Promise.all([
+    getInstancesForOrg(userOrg.organization.id),
+    getProjectsForOrg(userOrg.organization.id),
+  ]);
+
+  const ready = instances.filter((i) => i.state === "ready");
+  const inFlight = instances.filter(
+    (i) => i.state === "provisioning" || i.state === "deleting",
   );
-  const admittedSites = sites.filter((s) => s.acceptingNewWork).length;
+  const failed = instances.filter((i) => i.state === "failed");
+  const committedMonthly = instances
+    .filter((i) => i.state !== "failed")
+    .reduce((sum, i) => sum + (i.plan?.monthly_max ?? 0), 0);
+  const canCreate =
+    userOrg.membership.role === "Owner" || userOrg.membership.role === "Admin";
+  const recent = [...instances].slice(0, 5);
 
   return (
     <>
-      <section className="mb-6 overflow-hidden rounded-2xl border border-ink-100 bg-gradient-to-br from-ink-950 via-ink-900 to-[#11193a] text-white shadow-[0_24px_70px_rgba(23,29,54,0.18)]">
-        <div className="relative grid gap-6 px-6 py-7 lg:grid-cols-[1.15fr_0.85fr] lg:px-8">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-lemon-300/80">
-              Console snapshot
-            </p>
-            <h1 className="mt-3 max-w-2xl text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-              Welcome back, {organization.name}
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-300">
-              Private-by-default infrastructure across your admitted sites.
-              This view combines wallet, capacity, alert, and recovery state so
-              the next decision is obvious before you click into a resource.
-            </p>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
-                {healthySites} healthy sites
-              </span>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
-                {protectedInstances} protected instances
-              </span>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
-                {openAlerts.length} open alerts
-              </span>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white ring-1 ring-inset ring-white/10">
-                {admittedSites} sites admitting work
-              </span>
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Button href="/console/instances/new">
-                <IconPlus className="h-4 w-4" />
-                Create instance
-              </Button>
-              <Button href="/console/billing" variant="secondary">
-                View billing
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <p className="text-xs text-ink-300">Wallet balance</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
-                {money(organization.walletBalance)}
-              </p>
-              <p className="mt-1 text-xs text-ink-300">
-                Auto-reload at {money(organization.autoReloadThreshold)}
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <p className="text-xs text-ink-300">Month to date</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
-                {money(organization.monthToDateSpend)}
-              </p>
-              <p className="mt-1 text-xs text-ink-300">
-                Forecast {money(organization.monthlyForecast)} of {money(organization.budget)}
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <p className="text-xs text-ink-300">Ready instances</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
-                {readyInstances} / {instances.length}
-              </p>
-              <p className="mt-1 text-xs text-ink-300">
-                1 provisioning, 1 degraded, 1 stopped
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <p className="text-xs text-ink-300">Project spend</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-white">
-                {money(monthlyProjectSpend)}
-              </p>
-              <p className="mt-1 text-xs text-ink-300">
-                Across {projects.length} active projects
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <PageHeader
-        title="Operations"
-        description="The detailed controls below reflect mock data, but the layout is meant to behave like a real operator console."
+        title={userOrg.organization.name}
+        description="Private-by-default infrastructure. Every instance is reachable only from your enrolled devices — no public IP, no public SSH."
         action={
-          <Button href="/console/projects" variant="secondary">
-            View all projects
-          </Button>
+          canCreate ? (
+            <Button href="/console/instances/new">
+              <IconPlus className="h-4 w-4" />
+              Create instance
+            </Button>
+          ) : undefined
         }
       />
 
-      <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <Stat label="Running instances" value={String(ready.length)} tone="lemon" />
+        </Card>
+        <Card>
+          <Stat
+            label="In progress"
+            value={String(inFlight.length)}
+            hint={inFlight.length ? "Provisioning or tearing down." : "Nothing in flight."}
+          />
+        </Card>
         <Card>
           <Stat
             label="Wallet balance"
-            value={money(organization.walletBalance)}
-            hint={`Auto-reload at ${money(organization.autoReloadThreshold)}`}
-            tone="lemon"
+            value={money(userOrg.organization.walletBalanceCents / 100)}
           />
         </Card>
         <Card>
           <Stat
-            label="Month to date"
-            value={money(organization.monthToDateSpend)}
-            hint={`Forecast ${money(organization.monthlyForecast)} of ${money(organization.budget)} budget`}
+            label="Monthly maximum"
+            value={money(committedMonthly)}
+            hint="Ceiling if everything runs all month."
           />
         </Card>
-        <Card>
-          <Stat
-            label="Instances ready"
-            value={`${readyInstances} / ${instances.length}`}
-            hint="1 provisioning, 1 degraded, 1 stopped"
-          />
-        </Card>
-        <Card>
-          <Stat
-            label="Open alerts"
-            value={String(openAlerts.length)}
-            hint="1 critical, 1 warning"
-            tone={openAlerts.length > 0 ? "rose" : undefined}
-          />
-        </Card>
-      </section>
+      </div>
 
-      <section className="mb-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink-900">Your projects</h2>
-          <Link
-            href="/console/projects"
-            className="text-xs font-medium text-lemon-700 hover:underline"
-          >
-            View all projects
-          </Link>
+      {failed.length > 0 ? (
+        <div className="mb-5">
+          <Note tone="warning">
+            {failed.length} instance{failed.length === 1 ? "" : "s"} failed to
+            provision and {failed.length === 1 ? "is" : "are"} not billable.
+            Open {failed.length === 1 ? "it" : "them"} from Guild Instances to
+            review or delete.
+          </Note>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Link
-            href="/console/projects"
-            className="grid min-h-28 place-items-center rounded-xl border-2 border-dashed border-ink-200 text-sm font-medium text-ink-400 transition-colors hover:border-lemon-400 hover:bg-lemon-50 hover:text-lemon-800"
-          >
-            <span className="flex items-center gap-2">
-              <IconPlus className="h-4 w-4" />
-              Create new project
-            </span>
-          </Link>
-          {projects.map((p) => (
-            <Link key={p.id} href="/console/projects">
-              <Card className="h-full transition-shadow hover:shadow-md">
-                <div className="flex items-start gap-3 p-4">
-                  <span
-                    className={cx(
-                      "grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br",
-                      accents[p.accent],
-                    )}
-                  >
-                    <IconCloud className={cx("h-5 w-5", accentIconTones[p.accent])} />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-ink-900">
-                      {p.name}
-                    </p>
-                    <p className="mt-0.5 text-xs text-ink-400">
-                      Created {p.createdAt}
-                    </p>
-                    <p className="mt-2 text-xs text-ink-500">
-                      {p.resourceCount} resources ·{" "}
-                      <span className="font-medium tabular-nums text-ink-700">
-                        {money(p.monthlySpend)}/mo
-                      </span>
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </section>
+      ) : null}
 
-      <section className="mb-6 grid gap-4 lg:grid-cols-3">
+      <RemoteAccessGuide className="mb-5" />
+
+      <div className="grid gap-4 lg:grid-cols-3">
         <Card className="min-w-0 lg:col-span-2">
           <CardHeader
-            title="Cost analysis"
-            subtitle="Daily spend across all projects. Hourly price and monthly maximum are shown before every creation."
+            title="Your instances"
+            subtitle={
+              instances.length
+                ? `${instances.length} total in ${userOrg.organization.name}.`
+                : undefined
+            }
             action={
-              <Button href="/console/billing" variant="secondary" size="sm">
-                Billing
-              </Button>
+              instances.length ? (
+                <Link
+                  href="/console/instances"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
+                >
+                  View all
+                  <IconArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              ) : undefined
             }
           />
-          <SpendChart />
+          {instances.length === 0 ? (
+            <div className="px-5 py-12 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-lemon-100 text-lemon-800 ring-8 ring-lemon-50">
+                <IconServer className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-semibold text-ink-900">
+                No instances yet
+              </p>
+              <p className="mx-auto mt-1 max-w-sm text-xs text-ink-400">
+                {canCreate
+                  ? "Create your first private server. It gets a stable private hostname and no public route."
+                  : "Only Owners and Admins can create instances. Ask an Owner or Admin on your team."}
+              </p>
+              {canCreate ? (
+                <div className="mt-5">
+                  <Button href="/console/instances/new" size="sm">
+                    <IconPlus className="h-4 w-4" />
+                    Create instance
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <ul className="divide-y divide-ink-100">
+              {recent.map((i) => (
+                <li key={i.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/console/instances/${i.id}`}
+                      className="text-sm font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                    >
+                      {i.name}
+                    </Link>
+                    <p className="mt-0.5 truncate text-xs text-ink-400">
+                      {i.projectName} · {i.plan?.name ?? "—"} · created{" "}
+                      {formatDate(i.createdAt)}
+                    </p>
+                  </div>
+                  <StatePill state={i.state as ResourceState} />
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
 
-        <Card>
-          <CardHeader title="Assigned quota" subtitle="Derived from measured site capacity." />
-          <div className="space-y-4 px-5 py-4">
-            {quotas.map((q) => (
-              <Meter
-                key={q.label}
-                label={q.label}
-                caption={`${q.used} / ${q.limit}`}
-                value={(q.used / q.limit) * 100}
-              />
-            ))}
-          </div>
-        </Card>
-      </section>
-
-      <section className="mb-6 grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader
-            title="Operation in progress"
-            subtitle="Slow work is tracked and explained, never hidden."
-          />
-          <div className="px-5 py-4">
-            {runningOp ? (
-              <>
-                <p className="mb-3 text-sm font-medium text-ink-900">
-                  {runningOp.kind} · {runningOp.resourceName}
-                </p>
-                <OperationTimeline operation={runningOp} />
-                <p className="mt-4 text-xs text-ink-400">
-                  Started {runningOp.startedAt} · {runningOp.id}
-                </p>
-              </>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader title="Projects" />
+            {projects.length === 0 ? (
+              <p className="px-5 py-6 text-sm text-ink-400">No projects yet.</p>
             ) : (
-              <p className="text-sm text-ink-400">No operations running.</p>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Site health" subtitle="Each site keeps a 30% capacity reserve." />
-          <div className="divide-y divide-ink-100">
-            {sites.map((s) => (
-              <div key={s.id} className="px-5 py-3.5">
-                <div className="mb-2 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-ink-900">{s.name}</p>
-                    <p className="text-xs text-ink-400">{s.location}</p>
-                  </div>
-                  <Badge tone={s.acceptingNewWork ? "lemon" : "amber"}>
-                    {s.acceptingNewWork ? "Accepting work" : "Admission paused"}
-                  </Badge>
-                </div>
-                <Meter
-                  label="CPU"
-                  caption={`${s.usedCpuPct}%`}
-                  value={s.usedCpuPct}
-                />
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader
-            title="Alerts and incidents"
-            subtitle="Customer-safe notices with operator detail behind them."
-            action={
-              <Button href="/console/monitoring" variant="ghost" size="sm">
-                All
-              </Button>
-            }
-          />
-          <div className="divide-y divide-ink-100">
-            {alerts.slice(0, 4).map((a) => (
-              <div key={a.id} className="px-5 py-3">
-                <div className="flex items-start gap-2">
-                  <span
-                    className={cx(
-                      "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                      a.severity === "critical" && "bg-rose-500",
-                      a.severity === "warning" && "bg-amber-500",
-                      a.severity === "info" && "bg-ink-300",
-                    )}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-ink-900">{a.title}</p>
+              <ul className="divide-y divide-ink-100">
+                {projects.map((p) => (
+                  <li key={p.id} className="px-5 py-3">
+                    <Link
+                      href={`/console/projects/${p.id}`}
+                      className="text-sm font-medium text-ink-900 hover:text-lemon-700 hover:underline"
+                    >
+                      {p.name}
+                    </Link>
                     <p className="mt-0.5 text-xs text-ink-400">
-                      {a.resource} · {a.openedAt}
+                      {instances.filter((i) => i.projectName === p.name).length}{" "}
+                      instances
                     </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </section>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
 
-      <section className="grid gap-4 lg:grid-cols-3">
-        <Card className="min-w-0 lg:col-span-2">
-          <CardHeader
-            title="Instances"
-            subtitle="Private hostnames only — no public SSH route exists for MVP instances."
-            action={
-              <Button href="/console/instances" variant="secondary" size="sm">
-                Manage
-              </Button>
-            }
-          />
-          <div className="divide-y divide-ink-100">
-            {instances.slice(0, 4).map((i) => (
-              <Link
-                key={i.id}
-                href={`/console/instances/${i.id}`}
-                className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-ink-50"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-ink-900">
-                    {i.name}
-                  </p>
-                  <p className="truncate font-mono text-xs text-ink-400">
-                    {i.privateHostname}
-                  </p>
-                </div>
-                <span className="hidden shrink-0 text-xs text-ink-500 sm:block">
-                  {i.plan}
+          <Card>
+            <CardHeader title="Your access" />
+            <div className="space-y-3 px-5 py-4 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-ink-500">Role</span>
+                <Badge tone="sky">{userOrg.membership.role}</Badge>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-ink-500">This device</span>
+                <Badge tone={userOrg.membership.deviceEnrolled ? "lemon" : "neutral"}>
+                  {userOrg.membership.deviceEnrolled ? "Enrolled" : "Not enrolled"}
+                </Badge>
+              </div>
+              <p className="flex items-start gap-2 pt-1 text-xs text-ink-400">
+                <IconLock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Instances are reachable only from enrolled devices. Manage
+                  yours from{" "}
+                  <Link
+                    href="/console/networking"
+                    className="font-medium text-lemon-700 hover:underline"
+                  >
+                    Networking
+                  </Link>
+                  .
                 </span>
-                <span className="shrink-0">
-                  <StatePill state={i.state} />
-                </span>
-                <IconArrowRight className="h-4 w-4 shrink-0 text-ink-300" />
-              </Link>
-            ))}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Protection" subtitle="A backup is not valid until a restore drill proves it." />
-          <div className="space-y-3 px-5 py-4">
-            <div className="flex items-start gap-3">
-              <IconShield className="mt-0.5 h-4 w-4 shrink-0 text-lemon-600" />
-              <div>
-                <p className="text-sm font-medium text-ink-900">Standard</p>
-                <p className="text-xs text-ink-400">
-                  Daily encrypted off-site backup, seven-day retention, restore
-                  into a healthy site.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <IconShield className="mt-0.5 h-4 w-4 shrink-0 text-lemon-600" />
-              <div>
-                <p className="text-sm font-medium text-ink-900">Protected</p>
-                <p className="text-xs text-ink-400">
-                  More frequent recovery points, longer retention option,
-                  priority restore handling.
-                </p>
-              </div>
-            </div>
-            <Note>
-              Warm Standby is a premium add-on with limited capacity, offered
-              only after full-site drills pass.
-            </Note>
-          </div>
-        </Card>
-      </section>
-
-      <section className="mt-6 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <div className="flex items-start gap-4 p-5">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink-100 text-ink-600">
-              <IconSupport className="h-5 w-5" />
-            </span>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-ink-900">
-                Help &amp; Support
               </p>
-              <p className="mt-1 text-xs text-ink-400">
-                If you have a question or run into a problem, self-service
-                diagnosis comes first — the support team is right behind it.
-              </p>
-              <Button href="/console/support" variant="secondary" size="sm" className="mt-3">
-                Contact support
-              </Button>
             </div>
-          </div>
-        </Card>
-
-        <Card>
-          <div className="flex items-start gap-4 p-5">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-lemon-100 text-lemon-700">
-              <IconWallet className="h-5 w-5" />
-            </span>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-ink-900">
-                Billing &amp; Payments
-              </p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-ink-900">
-                {money(organization.walletBalance)}
-              </p>
-              <p className="text-xs text-ink-400">Total wallet balance</p>
-              <Button href="/console/billing" variant="secondary" size="sm" className="mt-3">
-                View invoices
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </section>
+          </Card>
+        </div>
+      </div>
     </>
   );
 }

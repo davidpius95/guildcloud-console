@@ -37,12 +37,12 @@ export function ConnectDeviceButton({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  function start() {
+  function start(regenerate = false) {
     setOpen(true);
     setError(null);
     setCommand(null);
     startTransition(async () => {
-      const result = await requestDeviceEnrollment();
+      const result = await requestDeviceEnrollment(regenerate);
       if (result.error) setError(result.error);
       else setCommand(result.command);
     });
@@ -57,7 +57,7 @@ export function ConnectDeviceButton({
   return (
     <>
       {unstyled ? (
-        <button type="button" className={className} disabled={isPending} onClick={start}>
+        <button type="button" className={className} disabled={isPending} onClick={() => start(false)}>
           {isPending ? (
             <span className="inline-flex items-center gap-1.5">
               <Spinner />
@@ -68,7 +68,7 @@ export function ConnectDeviceButton({
           )}
         </button>
       ) : (
-        <Button variant={variant} size={size} className={className} loading={isPending} onClick={start}>
+        <Button variant={variant} size={size} className={className} loading={isPending} onClick={() => start(false)}>
           {isPending ? "Generating…" : children}
         </Button>
       )}
@@ -88,10 +88,18 @@ export function ConnectDeviceButton({
           <div className="space-y-3">
             <CopyField label="Command" value={command} />
             <Note>
-              This link stays valid for 90 days and can be reused on more
-              than one device. Clicking "Connect this device" again
-              generates a new link and retires this one.
+              This link stays valid for 90 days and can be run on as many
+              devices as you like. Opening this dialog again shows the same
+              link — it is not rotated behind your back.
             </Note>
+            <button
+              type="button"
+              onClick={() => start(true)}
+              disabled={isPending}
+              className="text-xs font-medium text-ink-400 underline transition-colors hover:text-ink-700 disabled:cursor-wait"
+            >
+              Generate a new link and retire this one
+            </button>
           </div>
         ) : error ? (
           <Note tone="warning">{error}</Note>

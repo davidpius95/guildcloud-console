@@ -11,9 +11,12 @@ import {
   cx,
 } from "@/components/ui";
 import { IconCloud, IconPlus } from "@/components/icons";
-import { buckets, clusters, databases, formatDate, functions, instances, money, volumes } from "@/lib/mock-data";
-import { getCurrentUserOrg } from "@/lib/supabase/queries";
-import { getProjectsForOrg } from "@/lib/supabase/queries";
+import { formatDate } from "@/lib/format";
+import {
+  getCurrentUserOrg,
+  getInstancesForOrg,
+  getProjectsForOrg,
+} from "@/lib/supabase/queries";
 
 const accents: Record<string, string> = {
   lemon: "from-lemon-200 to-lemon-100",
@@ -32,6 +35,8 @@ const accentIconTones: Record<string, string> = {
 export default async function ProjectsPage() {
   const userOrg = await getCurrentUserOrg();
   const projects = userOrg ? await getProjectsForOrg(userOrg.organization.id) : [];
+  const allInstances = userOrg ? await getInstancesForOrg(userOrg.organization.id) : [];
+  const instances = allInstances.map((i) => ({ projectId: i.projectId }));
 
   return (
     <>
@@ -59,17 +64,16 @@ export default async function ProjectsPage() {
       ) : (
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((p) => {
-            // Resource tables don't exist until Phase 2 site integration -
-            // these will always be 0 for real (Supabase-backed) projects.
-            // Kept against the mock arrays only so the layout doesn't
-            // change shape once real resources exist.
+            // Real instance count for this project. Every other resource
+            // type (volumes, databases, buckets, clusters, functions) has no
+            // backing table yet, so the card used to fill those tiles from
+            // lib/mock-data - showing counts of resources the customer does
+            // not have. Only what exists is shown.
             const counts = [
-              { label: "Instances", n: instances.filter((r) => r.projectId === p.id).length },
-              { label: "Volumes", n: volumes.filter((r) => r.projectId === p.id).length },
-              { label: "Databases", n: databases.filter((r) => r.projectId === p.id).length },
-              { label: "Buckets", n: buckets.filter((r) => r.projectId === p.id).length },
-              { label: "Clusters", n: clusters.filter((r) => r.projectId === p.id).length },
-              { label: "Functions", n: functions.filter((r) => r.projectId === p.id).length },
+              {
+                label: "Instances",
+                n: instances.filter((r) => r.projectId === p.id).length,
+              },
             ];
             return (
               <Link key={p.id} href={`/console/projects/${p.id}`}>
@@ -88,7 +92,9 @@ export default async function ProjectsPage() {
                         <h3 className="truncate text-sm font-semibold text-ink-900">
                           {p.name}
                         </h3>
-                        <Badge tone="lemon">{money(p.monthlySpend)}/mo</Badge>
+                        <Badge tone="lemon">
+                          {instances.filter((r) => r.projectId === p.id).length} inst.
+                        </Badge>
                       </div>
                       <p className="mt-1 text-xs text-ink-400">
                         {p.description || "No description"}
@@ -122,8 +128,7 @@ export default async function ProjectsPage() {
             <tr>
               <Th>Project</Th>
               <Th>Created</Th>
-              <Th>Resources</Th>
-              <Th>Monthly spend</Th>
+              <Th>Instances</Th>
               <Th>Description</Th>
             </tr>
           </thead>
@@ -136,8 +141,9 @@ export default async function ProjectsPage() {
                   </Link>
                 </Td>
                 <Td className="text-ink-500">{formatDate(p.createdAt)}</Td>
-                <Td className="tabular-nums">{p.resourceCount}</Td>
-                <Td className="tabular-nums font-medium">{money(p.monthlySpend)}</Td>
+                <Td className="tabular-nums">
+                  {instances.filter((r) => r.projectId === p.id).length}
+                </Td>
                 <Td className="text-ink-500">{p.description}</Td>
               </tr>
             ))}
