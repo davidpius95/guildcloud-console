@@ -17,6 +17,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const TAILSCALE_TAILNET = "tail345216.ts.net";
 const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com";
 const MEMBER_TAG_PREFIX = "tag:guildcloud-member-";
+const INSTANCE_TAG_PREFIX = "tag:guildcloud-instance-";
 
 // The CONSOLE_URL secret never actually took effect across several real
 // dashboard + CLI attempts (see PROJECT_STATUS.md, 2026-08-25) - this
@@ -87,6 +88,39 @@ async function ensureMemberTag(token: string, membershipId: string) {
   policy.tagOwners[memberTag] = [TAILSCALE_TAG_OWNER];
   await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/acl`, policy);
   return memberTag;
+}
+
+// A command should work when it is copied, not after the next periodic worker
+// cycle. Add the exact member->instance grant and matching Tailscale SSH rule
+// immediately, while the worker remains the reconciliation authority that
+// removes anything no longer represented by an exact database grant.
+async function ensureImmediateInstanceAccess(token: string, memberTag: string, instanceId: string) {
+  const targetTag = `${INSTANCE_TAG_PREFIX}${instanceId.slice(0, 8)}`;
+  const policy = await ts(token, "GET", `tailnet/${TAILSCALE_TAILNET}/acl`);
+  policy.tagOwners = policy.tagOwners ?? {};
+  policy.grants = policy.grants ?? [];
+  policy.ssh = policy.ssh ?? [];
+
+  let changed = false;
+  if (!policy.tagOwners[targetTag]) {
+    policy.tagOwners[targetTag] = [TAILSCALE_TAG_OWNER];
+    changed = true;
+  }
+  const exactNetworkRule = (policy.grants as Array<{ src?: string[]; dst?: string[] }>).some(
+    (rule) => rule.src?.includes(memberTag) && rule.dst?.includes(targetTag),
+  );
+  if (!exactNetworkRule) {
+    policy.grants.push({ src: [memberTag], dst: [targetTag], ip: ["*"] });
+    changed = true;
+  }
+  const exactSshRule = (policy.ssh as Array<{ src?: string[]; dst?: string[] }>).some(
+    (rule) => rule.src?.includes(memberTag) && rule.dst?.includes(targetTag),
+  );
+  if (!exactSshRule) {
+    policy.ssh.push({ action: "accept", src: [memberTag], dst: [targetTag], users: ["autogroup:nonroot"] });
+    changed = true;
+  }
+  if (changed) await ts(token, "POST", `tailnet/${TAILSCALE_TAILNET}/acl`, policy);
 }
 
 Deno.serve(async (req) => {
@@ -223,6 +257,7 @@ Deno.serve(async (req) => {
 
     const token = await tailscaleAccessToken(supabase);
     const memberTag = await ensureMemberTag(token, membership.id as string);
+    await ensureImmediateInstanceAccess(token, memberTag, instance.id);
 
     // The key is reusable only for this membership's devices. Its sole
     // network/SSH reachability is the exact VM grant above, not the tailnet
