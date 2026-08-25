@@ -30,13 +30,22 @@ the GitOps policy source. Existing enrollment URLs should be regenerated after
 the enforcement rollout because any URL previously shared outside its intended
 device owner is a bearer credential.
 
-## Verification
+## Production verification
 
 - `npm --prefix deploy/site-worker test` — 99 tests passed, including scope,
   organization, legacy-grant removal, and Tailscale SSH-rule coverage.
 - `npm run typecheck` — passed.
 - `npm run build` — passed.
+- The worker release was deployed on the Guild-A housekeeping host and a
+  reconciliation cycle was run after the GitOps baseline applied.
+- Sanitized live-policy verification: **0** generic customer network grants,
+  **0** generic customer SSH rules, **8** membership-to-instance network
+  grants, and **8** matching membership-to-instance SSH rules.
+- The GitOps workflow for the policy baseline completed successfully.
 
-Live policy and device-tag verification must be recorded after the staged
-production rollout; no raw enrollment URL or Tailscale key belongs in this
-log.
+The updated `enroll-device` source is committed, but its Supabase Edge
+Function publish remains pending the project's Supabase CLI deployment
+authorization. Until that publish is performed, do not generate a new device
+enrollment command: the currently deployed function can still attempt to
+reintroduce the retired generic tag. No raw enrollment URL or Tailscale key
+belongs in this log.
