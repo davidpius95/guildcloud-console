@@ -102,6 +102,51 @@ Multi-cluster placement is **live** — confirmed 2026-08-25 (see "Current
 initiative" below). A create request can land on either cluster
 automatically based on real capacity scoring, not just Guild-A/nodeD.
 
+## Production deployment — real, live as of 2026-08-25
+
+Before today there was **no real production deployment** — `guildcloud-console.vercel.app`
+returned Vercel's `DEPLOYMENT_NOT_FOUND` (no project existed behind that
+domain, no `.vercel/` link, no CI/CD, no GitHub webhook). "Site can't be
+reached" reports from a second laptop weren't an auth bug, they were this:
+there was nothing to reach.
+
+Fixed: linked this repo to a real Vercel project (`davidpius95s-projects/guildcloud-console`,
+created via `vercel link`), set the three required env vars
+(`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`NEXT_PUBLIC_SITE_URL=https://guildcloud-console.vercel.app`), and deployed
+with `vercel --prod`. `.vercelignore` excludes `.claude/worktrees` (leftover
+local session data, ~780MB) since it isn't part of the app and was making
+uploads fail outright. `.vercel/` itself is gitignored, same treatment as
+`.env.local` — it's a local project link, not something to commit.
+
+**Also fixed as part of this**: Supabase Auth's Site URL was still a stale
+`http://localhost:3000` and the production domain wasn't in the Redirect
+URLs allow-list, so `signInWithOAuth`'s `redirectTo` was being silently
+rejected and falling back to that stale Site URL — Google sign-in from any
+machine other than that one dev box completed at Google, then bounced to
+an unreachable `localhost:3000`, which is exactly the "site can't be
+reached" symptom reported. Not a code bug — `lib/site-url.ts` was already
+correct (see 2026-08-14 entry below). Fixed by updating Supabase dashboard
+→ Authentication → URL Configuration: Site URL and Redirect URLs both now
+point at `https://guildcloud-console.vercel.app`.
+
+**Verified end-to-end on the real production URL, not just locally**:
+Google sign-in completes and lands in `/console`; created a real instance
+via the full wizard (Standard 1, Lagos 1 site) which reached `ready` in
+~3 minutes through the same real Guild-A worker/Proxmox path as local; got
+real SSH/hostname/private-IP connection details; deleted it again through
+the real UI teardown flow. Two test instances created during this
+verification (`prod-e2e-test` server 104, `e2e-test-25aug` server 103,
+created earlier the same day against local dev but the same Supabase
+backend) were both deleted afterward — real Proxmox teardown + Tailscale
+device removal, not just DB rows.
+
+**Not yet set up**: no CI/CD — `vercel --prod` was run manually from this
+session, so `main` and production can drift again if someone pushes
+without redeploying. Worth wiring a GitHub → Vercel git integration (or a
+GitHub Actions step) so every merge to `main` auto-deploys, rather than
+relying on someone remembering to run `vercel --prod`.
+
 ## Current initiative: multi-cluster placement — LIVE in production (2026-08-25)
 
 Plan: `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` (12
@@ -311,6 +356,7 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-25 | First real production deployment: `guildcloud-console.vercel.app` had no deployment at all until today (`DEPLOYMENT_NOT_FOUND`) — linked a real Vercel project, set env vars, deployed; fixed Supabase Auth's stale `localhost:3000` Site URL/missing Redirect URL that was breaking Google sign-in from any other machine; verified live end-to-end on the real production domain (sign-in, create instance, ready, delete) | — |
 | 2026-08-25 | One-click device enrollment: "Enroll device →" guide link now auto-triggers command generation (was a plain nav link requiring a second click); enrollment links made reusable (90-day authkey); enroll script now runs `tailscale up --reset` to fix a real re-enrollment error; verified live on a real laptop | — |
 | 2026-08-25 | Closed G-01 for real: shipped the tailnet wildcard-grant removal (PR #7, #8), verified live by direct re-read; confirmed generic worker deploy + `placement_settings.mode='multi'` already live (done by other sessions, undocumented until now); ran PBS GC to unblock Guild-B (9.73 GiB freed); cleaned up one 4-day-stuck orphaned instance | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-22 | Guild-B clones moved to local-lvm (`a404de5`); PBS one-off + failed-stub backups deleted (GC still needed); tailnet wildcard grants found still live, corrected policy drafted | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
@@ -351,6 +397,10 @@ the core initiative:
 7. A deliberate, repeatable real UI end-to-end test (create → verify
    placement → full lifecycle → clean up) now that the infrastructure
    actually supports it without manual intervention.
+8. **Wire up CI/CD for the production deployment**: right now `vercel --prod`
+   is a manual step run from a session — no GitHub → Vercel git integration,
+   no Actions workflow. `main` and production will drift again the moment
+   someone pushes without remembering to redeploy.
 
 ---
 
