@@ -332,26 +332,23 @@ export type RealSite = {
 // reports it, and it accepts work only if a cluster there is admitting.
 export async function getRealSites(): Promise<RealSite[]> {
   const supabase = await createClient();
-  // Cast: lib/supabase/types.ts is generated and currently predates the
-  // multi-cluster migration, so it has no infrastructure_clusters entry.
-  // Regenerating it is the real fix - tracked separately - but one narrow
-  // cast here is preferable to leaving the fictional site list in place.
-  const { data, error } = await (supabase as unknown as {
-    from: (t: string) => {
-      select: (c: string) => Promise<{
-        data: Array<{ id: string; site_id: string; admission_state: string }> | null;
-        error: { message: string } | null;
-      }>;
-    };
-  })
-    .from("infrastructure_clusters")
-    .select("id, site_id, admission_state");
+  // Via the list_admittable_sites RPC rather than selecting from
+  // infrastructure_clusters directly: that table is management-zone data
+  // (worker ids, heartbeats, failure reasons) that customers are promised
+  // they never see, and RLS correctly refuses it to the console's role.
+  // The RPC returns only the site-level aggregate.
+  // Cast: lib/supabase/types.ts is generated and predates this RPC.
+  const { data, error } = await (supabase.rpc as unknown as (
+    fn: string,
+  ) => Promise<{
+    data: Array<{ site_id: string; accepting: boolean }> | null;
+    error: { message: string } | null;
+  }>)("list_admittable_sites");
   if (error) throw new Error(error.message);
 
   const bySite = new Map<string, boolean>();
   for (const row of data ?? []) {
-    const open = row.admission_state === "open";
-    bySite.set(row.site_id, (bySite.get(row.site_id) ?? false) || open);
+    bySite.set(row.site_id, row.accepting === true);
   }
 
   return [...bySite.entries()].map(([id, accepting]) => ({
