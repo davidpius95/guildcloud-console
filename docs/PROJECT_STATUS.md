@@ -77,45 +77,59 @@ same way rather than trusting it.
 Customer browser
   -> Next.js console (this repo) -> Supabase (Postgres + Auth + Vault + Edge Functions)
        operations/instances/catalog tables, RLS-scoped by org
-  -> Site worker (deploy/site-worker-guild-a/, being generalized to deploy/site-worker/)
-       runs on a Guild-A-resident LXC (vmid 500), polls `operations`,
-       drives the real Proxmox API + Tailscale API
+  -> place_next_pending_operation() RPC picks a cluster/node (mode: multi)
+  -> Site worker (deploy/site-worker/, one deployment per cluster)
+       runs on a dedicated LXC per cluster (Guild-A: vmid 500 on nodeD;
+       Guild-B: vmid 500 on podD), polls `operations` scoped to its own
+       cluster_id, drives the real Proxmox API + Tailscale API
   -> Proxmox VE (Guild-A: 5 nodes, nodeA-E; Guild-B: 6 nodes, podA-F)
        real customer VMs, cloned from tested templates
   -> Tailscale (private access — no public IP on any instance)
 ```
 
-**In progress, not yet live**: multi-cluster placement, so a create
-request can land on either Guild-A or Guild-B automatically instead of
-always Guild-A/nodeD. See "Current initiative" below — this is a real
-architecture change (one cluster → placement across N clusters), tracked
-here because it changes the diagram above once live (worker becomes
-cluster-neutral, one deployment per cluster; a DB-side placement RPC picks
-the cluster/node instead of the worker assuming it).
+Multi-cluster placement is **live** — confirmed 2026-08-25 (see "Current
+initiative" below). A create request can land on either cluster
+automatically based on real capacity scoring, not just Guild-A/nodeD.
 
-## Current initiative: multi-cluster placement (Guild-B onboarding)
+## Current initiative: multi-cluster placement — LIVE in production (2026-08-25)
 
 Plan: `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` (12
 tasks). Design: `docs/superpowers/specs/2026-08-18-multi-cluster-placement-design.md`.
 
-**Tasks 1-8 of 12: code complete and merged to `main`** (PR #6, `bfdd7d8`).
-See `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` for
-the full list of what shipped and the two real bugs it fixed
-(snippet-node mismatch, a cross-cluster VM-deletion hazard). Verified:
-91 worker unit tests, 281 pgTAP assertions, typecheck, build — all green
-against an isolated test database.
+**This is done and live, further along than this file previously tracked.**
+Found 2026-08-25 by directly inspecting the running system (not assumed):
+`placement_settings.mode = 'multi'`, both `infrastructure_clusters` rows
+(`guild-a`, `guild-b`) show `admission_state = 'open'` with fresh
+heartbeats (seconds old at time of check). Guild-A's LXC 500 is running
+the real generic worker (`deploy/site-worker/index.js`, verified by
+reading its actual header comment on the box) via the proper staged-release
+mechanism (`current` symlinked to a timestamped `releases/` directory,
+`.deployed-checksum` present) — not the old flat-copy launcher that broke
+things on 2026-08-19/20. `--print-config` confirms `placementClaimMode:
+"rpc"`, `clusterId: "guild-a"`, correct token/pool/snippets config.
+`journalctl` shows clean 3-minute cycles, no errors. Guild-B's worker is
+equally healthy. Neither this file nor the user knew this migration had
+completed — it happened via other sessions between 2026-08-19 and today;
+this file is now corrected to match reality rather than repeating stale
+"not yet deployed" language.
 
-**All 5 new migrations are now applied to the real production Supabase
-project** (`infrastructure_clusters`, `infrastructure_nodes`,
-`infrastructure_storage_targets`, `catalog_image_cluster_templates`,
-`catalog_image_cluster_node_templates`, `placement_settings`, the
-`place_next_pending_operation`/`touch_worker_heartbeat`/
-`publish_cluster_snapshot` RPCs, and the `route_operation_by_instance`
-trigger). Verified immediately after: all 4 existing Guild-A instances
-and 5 operations correctly backfilled to `cluster_id='guild-a'`, nothing
-lost or corrupted. `placement_settings.mode` stays `single` — this alone
-does not change any live routing; Guild-A's actual create/lifecycle flow
-still runs on the pre-existing worker untouched by any of this.
+**Real cross-cluster placement has actually succeeded**: instance
+`ui-test-guild-b-vm` (created via the real UI, 2026-08-20) is `state:
+ready` on `cluster_id: guild-b`, `proxmox_node: podE`, `proxmox_vmid: 105`
+— a genuine, automatically-placed Guild-B instance, not a forced/manual
+one. This is the actual proof-of-concept the whole initiative was aiming
+for. Three later create attempts on podF failed (ENOSPC — see below,
+now fixed) and were never retried; found and cleaned up 2026-08-25 (one
+had been stuck in `state: deleting` for 4 days with its VM still present
+on Proxmox — deleted directly via the Proxmox API + DB cleanup since
+neither worker's own deletion path had a stuck-item retry mechanism for
+one whose create had already failed).
+
+Tasks 1-8 of 12 code: merged to `main` (PR #6, `bfdd7d8`, plus follow-on
+fixes `a404de5`/`d52ecba`/`41c177c` from later sessions — see Recent work).
+All 5 migrations applied to production, verified not to have disturbed
+pre-existing data. See `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md`
+for the original day's detail.
 
 **A real Guild-B worker is now live** — not just code, an actual running
 service:
@@ -209,32 +223,28 @@ one or two Guild-B nodes, since per-node templates mean redoing the
 backup/restore/replicate dance for every node added. Not started; explicitly
 deferred by the user, not forgotten.
 
-## Blocking right now: the Guild-B shared NFS export is full (2026-08-22)
+## Resolved 2026-08-25, but only temporarily: the Guild-B shared NFS export was full
 
 `192.168.8.126` hosts one 211 GB filesystem serving three Proxmox storages —
 `guild-snippets`, `guild-templates`, and the PBS datastore
-(`guild-a-standard`). It is at **203 GB used, 0 available**, so instance
-creates on Guild-B fail at `template_cloud_init` with
-`ENOSPC: no space left on device` while writing the cloud-init snippet. A
-real create failed this way on 2026-08-21 (instance `test`, VM 108 on podF);
-the night's backup run had already written three 1-byte truncated snapshots
-for the same reason.
+(`guild-a-standard`). It hit **203 GB used, 0 available** on 2026-08-22,
+which broke Guild-B creates at `template_cloud_init`
+(`ENOSPC: no space left on device`) and silently truncated that night's
+backups to 1-byte stubs.
 
-Breakdown: PBS datastore ~188 GB (7-8 daily snapshots each of the large
-legacy guests — vm/600 at 161 GB, vm/122 at 150 GB, vm/100, vm/120, vm/200 —
-i.e. G-14 workloads), `guild-templates` ~15 GB, snippets ~14 KB.
-
-Done so far: deleted the six one-off template backups from the 2026-08-20
-session (9101, 9111, 9121, 9131, 9141, 9151 — all six VMs still exist live
-as templates on podA) and the three 1-byte failed stubs. **This freed almost
-nothing (~540 KB) and that is expected** — PBS only unlinks snapshots from
-the index; the chunks are reclaimed when garbage collection runs. GC has not
-been run and cannot be triggered from the console side (PVE has no endpoint,
-the PBS API needs its own credentials, SSH to the box is key-refused). Run
-on the PBS host: `proxmox-backup-manager garbage-collection start guild-a-standard`.
-
-**Until GC runs, Guild-B creates still fail.** Tightening PBS retention on
-the big legacy guests is the durable fix.
+Ran PBS garbage collection directly on the box 2026-08-25 (SSH, real admin
+access) — it also initially failed with the same ENOSPC, because the
+`backup` system user (not root) runs the PBS proxy daemon and couldn't
+touch the filesystem's ~8.75 GB root-only reserved-blocks margin
+(`tune2fs`, default ext4 5% reserve). Temporarily set the reserve to 0%,
+ran GC (`TASK OK`, removed 9.73 GiB / 10,097 chunks), then restored the
+reserve to its original value. **Current state: 3.2 GB available** — real
+headroom, but tight, and confirmed refillable by the same legacy-guest
+snapshot growth that caused this the first time. `gc-schedule: daily` is
+already configured on the datastore, so this should self-clean going
+forward *as long as new growth stays below what daily GC can reclaim* —
+**tightening retention on the large legacy guests (vm/600 @ 161GB, vm/122
+@ 150GB, and vm/100/120/200) is still the durable fix, not done.**
 
 ## Guild-B clone target moved to local-lvm (2026-08-22)
 
@@ -291,6 +301,7 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-25 | Confirmed generic worker deploy + `placement_settings.mode='multi'` already live (done by other sessions, undocumented until now); ran PBS GC to unblock Guild-B (9.73 GiB freed); cleaned up one 4-day-stuck orphaned instance | this file |
 | 2026-08-22 | Guild-B clones moved to local-lvm (`a404de5`); PBS one-off + failed-stub backups deleted (GC still needed); tailnet wildcard grants found still live, corrected policy drafted | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-19 | Multi-cluster placement Tasks 4-8 (code); Guild-B PBS fingerprint fix, siteworker identity, template backup+restore onto podA | `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` |
 | 2026-08-18 | Multi-cluster placement Tasks 1-3 (policy, schema, atomic RPC) | commits `453d2a5`..`8018f14` |
@@ -300,30 +311,33 @@ cloud-init snippet write, which still targets the full NFS.
 
 ## What's next
 
-0. **Run PBS garbage collection** on `192.168.8.126` — nothing on Guild-B
-   can provision until the export has free space. Then tighten retention on
-   the large legacy guests so it does not refill.
-0b. **Decide on `infra/tailscale/policy.proposed.hujson`** — until it is
-   applied, the management zone is reachable by any enrolled device.
-1. Deploy the generic worker (`deploy/site-worker/`) to Guild-A, replacing
-   the old cluster-unaware code — this is the actual blocker on any
-   further Guild-B placement testing (see the race-condition finding
-   above). `PLACEMENT_CLAIM_MODE=legacy` first, prove no regression (R1).
-2. Build a GuildCloud template on podE or podF (or free up real capacity
-   on podA), so at least one Guild-B node has both an admitted template
-   and real headroom under the 70%/30% reserve gates.
-3. Re-attempt forced Guild-B placement (Task 10) with Guild-A's worker
-   safely upgraded — no more manual pause/resume needed.
+Multi-cluster placement itself is live and proven (see above) — remaining
+work is hardening and closing real gaps found along the way, not finishing
+the core initiative:
+
+1. **Durable fix for the PBS disk-space issue**: tighten retention on the
+   large legacy guests (vm/600, vm/122, vm/100/120/200) so the 2026-08-22
+   ENOSPC incident doesn't recur — today's GC only bought back headroom,
+   it didn't change what's growing.
+2. **Decide on `infra/tailscale/policy.proposed.hujson`** (G-01,
+   Critical) — until applied, the management zone is reachable by any
+   enrolled device.
+3. **Remove the hardcoded storage values** in
+   `deploy/site-worker/health-snapshot.js:61` (`guild-templates` reported
+   as a flat 1TB/10GB) — placement scoring is currently working around
+   this, not using it, but it's misleading dead-looking-live code.
 4. Guild-B backup job (§2.8 of the plan) — not started yet.
-5. User finishes the NFS snippets export validation; run the disposable-VM
-   validation on podA (cloud-init, Tailscale join, SSH, backup, snapshot,
-   resize, delete).
-6. Fan out templates to podE/podF properly (or skip this once the
-   deferred shared-NFS-template-storage work above lands, which would
-   make per-node template fan-out unnecessary).
-7. R2-R7 per `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` §3.
-8. Real UI end-to-end test once Guild-B can actually receive placements
-   without a manual worker pause.
+5. Investigate why the 3 failed Guild-B create attempts on podF
+   (2026-08-21) never got a useful cleanup/retry path — the stuck
+   `state: deleting` instance found today suggests the deletion path has
+   a gap for instances whose create failed with a VMID already allocated.
+6. Fan out/build templates on more Guild-B nodes (podE has one now —
+   `ui-test-guild-b-vm` landed there — but only opportunistically; not a
+   deliberate fan-out), or land the deferred shared-NFS-template-storage
+   work above so per-node templates aren't needed at all.
+7. A deliberate, repeatable real UI end-to-end test (create → verify
+   placement → full lifecycle → clean up) now that the infrastructure
+   actually supports it without manual intervention.
 
 ---
 
