@@ -124,6 +124,34 @@ body {
   }
 }
 
+@keyframes operation-scan {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes operation-flow {
+  0% {
+    transform: translateX(-80%);
+  }
+  100% {
+    transform: translateX(80%);
+  }
+}
+
+@keyframes operation-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(14, 165, 233, 0);
+  }
+}
+
 .animate-fade-up {
   animation: fade-up 0.55s ease both;
 }
@@ -135,6 +163,18 @@ body {
 .animate-shimmer {
   background-size: 200% 100%;
   animation: shimmer 8s linear infinite;
+}
+
+.animate-operation-scan {
+  animation: operation-scan 1.8s ease-in-out infinite;
+}
+
+.animate-operation-flow {
+  animation: operation-flow 1.35s ease-in-out infinite;
+}
+
+.animate-operation-breathe {
+  animation: operation-breathe 1.6s ease-in-out infinite;
 }
 
 .glass-panel {
