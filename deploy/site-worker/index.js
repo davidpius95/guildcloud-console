@@ -192,7 +192,14 @@ async function proxmoxToken(supabase) {
 async function pve(token, method, pathStr, params) {
   const url = new URL(`https://${config.pveHost}:${config.pvePort}/api2/json/${pathStr}`);
   const init = { method, headers: { Authorization: `PVEAPIToken=${token}` } };
-  if (params && method === "GET") {
+  // DELETE takes its parameters in the query string, same as GET. Sending them
+  // as a urlencoded body makes Proxmox reject the whole request with
+  // "501: Unexpected content for method 'DELETE'" - which is exactly what
+  // stalled instance teardown: processPendingInstanceDeletions stopped the VM
+  // fine, then failed forever on the destroy call, retrying every 3 minutes
+  // while the row sat in `deleting` and the disk stayed allocated. The warm
+  // pool's own DELETE (purge: 1) had the same latent bug.
+  if (params && (method === "GET" || method === "DELETE")) {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
   } else if (params) {
     const body = new URLSearchParams();
