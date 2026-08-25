@@ -93,6 +93,13 @@ export function buildCloneParams(template, { newid, name, pool, targetNode }) {
   const full = template.clone_mode === "full";
   const params = { newid, name, pool, full: full ? 1 : 0 };
   if (full && template.storage_id) params.storage = template.storage_id;
-  if (template.source_node !== targetNode) params.target = targetNode;
+  // Proxmox rejects full clones to node-local storage such as Guild-B's
+  // local-lvm unless the destination node is explicit. That is true even
+  // when the API path already points at the same node
+  // (POST /nodes/podA/qemu/<template>/clone): without target=podA it returns
+  // "can't clone to non-shared storage 'local-lvm'".
+  if (template.source_node !== targetNode || (full && template.storage_id)) {
+    params.target = targetNode;
+  }
   return params;
 }

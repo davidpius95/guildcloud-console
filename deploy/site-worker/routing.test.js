@@ -145,12 +145,22 @@ test("buildCloneParams never sends storage for a linked clone, which Proxmox wou
   assert.equal(params.target, "nodeB");
 });
 
-test("buildCloneParams omits target when the clone stays on the template's own node", () => {
+test("buildCloneParams sends target for a same-node full clone to node-local storage", () => {
   const params = buildCloneParams(
-    templateRow({ clone_mode: "full", storage_id: "local-lvm" }),
+    templateRow({ source_node: "nodeD", clone_mode: "full", storage_id: "local-lvm" }),
+    { newid: 130, name: "test", pool: "guildcloud", targetNode: "nodeD" },
+  );
+
+  assert.equal(params.target, "nodeD");
+  assert.equal(params.storage, "local-lvm");
+});
+
+test("buildCloneParams omits target when a linked clone stays on the template's own node", () => {
+  const params = buildCloneParams(
+    templateRow({ source_node: "nodeD", clone_mode: "linked", storage_id: "ceph-vm" }),
     { newid: 130, name: "test", pool: "guildcloud", targetNode: "nodeD" },
   );
 
   assert.equal("target" in params, false);
-  assert.equal(params.storage, "local-lvm");
+  assert.equal("storage" in params, false);
 });
