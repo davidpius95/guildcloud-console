@@ -67,12 +67,12 @@ export function RemoteAccessGuide({
                 <p className="text-ink-500">
                   Go to{" "}
                   <Link
-                    href="/console/networking"
+                    href="/console/networking?connect=1"
                     className="font-medium text-lemon-700 underline hover:text-lemon-800"
                   >
                     Networking
                   </Link>{" "}
-                  and click <strong>Connect this device</strong> to enroll your computer.
+                  to enroll your computer — the connection command generates automatically.
                 </p>
               </div>
             </div>
@@ -160,7 +160,7 @@ export function RemoteAccessGuide({
           </div>
           <div className="mt-4 pt-2">
             <Link
-              href="/console/networking"
+              href="/console/networking?connect=1"
               className="inline-flex items-center gap-1 text-xs font-medium text-lemon-700 hover:text-lemon-800 hover:underline"
             >
               Enroll device &rarr;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Modal } from "./modal";
 import { Badge, Button, Card, CardHeader, Note, Table, Td, Th } from "./ui";
 import { CopyField } from "./copy-field";
@@ -23,6 +24,9 @@ export function EnrolledDevicesCard({
   const [command, setCommand] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const autoTriggered = useRef(false);
 
   function connect() {
     setError(null);
@@ -38,6 +42,23 @@ export function EnrolledDevicesCard({
     setCommand(null);
     setError(null);
   }
+
+  // Lets the "Enroll device ->" guide link (components/remote-access-guide.tsx)
+  // open straight to the generated command in one click, instead of landing
+  // here and requiring a second click on "Connect this device" below.
+  useEffect(() => {
+    if (autoTriggered.current) return;
+    if (searchParams.get("connect") !== "1") return;
+    const own = members.some((m) => !m.deviceEnrolled && m.userId === currentUserId);
+    if (!own) return;
+    autoTriggered.current = true;
+    setOpen(true);
+    connect();
+    const params = new URLSearchParams(searchParams);
+    params.delete("connect");
+    router.replace(params.size > 0 ? `/console/networking?${params}` : "/console/networking");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, members, currentUserId]);
 
   return (
     <>
