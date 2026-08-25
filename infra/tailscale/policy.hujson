@@ -135,6 +135,21 @@
 			"dst": ["tag:guildcloud-tenant", "tag:guildcloud-pool"],
 			"ip":  ["*"],
 		},
+		// Missing piece found 2026-08-25: the "ssh" section below already
+		// accepts tag:operator -> tag:guildcloud-tenant/-pool (operator
+		// support access into customer instances), but that ssh ACL is only
+		// ever reached if the underlying network grant lets the packet
+		// through first. Without this entry, plain OpenSSH from an operator
+		// device timed out on port 22 - Tailscale drops ungranted traffic
+		// silently rather than refusing it, which is exactly the symptom
+		// reported. Real gap introduced when the wildcard grants were
+		// removed (PR #7/#8) - the ssh stanza was written to assume this
+		// grant, but it was never added.
+		{
+			"src": ["tag:operator"],
+			"dst": ["tag:guildcloud-tenant", "tag:guildcloud-pool"],
+			"ip":  ["*"],
+		},
 
 		// --- Tenant zone (§6) ------------------------------------------------
 		// CHANGED vs live: dst no longer includes tag:guildcloud-mgmt. A
