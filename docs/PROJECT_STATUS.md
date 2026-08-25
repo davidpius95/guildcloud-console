@@ -270,18 +270,17 @@ cloud-init snippet write, which still targets the full NFS.
 
 ## Open gaps worth knowing about (full list: `docs/phase-0/gap-register.md`)
 
-- **G-01** (Critical, **reopened 2026-08-22**): the tailnet wildcard grants
-  were never actually removed — `{src:["*"], dst:["*"], ip:["*"]}` still
-  sits above every tag rule, so any enrolled customer device can reach
-  `tag:guildcloud-mgmt` (Proxmox nodes, PBS, site workers, router), and live
-  SSH rules let `autogroup:member` in as `root`. The 2026-08-07 decision
-  kept them on the explicit grounds that no customer devices existed yet;
-  Phase 3 shipped, so that rationale expired. Corrected policy drafted at
-  `infra/tailscale/policy.proposed.hujson`, **not applied**. Related: the
-  console's `access_grants` table enforces nothing (display-only), and
-  `infra/tailscale/policy.hujson` has drifted from the live tailnet badly
-  enough that applying it would cut off every enrolled device. Full
-  reasoning: `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md`.
+- **G-01** (**resolved 2026-08-25**, was Critical): the tailnet wildcard
+  grants that let any enrolled customer device reach `tag:guildcloud-mgmt`
+  as root are gone — `infra/tailscale/policy.hujson` shipped via PR #7/#8,
+  verified live by directly re-reading the applied policy (not just CI/merge
+  status). Management SSH is operator-only now; customer SSH into instances
+  is non-root only; tenant-project grants no longer reach the management
+  zone. Full reasoning: `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md`.
+  **Not fixed by this**: `access_grants` still enforces nothing
+  (display-only) — an enrolled member reaches every project in their org
+  regardless of what the Access policy card shows. Needs a per-project
+  membership concept (schema change), tracked separately from G-01.
 - **G-14** (High, open): non-GuildCloud legacy workloads occupy real
   capacity on Guild-A's shared nodes — must move before any real
   capacity/pricing commitment is published.
@@ -301,7 +300,7 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
-| 2026-08-25 | Confirmed generic worker deploy + `placement_settings.mode='multi'` already live (done by other sessions, undocumented until now); ran PBS GC to unblock Guild-B (9.73 GiB freed); cleaned up one 4-day-stuck orphaned instance | this file |
+| 2026-08-25 | Closed G-01 for real: shipped the tailnet wildcard-grant removal (PR #7, #8), verified live by direct re-read; confirmed generic worker deploy + `placement_settings.mode='multi'` already live (done by other sessions, undocumented until now); ran PBS GC to unblock Guild-B (9.73 GiB freed); cleaned up one 4-day-stuck orphaned instance | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-22 | Guild-B clones moved to local-lvm (`a404de5`); PBS one-off + failed-stub backups deleted (GC still needed); tailnet wildcard grants found still live, corrected policy drafted | `docs/decisions/2026-08-22-tailnet-wildcard-grants-and-drift.md` |
 | 2026-08-19 | Multi-cluster placement Tasks 4-8 (code); Guild-B PBS fingerprint fix, siteworker identity, template backup+restore onto podA | `docs/dev-log/2026-08-19-guild-b-onboarding-day-1.md` |
 | 2026-08-18 | Multi-cluster placement Tasks 1-3 (policy, schema, atomic RPC) | commits `453d2a5`..`8018f14` |
@@ -319,9 +318,11 @@ the core initiative:
    large legacy guests (vm/600, vm/122, vm/100/120/200) so the 2026-08-22
    ENOSPC incident doesn't recur — today's GC only bought back headroom,
    it didn't change what's growing.
-2. **Decide on `infra/tailscale/policy.proposed.hujson`** (G-01,
-   Critical) — until applied, the management zone is reachable by any
-   enrolled device.
+2. **Build the per-project membership concept** that would let
+   `access_grants` actually enforce something — right now an enrolled
+   member reaches every project in their org regardless of what the
+   Access policy card shows (schema change, not an ACL change; G-01's
+   network-level fix doesn't touch this).
 3. **Remove the hardcoded storage values** in
    `deploy/site-worker/health-snapshot.js:61` (`guild-templates` reported
    as a flat 1TB/10GB) — placement scoring is currently working around
