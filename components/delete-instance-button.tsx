@@ -36,7 +36,6 @@ export function DeleteInstanceButton({
       }
       setOpen(false);
       router.push("/console/instances");
-      router.refresh();
     });
   }
 

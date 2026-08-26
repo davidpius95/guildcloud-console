@@ -128,7 +128,7 @@ export default async function InstanceDetailPage({
 
         {realInstance.state === "deleting" ? (
           <div className="mb-6">
-            <DeletionProgress />
+            <DeletionProgress instanceId={realInstance.id} />
           </div>
         ) : null}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   OPERATION_STAGES,
@@ -67,13 +67,24 @@ function getStageDuration(stage: Tables<"operation_stages"> | undefined, now: nu
 }
 
 export function OperationProgress({
-  operation,
-  stages,
+  operation: initialOperation,
+  stages: initialStages,
 }: {
   operation: Tables<"operations">;
   stages: Tables<"operation_stages">[];
 }) {
   const router = useRouter();
+
+  // Live-updated operation and stages — seeded from the server component's
+  // initial render, then kept fresh by lightweight targeted polling below.
+  const [operation, setOperation] = useState(initialOperation);
+  const [stages, setStages] = useState(initialStages);
+
+  // Keep in sync if the parent re-renders with new server data (e.g. after
+  // a one-time router.refresh() when a terminal state is reached).
+  useEffect(() => setOperation(initialOperation), [initialOperation]);
+  useEffect(() => setStages(initialStages), [initialStages]);
+
   // Ticks once a second purely so the elapsed counter below moves. Without a
   // visible clock a two-to-four minute wait reads as a hung page, which is
   // the single most common reason someone reloads or gives up mid-provision.
@@ -84,15 +95,33 @@ export function OperationProgress({
     return () => clearInterval(t);
   }, [operation.state]);
 
-  // The site worker advances stages continuously within its own loop, not
-  // in lockstep with this page - polling by re-fetching the server
-  // component is still the simplest way to show genuine progress without
-  // a separate realtime channel for a single-operation view.
+  // Targeted polling: instead of router.refresh() (which re-renders the
+  // entire page tree — layout, auth, org queries, everything), fetch only
+  // the operation + stages from a lightweight API route. Only this component
+  // re-renders during polling. When the operation finishes, one final
+  // router.refresh() updates the rest of the page (Connect card, badges).
+  const didFinalRefresh = useRef(false);
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/operations/${operation.id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setOperation(data.operation);
+      setStages(data.stages);
+      if (TERMINAL_STATES.has(data.operation.state) && !didFinalRefresh.current) {
+        didFinalRefresh.current = true;
+        router.refresh();
+      }
+    } catch {
+      // Silently ignore network blips — the next poll will retry.
+    }
+  }, [operation.id, router]);
+
   useEffect(() => {
     if (TERMINAL_STATES.has(operation.state)) return;
-    const interval = setInterval(() => router.refresh(), 3000);
+    const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
-  }, [operation.state, router]);
+  }, [operation.state, poll]);
 
   const byStage = new Map(stages.map((s) => [s.stage, s]));
   const completedCount = OPERATION_STAGES.filter((stage) => {

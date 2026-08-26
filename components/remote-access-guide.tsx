@@ -180,10 +180,10 @@ export function RemoteAccessGuide({
               </span>
             </div>
             <h3 className="mt-3 text-sm font-semibold text-ink-900">
-              Connect to Any Instance
+              Connect to One VM
             </h3>
             <p className="mt-1 text-xs leading-relaxed text-ink-500">
-              Click any instance in your console to copy its private SSH command or private IP.
+              Open the exact VM you were granted access to, then copy its private SSH command or private IP.
             </p>
           </div>
           <div className="mt-4 pt-2">

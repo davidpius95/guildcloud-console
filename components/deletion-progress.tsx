@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconLock } from "./icons";
 
@@ -10,22 +10,35 @@ import { IconLock } from "./icons";
 // disappearing once the site worker's teardown finishes. Rather than leave
 // the user staring at a static sentence with no sign of life, this shows
 // the same reassurance pattern as the create flow (animated spinner + a
-// live clock) and polls router.refresh() so the page moves on by itself
-// the moment the row is gone (getInstanceWithOperation starts returning
-// null, which 404s this page) instead of requiring a manual reload.
-export function DeletionProgress() {
+// live clock) and polls a lightweight API endpoint so only this component
+// re-renders during polling, not the entire page tree. When the instance
+// disappears (404), it redirects to the instances list.
+export function DeletionProgress({ instanceId }: { instanceId: string }) {
   const router = useRouter();
   const [elapsedSec, setElapsedSec] = useState(0);
+
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/instances/${instanceId}/state`);
+      if (res.status === 404) {
+        // Instance has been fully deleted by the site worker
+        router.push("/console/instances");
+        router.refresh();
+      }
+    } catch {
+      // Silently ignore network blips — the next poll will retry.
+    }
+  }, [instanceId, router]);
 
   useEffect(() => {
     const start = Date.now();
     const tick = setInterval(() => setElapsedSec(Math.floor((Date.now() - start) / 1000)), 1000);
-    const poll = setInterval(() => router.refresh(), 3000);
+    const pollInterval = setInterval(poll, 3000);
     return () => {
       clearInterval(tick);
-      clearInterval(poll);
+      clearInterval(pollInterval);
     };
-  }, [router]);
+  }, [poll]);
 
   const elapsedLabel =
     elapsedSec < 60
@@ -56,3 +69,4 @@ export function DeletionProgress() {
     </div>
   );
 }
+
