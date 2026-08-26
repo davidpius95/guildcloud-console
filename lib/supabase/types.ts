@@ -727,6 +727,17 @@ export type Database = {
           site_id: string
         }[]
       }
+      can_provision_instance: {
+        Args: {
+          p_catalog_image_id: string
+          p_catalog_plan_id: string
+          p_site_id: string
+        }
+        Returns: {
+          eligible: boolean
+          message: string
+        }[]
+      }
       get_invite_by_token: {
         Args: { p_token: string }
         Returns: {

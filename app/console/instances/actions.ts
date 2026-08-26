@@ -78,6 +78,22 @@ export async function createInstance(
     return { error: "No tested template at this site for this image yet." };
   }
 
+  const { data: provisionability, error: provisionabilityError } = await supabase
+    .rpc("can_provision_instance", {
+      p_site_id: siteId,
+      p_catalog_image_id: catalogImageId,
+      p_catalog_plan_id: catalogPlanId,
+    })
+    .maybeSingle();
+  if (provisionabilityError) return { error: provisionabilityError.message };
+  if (!provisionability?.eligible) {
+    return {
+      error:
+        provisionability?.message ??
+        "No eligible capacity is available for this image and plan right now.",
+    };
+  }
+
   // Same re-validation discipline as the template check above: without
   // this, an org with zero registered SSH keys and passwordSsh=false
   // could still submit (e.g. a stale page, or a client that skips the
