@@ -156,6 +156,42 @@ export async function getCatalogTemplateAvailability() {
   return (data ?? []).map((row) => ({ catalogImageId: row.catalog_image_id, siteId: row.site_id }));
 }
 
+export async function getCatalogProvisionability({
+  siteIds,
+  imageIds,
+  planIds,
+}: {
+  siteIds: string[];
+  imageIds: string[];
+  planIds: string[];
+}) {
+  const supabase = await createClient();
+  const checks = siteIds.flatMap((siteId) =>
+    imageIds.flatMap((catalogImageId) =>
+      planIds.map(async (catalogPlanId) => {
+        const { data, error } = await supabase
+          .rpc("can_provision_instance", {
+            p_site_id: siteId,
+            p_catalog_image_id: catalogImageId,
+            p_catalog_plan_id: catalogPlanId,
+          })
+          .maybeSingle();
+        if (error) throw error;
+        return {
+          siteId,
+          catalogImageId,
+          catalogPlanId,
+          eligible: Boolean(data?.eligible),
+          message:
+            data?.message ??
+            "No eligible capacity is available for this image and plan right now.",
+        };
+      }),
+    ),
+  );
+  return Promise.all(checks);
+}
+
 export async function getInstancesForOrg(organizationId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase

@@ -105,6 +105,7 @@ export function CreateInstanceWizard({
   projects,
   sshKeyCount,
   templateAvailability,
+  provisionability,
   sites,
 }: {
   // Real projects (uuid ids) for the signed-in org - createInstance
@@ -126,6 +127,16 @@ export function CreateInstanceWizard({
   // pass the wizard's own gate and fail server-side. This is the real
   // catalog_image_site_templates data instead.
   templateAvailability: { catalogImageId: string; siteId: string }[];
+  // Same capacity preflight the server action repeats before it writes
+  // anything. Keeping it in the wizard prevents an unavailable request from
+  // looking clickable and then failing invisibly.
+  provisionability: {
+    siteId: string;
+    catalogImageId: string;
+    catalogPlanId: string;
+    eligible: boolean;
+    message: string;
+  }[];
   // Real sites, derived from infrastructure_clusters. This used to come from
   // lib/mock-data.ts, which offered Abuja 1 and Amsterdam 1 as selectable and
   // "Accepting new work" when no cluster has ever existed at either - the
@@ -175,7 +186,18 @@ export function CreateInstanceWizard({
   const imageAvailable = templateAvailability.some(
     (t) => t.catalogImageId === imageId && t.siteId === siteId,
   );
-  const canCreate = site.acceptingNewWork && imageAvailable && name.trim().length > 0;
+  const selectedProvisionability = provisionability.find(
+    (item) =>
+      item.siteId === siteId &&
+      item.catalogImageId === imageId &&
+      item.catalogPlanId === planId,
+  );
+  const capacityAvailable = selectedProvisionability?.eligible ?? false;
+  const canCreate =
+    site.acceptingNewWork &&
+    imageAvailable &&
+    capacityAvailable &&
+    name.trim().length > 0;
   // A disabled button with no stated reason is a dead end - the name field
   // lives in step 5, far below this button on the sticky summary, so the
   // most common blocker is invisible from where the button is.
@@ -183,6 +205,9 @@ export function CreateInstanceWizard({
     ? `${site.name} is not accepting new work right now.`
     : !imageAvailable
       ? `${image.name} ${image.version} has no tested template at ${site.name}.`
+      : !capacityAvailable
+        ? (selectedProvisionability?.message ??
+          "No eligible capacity is available for this image and plan right now.")
       : name.trim().length === 0
         ? "Give your server a name in step 5 to continue."
         : null;

@@ -1,12 +1,14 @@
 import { CreateInstanceWizard } from "@/components/create-instance-wizard";
 import { Note, PageHeader } from "@/components/ui";
 import {
+  getCatalogProvisionability,
   getCatalogTemplateAvailability,
   getCurrentUserOrg,
   getProjectsForOrg,
   getRealSites,
   getSshKeysForOrg,
 } from "@/lib/supabase/queries";
+import { images, plans } from "@/lib/catalog";
 
 export default async function NewInstancePage() {
   const userOrg = await getCurrentUserOrg();
@@ -34,6 +36,14 @@ export default async function NewInstancePage() {
   const sshKeyCount = userOrg ? (await getSshKeysForOrg(userOrg.organization.id)).length : 0;
   const templateAvailability = await getCatalogTemplateAvailability();
   const sites = await getRealSites();
+  const provisionability =
+    userOrg && sites.length > 0
+      ? await getCatalogProvisionability({
+          siteIds: sites.map((site) => site.id),
+          imageIds: images.map((image) => image.id),
+          planIds: plans.map((plan) => plan.id),
+        })
+      : [];
 
   return (
     <>
@@ -45,6 +55,7 @@ export default async function NewInstancePage() {
         projects={projects}
         sshKeyCount={sshKeyCount}
         templateAvailability={templateAvailability}
+        provisionability={provisionability}
         sites={sites}
       />
     </>
