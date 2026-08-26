@@ -1412,12 +1412,25 @@ async function processOneStage(supabase, operation) {
         if (instance.private_ip) {
           try {
             await tcpCheck(instance.private_ip, 22, 2000);
-          } catch (_e) {
-            // Guest agent ping passed above; TCP reachability depends on network route context.
+          } catch (e) {
+            // The private network is this product's core promise - an
+            // instance the guest agent reports as booted but that never
+            // actually joined the tailnet is not "ready", no matter how
+            // clean the boot was. This used to swallow the failure here and
+            // mark the stage (and therefore the instance) "done"/"Ready"
+            // unconditionally regardless of the outcome. Found live: a real
+            // instance (multi-node-e2e-4) reached "Ready" while a genuine
+            // `tailscale ping` to it kept returning "no reply" minutes
+            // later - the console told the customer their private route
+            // worked when it had never been confirmed. Retry the same way
+            // the guest-agent-ping check above already does, rather than
+            // asserting success we never actually observed.
+            await markStage(supabase, next, { status: "active", error: String(e) });
+            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
           }
         }
 
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: instance.private_ip } });
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: instance.private_ip, tcp_22_reachable: true } });
       }
     } else if (next.stage === "ready") {
       await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
