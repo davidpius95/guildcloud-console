@@ -164,6 +164,16 @@ without redeploying. Worth wiring a GitHub → Vercel git integration (or a
 GitHub Actions step) so every merge to `main` auto-deploys, rather than
 relying on someone remembering to run `vercel --prod`.
 
+**Second public URL added 2026-08-27**: `cloud.guild-technologies.com` is
+now a Cloudflare-DNS custom domain pointed straight at this same Vercel
+project (CNAME, proxy disabled, cert verified) — a separate hostname from
+`guildcloud-console.vercel.app`, same deployment. No redirect/canonical
+choice has been made between the two yet. This is unrelated to the
+self-hosted `guildcloud-console.guild-technologies.com` (see gap register
+G-21) — that one serves a different, self-hosted instance on Guild-A/B
+infrastructure via the Cloudflare Tunnel + Caddy ingress, not Vercel. See
+`docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md`.
+
 ## Current initiative: multi-cluster placement — LIVE in production (2026-08-25)
 
 Plan: `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` (12
@@ -343,6 +353,21 @@ cloud-init snippet write, which still targets the full NFS.
 
 ## Open gaps worth knowing about (full list: `docs/phase-0/gap-register.md`)
 
+- **G-24** (Critical, **partly resolved 2026-08-27**): the console could admit
+  **no new instances at all**, on either cluster, for any image or plan — the
+  product's primary flow was unavailable. Two causes, both fixed for Guild-B
+  podB–podF: (1) `can_provision_instance()` (the wizard gate) enforced far
+  stricter ceilings (`0.7` vCPU, 30% memory) than
+  `place_next_pending_operation()`, which actually places VMs (`2.0` vCPU,
+  1 GiB memory) — so the wizard refused creates placement would have accepted;
+  (2) the Guild-B worker lacked `VM.Clone` on the per-node template VMs, and
+  **pool membership did not confer it** (templates in the `guildcloud-guild-b`
+  pool still returned `VM.Clone: 0`) — only explicit `/vms/<vmid>` ACLs worked.
+  **podA and all five Guild-A nodes were deliberately left on the strict
+  defaults and still cannot admit work** — that remainder is G-14's
+  legacy-workload problem. Verified with two real end-to-end creates on two
+  different pods. See
+  `docs/dev-log/2026-08-27-guild-b-pod-admission-and-clone-acls.md`.
 - **G-01** (**resolved 2026-08-25**, was Critical): the tailnet wildcard
   grants that let any enrolled customer device reach `tag:guildcloud-mgmt`
   as root are gone — `infra/tailscale/policy.hujson` shipped via PR #7/#8,
@@ -373,6 +398,8 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-27 | Restored the ability to create instances at all (G-24): the wizard's admission gate was far stricter than the RPC that actually places VMs, and the Guild-B worker lacked `VM.Clone` on per-node templates (pool membership did *not* grant it). Added per-node ceiling overrides for podB–podF (podA and Guild-A deliberately untouched) plus explicit template ACLs; verified with two real end-to-end creates on podB and podD | `docs/dev-log/2026-08-27-guild-b-pod-admission-and-clone-acls.md` |
+| 2026-08-27 | Pointed a new Cloudflare-DNS domain (`cloud.guild-technologies.com`) at the real Vercel prod deployment; found and fixed two real bugs in the separate self-hosted `guildcloud-console.guild-technologies.com` route on the Guild-A ingress box (stale dead-host IP causing a 502, then a wrong port pointed at the fleet-worker process instead of the Next.js portal) | `docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md` |
 | 2026-08-25 | Deleted `lib/mock-data.ts` and every fabricated surface (4,938 lines removed): real identity in the topbar/dashboard, real sites via a new `list_admittable_sites()` RPC, honest "Coming soon" states for the 9 unbuilt features, real billing figures. Fixed alongside it: enrollment link re-minted on every click (~3s → ~900ms, and it no longer silently retires a link the member may have saved), no route to enroll a second device once enrolled, dark-mode-invisible step numerals, stale onboarding copy | — |
 | 2026-08-25 | First real production deployment: `guildcloud-console.vercel.app` had no deployment at all until today (`DEPLOYMENT_NOT_FOUND`) — linked a real Vercel project, set env vars, deployed; fixed Supabase Auth's stale `localhost:3000` Site URL/missing Redirect URL that was breaking Google sign-in from any other machine; verified live end-to-end on the real production domain (sign-in, create instance, ready, delete) | — |
 | 2026-08-25 | One-click device enrollment: "Enroll device →" guide link now auto-triggers command generation (was a plain nav link requiring a second click); enrollment links made reusable (90-day authkey); enroll script now runs `tailscale up --reset` to fix a real re-enrollment error; verified live on a real laptop | — |
