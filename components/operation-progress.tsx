@@ -124,14 +124,20 @@ export function OperationProgress({
   }, [operation.state, poll]);
 
   const byStage = new Map(stages.map((s) => [s.stage, s]));
+  const displayStatusFor = (stage: OperationStage) => {
+    const rawStatus = byStage.get(stage)?.status;
+    if (rawStatus === "failed") return rawStatus;
+    if (operation.state === "succeeded") return rawStatus === "skipped" ? "skipped" : "done";
+    return rawStatus ?? "pending";
+  };
   const completedCount = OPERATION_STAGES.filter((stage) => {
-    const status = byStage.get(stage)?.status;
+    const status = displayStatusFor(stage);
     return status === "done" || status === "skipped";
   }).length;
   const pct = (completedCount / OPERATION_STAGES.length) * 100;
   const activeStage =
-    OPERATION_STAGES.find((stage) => byStage.get(stage)?.status === "active") ??
-    OPERATION_STAGES.find((stage) => byStage.get(stage)?.status === "failed") ??
+    OPERATION_STAGES.find((stage) => displayStatusFor(stage) === "active") ??
+    OPERATION_STAGES.find((stage) => displayStatusFor(stage) === "failed") ??
     OPERATION_STAGES[Math.min(completedCount, OPERATION_STAGES.length - 1)];
   const activeRow = byStage.get(activeStage);
 
@@ -231,11 +237,11 @@ export function OperationProgress({
           {stageGroups.map((group) => {
             const Icon = group.icon;
             const done = group.stages.every((stage) => {
-              const status = byStage.get(stage)?.status;
+              const status = displayStatusFor(stage);
               return status === "done" || status === "skipped";
             });
-            const active = group.stages.some((stage) => byStage.get(stage)?.status === "active");
-            const failed = group.stages.some((stage) => byStage.get(stage)?.status === "failed");
+            const active = group.stages.some((stage) => displayStatusFor(stage) === "active");
+            const failed = group.stages.some((stage) => displayStatusFor(stage) === "failed");
             return (
               <div
                 key={group.label}
@@ -281,7 +287,7 @@ export function OperationProgress({
       <ol className="divide-y divide-ink-100" aria-label="Detailed provisioning steps">
         {OPERATION_STAGES.map((stage: OperationStage) => {
           const row = byStage.get(stage);
-          const status = row?.status ?? "pending";
+          const status = displayStatusFor(stage);
           const isActive = status === "active";
           const isDone = status === "done" || status === "skipped";
           const isStageFailed = status === "failed";
