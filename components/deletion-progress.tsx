@@ -19,7 +19,7 @@ export function DeletionProgress({ instanceId }: { instanceId: string }) {
 
   const poll = useCallback(async () => {
     try {
-      const res = await fetch(`/api/instances/${instanceId}/state`);
+      const res = await fetch(`/api/instances/${instanceId}/state`, { cache: "no-store" });
       if (res.status === 404) {
         // Instance has been fully deleted by the site worker
         router.push("/console/instances");
@@ -69,4 +69,3 @@ export function DeletionProgress({ instanceId }: { instanceId: string }) {
     </div>
   );
 }
-

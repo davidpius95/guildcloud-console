@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_noStore as noStore } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -13,6 +14,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  noStore();
   const { id } = await params;
   const supabase = await createClient();
 
@@ -34,5 +36,12 @@ export async function GET(
     return NextResponse.json({ error: "Instance not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ state: instance.state });
+  return NextResponse.json(
+    { state: instance.state },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+      },
+    },
+  );
 }

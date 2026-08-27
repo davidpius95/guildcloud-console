@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_noStore as noStore } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -11,6 +12,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  noStore();
   const { id } = await params;
   const supabase = await createClient();
 
@@ -38,10 +40,18 @@ export async function GET(
   const { data: stages } = await supabase
     .from("operation_stages")
     .select("*")
-    .eq("operation_id", id);
+    .eq("operation_id", id)
+    .order("created_at", { ascending: true });
 
-  return NextResponse.json({
-    operation,
-    stages: stages ?? [],
-  });
+  return NextResponse.json(
+    {
+      operation,
+      stages: stages ?? [],
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+      },
+    },
+  );
 }

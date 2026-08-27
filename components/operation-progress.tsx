@@ -103,7 +103,7 @@ export function OperationProgress({
   const didFinalRefresh = useRef(false);
   const poll = useCallback(async () => {
     try {
-      const res = await fetch(`/api/operations/${operation.id}`);
+      const res = await fetch(`/api/operations/${operation.id}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       setOperation(data.operation);
