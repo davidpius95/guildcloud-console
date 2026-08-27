@@ -101,7 +101,25 @@ capacity alone, and enable the other pods excluding podA.
   1 GiB floor, but thin. Worth revisiting alongside the wider question of which
   of the two RPCs' ceilings is the intended policy; right now they still disagree
   and only the wizard side was moved.
-- **Three test instances exist and are consuming real capacity**: `e2e-podb-verify`
-  (podB/111) and `e2e-second-node` (podD/112) are live VMs; `cloud-domain-e2e` is
-  a `failed` row from the pre-ACL-fix attempt with no VM behind it (`proxmox_vmid`
-  null). None have been cleaned up yet — deletion was not requested.
+- ~~Three test instances still consuming capacity~~ — **all three deleted
+  2026-08-27**, through the real UI teardown flow (type-the-name confirmation
+  each time), not by deleting DB rows. Verified at all three layers rather than
+  trusting the UI: 0 rows left in `instances`; Proxmox reports
+  `nodes/podB/qemu-server/111.conf does not exist` and VMs 111/112 are absent
+  from `cluster/resources`; and neither instance's Tailscale device
+  (`100.122.168.93`, `100.116.77.110`) remains in the tailnet. 4 vCPU and 8 GB
+  returned to podB and podD.
+
+## Post-cleanup note: the stuck-`deleting` bug did not reproduce
+
+`cloud-domain-e2e` was a failed-create row with **no VM behind it**
+(`proxmox_vmid` null) — the same shape as the instance that sat stuck in
+`state: deleting` for four days in the 2026-08-25 incident (see
+`PROJECT_STATUS.md`, "Current initiative"). On delete it briefly showed
+`deleting` with no `instance.delete` operation enqueued, which looked like the
+same gap re-appearing, but it cleared on its own within one worker cycle.
+
+So that path handles the **no-VMID** case correctly. The earlier incident
+involved an instance whose create had already allocated a VMID and left a real
+VM on Proxmox — that is the case with no retry mechanism, and it remains
+untested here. Worth not over-reading this as "the deletion gap is fixed".
