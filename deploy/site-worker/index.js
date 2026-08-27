@@ -289,6 +289,24 @@ async function ts(token, method, pathStr, body) {
   return json;
 }
 
+async function ensureTailscaleTagOwners(token, tags) {
+  const uniqueTags = [...new Set((tags ?? []).filter(Boolean))];
+  if (uniqueTags.length === 0) return;
+
+  const policy = await ts(token, "GET", `tailnet/${config.tailscaleTailnet}/acl`);
+  policy.tagOwners = policy.tagOwners ?? {};
+
+  let changed = false;
+  for (const tag of uniqueTags) {
+    const owners = policy.tagOwners[tag];
+    if (Array.isArray(owners) && owners.includes(config.tailscaleTagOwner)) continue;
+    policy.tagOwners[tag] = [config.tailscaleTagOwner];
+    changed = true;
+  }
+
+  if (changed) await ts(token, "POST", `tailnet/${config.tailscaleTailnet}/acl`, policy);
+}
+
 function tcpCheck(host, port, timeoutMs = 4000) {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
@@ -546,8 +564,10 @@ async function syncInstanceDeviceTags(supabase) {
   for (const instance of instances) {
     const project = projectById.get(instance.project_id);
     if (!project) continue;
+    const deviceTags = ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(instance.id)];
+    await ensureTailscaleTagOwners(token, deviceTags);
     await ts(token, "POST", `device/${instance.tailscale_device_id}/tags`, {
-      tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(instance.id)],
+      tags: deviceTags,
     });
   }
 }
@@ -1011,8 +1031,10 @@ async function processOneStage(supabase, operation) {
         const tsToken = await tailscaleAccessToken(supabase);
         const { data: project } = await supabase.from("projects").select("slug").eq("id", inst.project_id).single();
         const hostname = `instance-${inst.id.slice(0, 8)}`;
+        const deviceTags = ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)];
+        await ensureTailscaleTagOwners(tsToken, deviceTags);
         const tsKey = await ts(tsToken, "POST", `tailnet/${config.tailscaleTailnet}/keys`, {
-          capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)] } } },
+          capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: deviceTags } } },
           expirySeconds: 3600,
         });
         // This goes in vendor-data, NOT user-data. cicustom entries *replace*
@@ -1184,8 +1206,10 @@ async function processOneStage(supabase, operation) {
           // Retag out of the pool and into this project. Until this lands the
           // VM is pool-tagged and not reachable as tenant infrastructure, so
           // this is the step that actually grants the customer access.
+          const deviceTags = ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)];
+          await ensureTailscaleTagOwners(tsToken, deviceTags);
           await ts(tsToken, "POST", `device/${deviceId}/tags`, {
-            tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)],
+            tags: deviceTags,
           });
 
           const privateIp = warmDetail.private_ip ?? null;
@@ -1281,8 +1305,10 @@ async function processOneStage(supabase, operation) {
             let key;
             try {
               const tsToken = await tailscaleAccessToken(supabase);
+              const deviceTags = ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)];
+              await ensureTailscaleTagOwners(tsToken, deviceTags);
               key = await ts(tsToken, "POST", `tailnet/${config.tailscaleTailnet}/keys`, {
-                capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)] } } },
+                capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: deviceTags } } },
                 expirySeconds: 600,
               });
             } catch (e) {
