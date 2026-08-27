@@ -121,5 +121,38 @@ same gap re-appearing, but it cleared on its own within one worker cycle.
 
 So that path handles the **no-VMID** case correctly. The earlier incident
 involved an instance whose create had already allocated a VMID and left a real
-VM on Proxmox — that is the case with no retry mechanism, and it remains
-untested here. Worth not over-reading this as "the deletion gap is fixed".
+VM on Proxmox — a different case, and untested at the time of writing.
+
+## Update 2026-08-28: the allocated-VMID delete path is now exercised, and works
+
+The case flagged above as untested has since been covered — not by a deliberate
+test, but by a real bulk cleanup the user ran through the console at
+**2026-08-27 23:21–23:25 UTC**. Ten instances were deleted in one pass
+(`ioi`, `fggf`, `e2e-podc-bj5l10`, `uoo`, `ui`, `fgfg-restored`, `yyyu`,
+`nodebridgeAB`, `nodebridge`, `demo-vm-3`), spanning **both** clusters and
+including instances with allocated VMIDs and live running VMs — exactly the
+shape the 2026-08-25 incident got stuck on.
+
+All ten completed in roughly four minutes. Verified afterwards: zero rows left
+in `state: deleting`, and no orphaned guests on either cluster (Guild-A no
+longer has 102/105/106/107/108; Guild-B no longer has 107/109/124/125).
+
+**The stuck-`deleting` gap did not reproduce in either shape.** That is not
+proof it is fixed — nothing in the code changed, and the 2026-08-25 failure may
+have depended on a condition not present here — but the path has now handled
+ten real teardowns cleanly, which is meaningfully more than "untested".
+
+### A misreading to not repeat
+
+While checking capacity on 2026-08-28 I briefly recorded that three of these
+rows had been "stuck in `deleting` for three days". That was wrong. I keyed off
+`instances.created_at` (`2026-08-25`) and read it as when the delete began —
+but that column is the instance's *creation* date. The rows had been deleting
+for about a minute.
+
+The trap: **`instances` has no `updated_at` column**, so there is no
+last-transition timestamp on the row at all. Anyone trying to judge how long an
+instance has been in a state cannot get it from `instances` — use `audit_log`
+(`instance.delete_requested`) or `operations.updated_at` instead. Adding an
+`updated_at` to `instances` would remove the footgun entirely and is worth
+considering.
