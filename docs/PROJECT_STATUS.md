@@ -164,6 +164,16 @@ without redeploying. Worth wiring a GitHub → Vercel git integration (or a
 GitHub Actions step) so every merge to `main` auto-deploys, rather than
 relying on someone remembering to run `vercel --prod`.
 
+**Second public URL added 2026-08-27**: `cloud.guild-technologies.com` is
+now a Cloudflare-DNS custom domain pointed straight at this same Vercel
+project (CNAME, proxy disabled, cert verified) — a separate hostname from
+`guildcloud-console.vercel.app`, same deployment. No redirect/canonical
+choice has been made between the two yet. This is unrelated to the
+self-hosted `guildcloud-console.guild-technologies.com` (see gap register
+G-21) — that one serves a different, self-hosted instance on Guild-A/B
+infrastructure via the Cloudflare Tunnel + Caddy ingress, not Vercel. See
+`docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md`.
+
 ## Current initiative: multi-cluster placement — LIVE in production (2026-08-25)
 
 Plan: `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` (12
@@ -373,6 +383,7 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-27 | Pointed a new Cloudflare-DNS domain (`cloud.guild-technologies.com`) at the real Vercel prod deployment; found and fixed two real bugs in the separate self-hosted `guildcloud-console.guild-technologies.com` route on the Guild-A ingress box (stale dead-host IP causing a 502, then a wrong port pointed at the fleet-worker process instead of the Next.js portal) | `docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md` |
 | 2026-08-25 | Deleted `lib/mock-data.ts` and every fabricated surface (4,938 lines removed): real identity in the topbar/dashboard, real sites via a new `list_admittable_sites()` RPC, honest "Coming soon" states for the 9 unbuilt features, real billing figures. Fixed alongside it: enrollment link re-minted on every click (~3s → ~900ms, and it no longer silently retires a link the member may have saved), no route to enroll a second device once enrolled, dark-mode-invisible step numerals, stale onboarding copy | — |
 | 2026-08-25 | First real production deployment: `guildcloud-console.vercel.app` had no deployment at all until today (`DEPLOYMENT_NOT_FOUND`) — linked a real Vercel project, set env vars, deployed; fixed Supabase Auth's stale `localhost:3000` Site URL/missing Redirect URL that was breaking Google sign-in from any other machine; verified live end-to-end on the real production domain (sign-in, create instance, ready, delete) | — |
 | 2026-08-25 | One-click device enrollment: "Enroll device →" guide link now auto-triggers command generation (was a plain nav link requiring a second click); enrollment links made reusable (90-day authkey); enroll script now runs `tailscale up --reset` to fix a real re-enrollment error; verified live on a real laptop | — |
