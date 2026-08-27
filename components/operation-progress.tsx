@@ -66,6 +66,10 @@ function getStageDuration(stage: Tables<"operation_stages"> | undefined, now: nu
   return formatDuration(Math.floor((endedAt - startedAt) / 1000));
 }
 
+function isOperationStage(stage: string | null): stage is OperationStage {
+  return OPERATION_STAGES.includes(stage as OperationStage);
+}
+
 export function OperationProgress({
   operation: initialOperation,
   stages: initialStages,
@@ -124,10 +128,23 @@ export function OperationProgress({
   }, [operation.state, poll]);
 
   const byStage = new Map(stages.map((s) => [s.stage, s]));
+  const currentStage = isOperationStage(operation.current_stage) ? operation.current_stage : null;
+  const currentStageIndex = currentStage ? OPERATION_STAGES.indexOf(currentStage) : -1;
   const displayStatusFor = (stage: OperationStage) => {
     const rawStatus = byStage.get(stage)?.status;
     if (rawStatus === "failed") return rawStatus;
     if (operation.state === "succeeded") return rawStatus === "skipped" ? "skipped" : "done";
+    if (
+      operation.kind === "instance.create" &&
+      operation.state === "running" &&
+      currentStageIndex >= 0
+    ) {
+      const stageIndex = OPERATION_STAGES.indexOf(stage);
+      if (stageIndex < currentStageIndex && rawStatus !== "skipped") return "done";
+      if (stageIndex === currentStageIndex && (rawStatus === "pending" || !rawStatus)) {
+        return "active";
+      }
+    }
     return rawStatus ?? "pending";
   };
   const completedCount = OPERATION_STAGES.filter((stage) => {

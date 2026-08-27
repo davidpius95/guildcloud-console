@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { images, plans } from "@/lib/catalog";
 import { money } from "@/lib/format";
 import type { RealSite } from "@/lib/supabase/queries";
@@ -143,6 +144,7 @@ export function CreateInstanceWizard({
   // wizard let you pick one and the create then failed placement server-side.
   sites: RealSite[];
 }) {
+  const router = useRouter();
   const [siteId, setSiteId] = useState(sites[0]?.id ?? "");
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [imageId, setImageId] = useState("ubuntu-2404");
@@ -165,6 +167,11 @@ export function CreateInstanceWizard({
   const [actionState, formAction, pending] = useActionState(createInstance, {
     error: null,
   });
+
+  useEffect(() => {
+    if (!actionState.redirectTo) return;
+    router.push(actionState.redirectTo);
+  }, [actionState.redirectTo, router]);
 
   const site = sites.find((s) => s.id === siteId) ?? sites[0];
   const plan = plans.find((p) => p.id === planId)!;

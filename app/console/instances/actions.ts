@@ -1,12 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserOrg } from "@/lib/supabase/queries";
 import { OPERATION_STAGES } from "@/lib/operation-stages";
 
-export type CreateInstanceActionState = { error: string | null };
+export type CreateInstanceActionState = { error: string | null; redirectTo?: string };
 
 export async function createInstance(
   _prev: CreateInstanceActionState,
@@ -54,7 +53,7 @@ export async function createInstance(
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
   if (existing?.instance_id) {
-    redirect(`/console/instances/${existing.instance_id}`);
+    return { error: null, redirectTo: `/console/instances/${existing.instance_id}` };
   }
 
   // Server-side re-validation of what the wizard's UI already gates on -
@@ -153,7 +152,9 @@ export async function createInstance(
         .select("instance_id")
         .eq("idempotency_key", idempotencyKey)
         .single();
-      if (winner?.instance_id) redirect(`/console/instances/${winner.instance_id}`);
+      if (winner?.instance_id) {
+        return { error: null, redirectTo: `/console/instances/${winner.instance_id}` };
+      }
     }
     // Real bug found live: these are separate inserts, not one transaction.
     // Returning here without cleaning up the instance row already written
@@ -185,7 +186,7 @@ export async function createInstance(
   });
 
   revalidatePath("/console/instances");
-  redirect(`/console/instances/${instanceId}`);
+  return { error: null, redirectTo: `/console/instances/${instanceId}` };
 }
 
 // Reveal-once: the plaintext lives in Supabase Vault only until the first
