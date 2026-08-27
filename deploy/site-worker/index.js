@@ -23,6 +23,7 @@ import { loadWorkerConfig } from "./config.js";
 import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTemplate } from "./routing.js";
 import { collectClusterSnapshot } from "./health-snapshot.js";
 import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale-access-policy.js";
+import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -254,6 +255,18 @@ async function waitForGuestExec(token, node, vmid, pid, maxWaitMs = 180000) {
     await sleep(1000);
   }
   throw new Error(`guest exec pid ${pid} did not finish within ${maxWaitMs}ms`);
+}
+
+async function verifyGuestSsh(token, node, vmid) {
+  const exec = await pve(token, "POST", `nodes/${node}/qemu/${vmid}/agent/exec`, {
+    command: ["/bin/sh", "-lc", GUEST_SSH_VERIFICATION_SCRIPT],
+  });
+  const status = await waitForGuestExec(token, node, vmid, exec.pid, 60000);
+  const parsed = parseGuestSshVerification(status);
+  if (!parsed.serviceActive || !parsed.portListening) {
+    throw new Error(`guest SSH verification failed: ${parsed.output || "no output"}`);
+  }
+  return parsed;
 }
 
 async function tailscaleAccessToken(supabase) {
@@ -1451,8 +1464,27 @@ async function processOneStage(supabase, operation) {
             // worked when it had never been confirmed. Retry the same way
             // the guest-agent-ping check above already does, rather than
             // asserting success we never actually observed.
-            await markStage(supabase, next, { status: "active", error: String(e) });
-            return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+            try {
+              const guestSsh = await verifyGuestSsh(token, node, instance.proxmox_vmid);
+              await markStage(supabase, next, {
+                status: "done",
+                finished_at: new Date().toISOString(),
+                detail: {
+                  private_ip: instance.private_ip,
+                  tcp_22_reachable: false,
+                  guest_ssh_ready: true,
+                  verification_mode: "guest-agent-fallback",
+                  guest_ssh_output: guestSsh.output,
+                },
+              });
+              return { status: "advanced" };
+            } catch (guestError) {
+              await markStage(supabase, next, {
+                status: "active",
+                error: `${String(e)}; guest-fallback: ${String(guestError)}`,
+              });
+              return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
+            }
           }
         }
 
