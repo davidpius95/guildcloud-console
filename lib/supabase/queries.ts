@@ -4,6 +4,12 @@ import { createClient } from "./server";
 import type { Organization, Membership, AuditLogEntry, Project, AccessResourceType } from "@/lib/types";
 import type { Tables } from "./types";
 
+const DETAIL_QUERY_TIMEOUT_MS = 8_000;
+
+function queryTimeoutSignal(ms = DETAIL_QUERY_TIMEOUT_MS) {
+  return AbortSignal.timeout(ms);
+}
+
 function toOrganization(row: Tables<"organizations">): Organization {
   return {
     id: row.id,
@@ -247,7 +253,8 @@ export async function getCatalogPlans() {
   const { data, error } = await supabase
     .from("catalog_plans")
     .select("*")
-    .order("vcpu", { ascending: true });
+    .order("vcpu", { ascending: true })
+    .abortSignal(queryTimeoutSignal());
   if (error) throw error;
   return data ?? [];
 }
@@ -258,36 +265,51 @@ export async function getSnapshotsForInstance(instanceId: string) {
     .from("instance_snapshots")
     .select("*")
     .eq("instance_id", instanceId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .abortSignal(queryTimeoutSignal());
   if (error) throw error;
   return data ?? [];
 }
 
 export async function getInstanceWithOperation(instanceId: string) {
   const supabase = await createClient();
-  const { data: instance } = await supabase
+  const { data: instance, error: instanceError } = await supabase
     .from("instances")
     .select("*, catalog_plans(*), catalog_images(*), projects(name)")
     .eq("id", instanceId)
+    .abortSignal(queryTimeoutSignal())
     .maybeSingle();
+  if (instanceError) throw instanceError;
   if (!instance) return null;
 
-  const { data: operation } = await supabase
-    .from("operations")
-    .select("*")
-    .eq("instance_id", instanceId)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: operation, error: operationError } = await supabase
+      .from("operations")
+      .select("*")
+      .eq("instance_id", instanceId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .abortSignal(queryTimeoutSignal())
+      .maybeSingle();
+  if (operationError) throw operationError;
 
-  const { data: stages } = operation
-    ? await supabase
-        .from("operation_stages")
-        .select("*")
-        .eq("operation_id", operation.id)
-    : { data: [] };
+  const [stagesResult, snapshotsResult] = await Promise.allSettled([
+    operation
+      ? supabase
+          .from("operation_stages")
+          .select("*")
+          .eq("operation_id", operation.id)
+          .order("created_at", { ascending: true })
+          .abortSignal(queryTimeoutSignal())
+      : Promise.resolve({ data: [], error: null }),
+    getSnapshotsForInstance(instanceId),
+  ]);
 
-  const snapshots = await getSnapshotsForInstance(instanceId);
+  const stages =
+    stagesResult.status === "fulfilled" && !stagesResult.value.error
+      ? stagesResult.value.data
+      : [];
+  const snapshots =
+    snapshotsResult.status === "fulfilled" ? snapshotsResult.value : [];
 
   return { instance, operation, stages: stages ?? [], snapshots };
 }
