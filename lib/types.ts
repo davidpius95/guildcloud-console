@@ -4,7 +4,9 @@ export type ResourceState =
   | "degraded"
   | "stopped"
   | "failed"
-  | "deleting";
+  | "deleting"
+  | "resizing"
+  | "restoring";
 
 export type ProtectionTier = "standard" | "protected" | "warm-standby";
 

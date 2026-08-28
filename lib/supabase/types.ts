@@ -767,6 +767,14 @@ export type Database = {
         Returns: undefined
       }
       redeem_enrollment_token: { Args: { p_token: string }; Returns: string }
+      begin_instance_operation: {
+        Args: { p_instance_id: string; p_state: string }
+        Returns: boolean
+      }
+      end_instance_operation: {
+        Args: { p_instance_id: string }
+        Returns: undefined
+      }
       request_instance_deletion: {
         Args: { p_instance_id: string }
         Returns: undefined

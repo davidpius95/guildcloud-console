@@ -1478,10 +1478,26 @@ async function processOneStage(supabase, operation) {
       if (operation.kind === "instance.snapshot") {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } else {
+        // Bounded, unlike the original: every other retry site in this file
+        // checks NETWORK_ATTACH_EXEC_MAX_MS, but this one looped forever. A
+        // resize whose reboot left the VM off sat here for 137 attempts over
+        // 17 minutes reporting "VM is not running", with the operation stuck
+        // in `running` and the instance therefore never released - no failure,
+        // no alert, nothing to act on.
+        const verifyStartedAt = next.detail?.stage_started_at ?? new Date().toISOString();
         try {
           await pve(token, "POST", `nodes/${node}/qemu/${instance.proxmox_vmid}/agent/ping`);
         } catch (e) {
-          await markStage(supabase, next, { status: "active", error: String(e) });
+          if (Date.now() - new Date(verifyStartedAt).getTime() > NETWORK_ATTACH_EXEC_MAX_MS) {
+            throw new Error(
+              `automated_verification: guest agent on VM ${instance.proxmox_vmid} did not respond within ${NETWORK_ATTACH_EXEC_MAX_MS}ms - last error: ${String(e)}`,
+            );
+          }
+          await markStage(supabase, next, {
+            status: "active",
+            error: String(e),
+            detail: { ...(next.detail ?? {}), stage_started_at: verifyStartedAt },
+          });
           return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
 

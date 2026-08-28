@@ -77,6 +77,8 @@ const stateStyles: Record<ResourceState, string> = {
   stopped: "bg-ink-100 text-ink-500 ring-ink-200",
   failed: "bg-rose-50 text-rose-700 ring-rose-200",
   deleting: "bg-ink-100 text-ink-500 ring-ink-200",
+  resizing: "bg-sky-50 text-sky-700 ring-sky-200",
+  restoring: "bg-sky-50 text-sky-700 ring-sky-200",
 };
 
 const stateLabels: Record<ResourceState, string> = {
@@ -86,6 +88,8 @@ const stateLabels: Record<ResourceState, string> = {
   stopped: "Stopped",
   failed: "Failed",
   deleting: "Deleting",
+  resizing: "Resizing",
+  restoring: "Restoring",
 };
 
 export function StatePill({ state }: { state: ResourceState }) {
@@ -100,7 +104,8 @@ export function StatePill({ state }: { state: ResourceState }) {
         className={cx(
           "h-1.5 w-1.5 rounded-full",
           state === "ready" && "bg-lemon-500",
-          state === "provisioning" && "animate-pulse bg-sky-500",
+          (state === "provisioning" || state === "resizing" || state === "restoring") &&
+            "animate-pulse bg-sky-500",
           state === "degraded" && "bg-amber-500",
           state === "failed" && "bg-rose-500",
           (state === "stopped" || state === "deleting") && "bg-ink-300",

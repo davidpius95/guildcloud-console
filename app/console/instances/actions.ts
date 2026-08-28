@@ -292,10 +292,19 @@ export async function resizeInstance(
 
   const operationId = crypto.randomUUID();
 
-  await supabase
-    .from("instances")
-    .update({ state: "resizing" })
-    .eq("id", instanceId);
+  // Via RPC, not a plain .update(): `instances` has no UPDATE policy for
+  // authenticated users, so the previous .update() matched zero rows and
+  // returned no error. The instance stayed 'ready' for the whole resize -
+  // which is why a resize looked like nothing was happening, and why the
+  // Delete button stayed live next to a running operation.
+  const { data: began, error: beginError } = await supabase.rpc(
+    "begin_instance_operation",
+    { p_instance_id: instanceId, p_state: "resizing" },
+  );
+  if (beginError) return { error: beginError.message };
+  if (!began) {
+    return { error: "Instance is busy with another operation. Try again once it finishes." };
+  }
 
   const { error: opError } = await supabase.from("operations").insert({
     id: operationId,
@@ -311,10 +320,7 @@ export async function resizeInstance(
     stages: { target_plan_id: newPlanId },
   });
   if (opError) {
-    await supabase
-      .from("instances")
-      .update({ state: "ready" })
-      .eq("id", instanceId);
+    await supabase.rpc("end_instance_operation", { p_instance_id: instanceId });
     return { error: opError.message };
   }
 
@@ -328,10 +334,7 @@ export async function resizeInstance(
     );
   if (stagesError) {
     await supabase.from("operations").delete().eq("id", operationId);
-    await supabase
-      .from("instances")
-      .update({ state: "ready" })
-      .eq("id", instanceId);
+    await supabase.rpc("end_instance_operation", { p_instance_id: instanceId });
     return { error: stagesError.message };
   }
 
@@ -462,10 +465,17 @@ export async function restoreInstance(
       if (snap) snapname = snap.proxmox_snapname;
     }
 
-    await supabase
-      .from("instances")
-      .update({ state: "restoring" })
-      .eq("id", instanceId);
+    // RPC, not .update() - see the note in resizeInstance(): `instances` has
+    // no UPDATE policy for authenticated users, so the plain update silently
+    // matched zero rows and the instance stayed 'ready' throughout.
+    const { data: began, error: beginError } = await supabase.rpc(
+      "begin_instance_operation",
+      { p_instance_id: instanceId, p_state: "restoring" },
+    );
+    if (beginError) return { error: beginError.message };
+    if (!began) {
+      return { error: "Instance is busy with another operation. Try again once it finishes." };
+    }
 
     const { error: opError } = await supabase.from("operations").insert({
       id: operationId,
@@ -481,10 +491,7 @@ export async function restoreInstance(
       stages: { snapshot_id: snapshotId, proxmox_snapname: snapname },
     });
     if (opError) {
-      await supabase
-        .from("instances")
-        .update({ state: "ready" })
-        .eq("id", instanceId);
+      await supabase.rpc("end_instance_operation", { p_instance_id: instanceId });
       return { error: opError.message };
     }
 
