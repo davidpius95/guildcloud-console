@@ -8,8 +8,16 @@
 // /etc/guildcloud/worker.env and exist nowhere else.
 //
 // Usage:
-//   SUPABASE_JWT_SECRET=... node scripts/mint-worker-token.mjs \
-//     --worker-id guild-a-lxc-500 [--expires-in 365d] [--print]
+//   Preferred (ES256, key you control -- survives legacy-secret revocation):
+//     node scripts/mint-worker-token.mjs --worker-id guild-b-lxc-500 \
+//       --signing-key-file ./signing-key.json [--expires-in 365d] [--print]
+//
+//   Legacy (HS256, dies when the legacy JWT secret is revoked):
+//     SUPABASE_JWT_SECRET=... node scripts/mint-worker-token.mjs \
+//       --worker-id guild-a-lxc-500 [--expires-in 365d] [--print]
+//
+//   Generate an ES256 key with `supabase gen signing-key --algorithm ES256`,
+//   import it as a standby key in the dashboard, rotate to it, then mint here.
 //
 // Without --print the token is written to a 0600 file rather than to stdout, so
 // it does not land in shell history, terminal scrollback, or a CI log.
@@ -25,8 +33,8 @@
 // from public.worker_identities, so minting a token does not grant access on
 // its own -- an identity row must exist and not be revoked.
 
-import { createHmac, randomUUID } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { createHmac, createPrivateKey, randomUUID, sign as cryptoSign } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { argv, env, exit } from "node:process";
@@ -39,6 +47,7 @@ function parseArgs(args) {
     const arg = args[i];
     if (arg === "--worker-id") parsed.workerId = args[++i];
     else if (arg === "--expires-in") parsed.expiresIn = args[++i];
+    else if (arg === "--signing-key-file") parsed.signingKeyFile = args[++i];
     else if (arg === "--print") parsed.print = true;
     else if (arg === "--help" || arg === "-h") parsed.help = true;
     else {
@@ -66,8 +75,28 @@ function base64url(input) {
   return Buffer.from(input).toString("base64url");
 }
 
-export function mintWorkerToken({ secret, workerId, expiresInSeconds, now = Date.now() }) {
-  if (!secret) throw new Error("SUPABASE_JWT_SECRET is required");
+// Parses the JWK that `supabase gen signing-key --algorithm ES256` emits, and
+// returns a private key plus the kid the JWT header must carry so Supabase can
+// pick the right key to verify with.
+export function loadSigningKey(jwkText) {
+  let jwk;
+  try {
+    jwk = typeof jwkText === "string" ? JSON.parse(jwkText) : jwkText;
+  } catch {
+    throw new Error("signing key must be JSON (the JWK from `supabase gen signing-key`)");
+  }
+  if (jwk.kty !== "EC" || jwk.crv !== "P-256") {
+    throw new Error(`signing key must be an EC P-256 JWK, got kty=${jwk.kty} crv=${jwk.crv}`);
+  }
+  if (!jwk.d) throw new Error("signing key is missing its private component (d)");
+  if (!jwk.kid) throw new Error("signing key is missing kid; Supabase needs it to select the key");
+  return { key: createPrivateKey({ key: jwk, format: "jwk" }), kid: jwk.kid };
+}
+
+export function mintWorkerToken({ secret, signingKey, workerId, expiresInSeconds, now = Date.now() }) {
+  if (!secret && !signingKey) {
+    throw new Error("SUPABASE_JWT_SECRET is required");
+  }
   if (!workerId || !/^[a-z0-9][a-z0-9-]{2,62}$/.test(workerId)) {
     throw new Error(
       "--worker-id must be a lowercase slug (letters, digits, hyphens), 3-63 chars",
@@ -90,8 +119,21 @@ export function mintWorkerToken({ secret, workerId, expiresInSeconds, now = Date
     jti: randomUUID(),
   };
 
+  if (signingKey) {
+    // ES256 uses the raw r||s form (IEEE P1363), not the DER encoding Node
+    // produces by default. Getting this wrong yields a token that looks fine and
+    // fails every verification.
+    header.alg = "ES256";
+    header.kid = signingKey.kid;
+  }
+
   const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
-  const signature = createHmac("sha256", secret).update(signingInput).digest("base64url");
+  const signature = signingKey
+    ? cryptoSign("sha256", Buffer.from(signingInput), {
+        key: signingKey.key,
+        dsaEncoding: "ieee-p1363",
+      }).toString("base64url")
+    : createHmac("sha256", secret).update(signingInput).digest("base64url");
   return { token: `${signingInput}.${signature}`, payload };
 }
 
@@ -133,8 +175,26 @@ function main() {
   }
 
   const expiresInSeconds = parseDuration(args.expiresIn);
+
+  // ES256 with a key you control is the preferred path: those tokens survive
+  // revocation of the legacy JWT secret, which HS256 tokens do not -- they are
+  // signed with the very secret that has to be retired.
+  const jwkText = args.signingKeyFile
+    ? readFileSync(args.signingKeyFile, "utf8")
+    : env.SUPABASE_SIGNING_KEY;
+  const signingKey = jwkText ? loadSigningKey(jwkText) : null;
+
+  if (!signingKey) {
+    console.error(
+      "WARNING: signing HS256 with the legacy JWT secret. Those tokens die when that\n" +
+        "secret is revoked. Prefer --signing-key-file with a key from\n" +
+        "`supabase gen signing-key --algorithm ES256`.",
+    );
+  }
+
   const { token, payload } = mintWorkerToken({
     secret: env.SUPABASE_JWT_SECRET,
+    signingKey,
     workerId: args.workerId,
     expiresInSeconds,
   });
@@ -144,6 +204,8 @@ function main() {
   const summary = {
     worker_id: payload.worker_id,
     role: payload.role,
+    algorithm: signingKey ? "ES256" : "HS256",
+    kid: signingKey ? signingKey.kid : null,
     jti: payload.jti,
     issued_at: new Date(payload.iat * 1000).toISOString(),
     expires_at: new Date(payload.exp * 1000).toISOString(),

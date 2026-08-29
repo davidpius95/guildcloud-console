@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { generateKeyPairSync, verify } from "node:crypto";
 import { tmpdir } from "node:os";
 
-import { isInsideGitWorkTree, mintWorkerToken, parseDuration } from "./mint-worker-token.mjs";
+import {
+  isInsideGitWorkTree,
+  loadSigningKey,
+  mintWorkerToken,
+  parseDuration,
+} from "./mint-worker-token.mjs";
 
 const SECRET = "test-secret-not-a-real-jwt-secret";
 
@@ -106,4 +112,58 @@ test("a git working tree is detected, so tokens are never written into a repo", 
   // 2026-08-29; the identity had to be revoked and re-minted.
   assert.equal(isInsideGitWorkTree(process.cwd()), true, "the repo itself must be detected");
   assert.equal(isInsideGitWorkTree(tmpdir()), false, "the temp dir must not be");
+});
+
+test("an ES256 token verifies against the public half of its signing key", () => {
+  // The real point of ES256 here: these tokens survive revocation of the legacy
+  // JWT secret, which HS256 tokens cannot.
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = { ...privateKey.export({ format: "jwk" }), kid: "test-kid-1" };
+
+  const signingKey = loadSigningKey(JSON.stringify(jwk));
+  const { token } = mintWorkerToken({
+    signingKey,
+    workerId: "guild-b-lxc-500",
+    expiresInSeconds: 3600,
+  });
+
+  const [h, p, sig] = token.split(".");
+  const header = JSON.parse(Buffer.from(h, "base64url").toString("utf8"));
+  assert.equal(header.alg, "ES256");
+  assert.equal(header.kid, "test-kid-1", "Supabase selects the key by kid");
+
+  // ES256 signatures are raw r||s, not DER. Verifying with the default encoding
+  // would fail even on a correct token.
+  assert.equal(
+    verify("sha256", Buffer.from(`${h}.${p}`), { key: publicKey, dsaEncoding: "ieee-p1363" },
+      Buffer.from(sig, "base64url")),
+    true,
+    "signature must verify with the public key",
+  );
+});
+
+test("a tampered ES256 payload fails verification", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = { ...privateKey.export({ format: "jwk" }), kid: "test-kid-2" };
+  const { token } = mintWorkerToken({
+    signingKey: loadSigningKey(JSON.stringify(jwk)),
+    workerId: "guild-b-lxc-500",
+    expiresInSeconds: 3600,
+  });
+  const [h, , sig] = token.split(".");
+  const forged = Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url");
+  assert.equal(
+    verify("sha256", Buffer.from(`${h}.${forged}`), { key: publicKey, dsaEncoding: "ieee-p1363" },
+      Buffer.from(sig, "base64url")),
+    false,
+  );
+});
+
+test("a signing key that is not EC P-256, or lacks kid or private part, is rejected", () => {
+  assert.throws(() => loadSigningKey('{"kty":"RSA","kid":"x","d":"y"}'), /EC P-256/);
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = privateKey.export({ format: "jwk" });
+  assert.throws(() => loadSigningKey(JSON.stringify(jwk)), /missing kid/);
+  assert.throws(() => loadSigningKey(JSON.stringify({ ...jwk, kid: "k", d: undefined })), /private component/);
+  assert.throws(() => loadSigningKey("not json"), /must be JSON/);
 });

@@ -279,13 +279,20 @@ it exercises only the cluster-scoped RPCs.
 None of this grants anything yet: no token exists, and the legacy path never
 reads `worker_identities`.
 
-**The remaining steps need a human.** Minting a worker token requires the
-project's JWT secret, which is deliberately kept away from any agent — the whole
-argument for a one-shot operator script over Terraform was that the credential
-lives in exactly one place. Steps 4 and 7 additionally need root on the two
-worker LXCs and dashboard access to rotate the service-role key. Guild-B is the
-intended canary, since Guild-A holds housekeeping and so carries the wider
-surface.
+**The remaining steps need a human.** Minting a worker token requires signing
+material, which is deliberately kept away from any agent — the whole argument for
+a one-shot operator script over Terraform was that the credential lives in
+exactly one place. Steps 4 and 7 additionally need root on the two worker LXCs
+and dashboard access. Guild-B is the intended canary, since Guild-A holds
+housekeeping and so carries the wider surface.
+
+**The signing material changed on 2026-08-29.** The legacy HS256 JWT secret was
+exposed and is being retired, so tokens signed with it would die the moment it is
+revoked. `scripts/mint-worker-token.mjs` now has an **ES256 mode**: generate a
+key with `supabase gen signing-key --algorithm ES256`, import and rotate to it,
+and pass it as `--signing-key-file`. `scripts/cutover-worker.sh` takes the same
+flag. HS256 still works and now warns, because that path has a deadline. Runbook
+step 0 covers key generation; step 8 covers retiring the legacy secret.
 
 ## Repository sync state (checked 2026-08-29)
 
@@ -573,6 +580,7 @@ errors that look like a network fault. Use `pve_call` with an explicit
 |---|---|---|
 | 2026-08-29 | Found the delete button had **never** worked: a one-argument `request_instance_deletion` overload set instances to `deleting` and queued nothing. 52 delete requests since 08-10 produced zero delete operations. Dropped it; cleaned up four instances stranded that way | `docs/dev-log/2026-08-29-deploy-drift-leaked-token-and-a-delete-that-never-deleted.md` |
 | 2026-08-29 | Installed the deploy mechanism on the Guild-B worker, which had none at all (hand-copied code, no timer, no releases). Found and fixed a test that was silently rejecting every worker deploy on **both** clusters | same |
+| 2026-08-29 | The legacy HS256 JWT secret was exposed, forcing the ES256 migration. `mint-worker-token.mjs` and `cutover-worker.sh` gained a `--signing-key-file` mode signing with an imported key; the console moved to the publishable key and no longer ships a legacy JWT | `docs/runbooks/2026-08-29-worker-service-role-cutover.md` |
 | 2026-08-29 | A minted worker token was committed to this public repo; revoked immediately (inert in one `UPDATE`, no JWT-secret rotation) and the mint script now writes outside any git tree | same |
 | 2026-08-29 | Wired CD: the Vercel project is now connected to GitHub, so `main` auto-deploys and PRs get previews. Also dropped the one-argument `request_instance_deletion` overload, which set instances to `deleting` and queued no work — 52 delete requests since 08-10 had produced zero delete operations — and revoked a worker token that leaked into this public repo (inert immediately; revocation is one UPDATE by design) | — |
 | 2026-08-29 | Confirmed and removed the orphaned VM 111 the delete fault left running on podF, plus five stale cloud-init snippets (three carrying auth keys) on the shared NFS export; logged **G-25**, the worker binding Tailscale devices by hostname, which misattributes private access and defeats teardown on a hostname collision | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
@@ -602,8 +610,9 @@ older infrastructure backlog, still open and still real.
 
 1. **Run the worker cutover** (`docs/runbooks/2026-08-29-worker-service-role-cutover.md`).
    Everything except the token is now in place on both boxes. What remains is
-   minting one (needs the project JWT secret, deliberately kept away from any
-   agent), pasting it into `/etc/guildcloud/worker.env` with
+   generating an ES256 signing key and minting against it (runbook step 0 —
+   signing material is deliberately kept away from any agent), pasting the token
+   into `/etc/guildcloud/worker.env` with
    `CONTROL_PLANE_AUTH_MODE=worker_token` and the service-role key removed, then
    retiring that key. Start with **Guild-B** — narrower surface.
 
@@ -611,16 +620,20 @@ older infrastructure backlog, still open and still real.
    project has migrated to JWT Signing Keys, and Supabase's guidance is that the
    legacy `anon`/`service_role`/JWT secrets are no longer rotatable. Those keys
    *are* JWTs signed by the legacy JWT secret, so the only way to invalidate them
-   is to revoke that secret — which would also invalidate the HS256 worker tokens
-   this cutover mints, killing both workers at once. Retire `service_role` by
+   is to revoke that secret. That used to also invalidate the worker tokens this
+   cutover mints, killing both workers at once; minting under an imported ES256
+   key removes that coupling. Retire `service_role` by
    creating a **secret API key** (`sb_secret_...`, not a JWT, independently
    rotatable), moving remaining callers to it, and deactivating the legacy key.
    Vercel is not a holder (checked: only the three `NEXT_PUBLIC_*` vars).
 
-   Getting off the legacy secret entirely is follow-up work: import an ES256
-   signing key via `supabase gen signing-key`, mint worker tokens with that
-   instead, and only then revoke the legacy secret. Recorded in §8 of the
-   runbook.
+   Getting off the legacy secret entirely is now in progress, not follow-up
+   work — it is forced, because that secret was exposed. Ordered in §8 of the
+   runbook: (1) console onto the publishable key — **done 2026-08-29**, verified
+   by grepping the served bundle for the legacy JWT and finding none; (2) workers
+   onto ES256 tokens; (3) rotate signing keys; (4) revoke the legacy secret and
+   deactivate the legacy `anon`/`service_role` keys. Step 4 last, and only after
+   1–3 have held for a worker cycle.
 2. **Wire the capability contract into the UI and server actions** (plan Task 3)
    so `lib/platform-capabilities.ts` enforces rather than documents, and fix the
    two stale copy strings plus the missing `docs/content/product-claims.md`.
