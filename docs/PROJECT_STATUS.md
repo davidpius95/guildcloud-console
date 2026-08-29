@@ -431,6 +431,15 @@ hardcode is still there and should be removed.**
 Note this does *not* unblock creates on its own: the ENOSPC came from the
 cloud-init snippet write, which still targets the full NFS.
 
+## Unverified after the 2026-08-29 delete fault
+
+The broken delete path left a possible orphan: **VM 111 on Guild-B podF**. The
+teardown sweep should have removed it before the stage machine repointed the
+instance at a newly-cloned VMID 112 (which was then torn down cleanly), but both
+Proxmox MCP servers were failing TLS certificate verification at the time, so it
+could not be confirmed. Worth checking podF for an orphaned guest and removing it
+if present. Detail: `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md`.
+
 ## Open gaps worth knowing about (full list: `docs/phase-0/gap-register.md`)
 
 - **G-24** (Critical, **partly resolved 2026-08-27**): the console could admit
@@ -478,6 +487,8 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | Ran the Task 12 end-to-end lifecycle test on a disposable instance and found two production faults: instance creation was impossible on every cluster/image/plan (both admission gates required `monitoring_healthy`, which the worker reports false by design), and **deleting an instance provisioned a new VM instead of deleting it** (delete operations were seeded with create-shaped stages). Both fixed and applied (PR #17). Create, private access, snapshot, restore-replace and upward resize all verified against real hardware | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
+| 2026-08-29 | Revoked `anon` EXECUTE on three SECURITY DEFINER functions flagged by the security advisor (PR #16) | same |
 | 2026-08-29 | Task 7: cluster-scoped worker RPC boundary (PR #15). New `guildcloud_site_worker` role with no table privileges, `worker_identities` mapping each worker to one cluster, and `worker_*` RPCs replacing every direct table access. Cluster resolved from the database, never the token. Cutover runbook and token-minting script included; service-role key not yet removed | `docs/runbooks/2026-08-29-worker-service-role-cutover.md` |
 | 2026-08-29 | Repaired CI (PR #14). It had never passed since being introduced: `npm ci` failed on an `@types/node` conflict and a lockfile out of sync with package.json, so no job ever reached a test | — |
 | 2026-08-29 | Platform hardening plan, first commit (`a3b9744`, PR #11): atomic lifecycle RPCs replacing RLS-blocked table writes, one-active-operation index, UPID-awaiting snapshot/restore, monotonic verified resize, real CI + ESLint flat config + `proxy.ts`, duplicate Guild-A worker collapsed to a tombstone. Restore-to-new removed | `docs/2026-08-29-guildcloud-platform-hardening-and-launch.md` |
