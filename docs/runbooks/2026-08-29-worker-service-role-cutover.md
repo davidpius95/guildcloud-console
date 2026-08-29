@@ -106,19 +106,49 @@ Write it somewhere outside any git working tree -- this file is the private half
 of the signing key, and a `git add -A` has already leaked one credential from
 this repository.
 
-Then in Settings -> JWT Keys: import it as a **standby** key, and rotate to it so
-it becomes the in-use key. Supabase keeps verifying tokens signed by the previous
-key until you revoke it, so rotating does not invalidate anything mid-flight.
+Then in Settings -> JWT Keys: import it as a **standby** key. Choose *import*,
+not *generate* -- a generated key leaves the private half with Supabase, which is
+the one thing that does not help here.
+
+**Stop at standby. Do not rotate.** An earlier version of this step said to
+rotate to the new key, and that was unnecessary. Standby keys are published in
+the JWKS *and* accepted for verification, so a worker token signed with one works
+immediately. Verified empirically on 2026-08-29: a token minted under a
+freshly-imported standby key (`kid 3cf66c3f-...`, never rotated) was posted to
+`/rest/v1/rpc/worker_heartbeat` and returned **HTTP 204**. The signature
+verified, PostgREST resolved the worker role, and the heartbeat ran.
+
+This matters because rotating changes which key signs every *user* auth token
+Supabase issues. That is a live change to session handling, and nothing in this
+cutover needs it. Leave the in-use key alone.
 
 Confirm the public half is published before minting -- if it is not there, every
 token you mint fails verification with `PGRST301 "No suitable key or wrong key
-type"`:
+type"`. Import is not instant; Supabase caches JWKS at several layers, so poll
+rather than assuming:
 
 ```bash
-curl -s "$SUPABASE_URL/auth/v1/.well-known/jwks.json" | grep -o '"kid":"[^"]*"'
+until curl -s "$SUPABASE_URL/auth/v1/.well-known/jwks.json" | grep -q "<your kid>"; do
+  printf '.'; sleep 30
+done; echo " published"
 ```
 
-The `kid` in `signing-key.json` must appear in that list.
+Then prove the key actually verifies before cutting anything over -- one command,
+and it distinguishes "not published yet" from "published but not accepted":
+
+```bash
+TOKEN=$(node scripts/mint-worker-token.mjs --worker-id guild-b-lxc-500 \
+  --signing-key-file ~/signing-key.json --expires-in 5m --print 2>/dev/null)
+curl -s -w '\nHTTP %{http_code}\n' -X POST "$SUPABASE_URL/rest/v1/rpc/worker_heartbeat" \
+  -H "apikey: <publishable key>" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{}'
+unset TOKEN
+```
+
+`HTTP 204` means the key verifies and the identity is live -- proceed. `PGRST301`
+means the signature was not accepted; do not proceed, the cutover will fail the
+same way. `42501` or `28000` mean the signature verified but a grant or the
+identity row refused it -- fix that, not the key.
 
 ## 1. Register the worker identities
 
@@ -366,13 +396,14 @@ breaks something at every step:
 
 2. **Workers off `service_role`** -- that is steps 2-6 of this runbook.
 
-3. **Rotate JWT signing keys** to the ES256 key from step 0, if you have not
-   already.
-
-4. **Revoke the previous (legacy) key** in Settings -> JWT Keys, and disable the
+3. **Revoke the legacy JWT secret** in Settings -> JWT Keys, and disable the
    legacy `anon` / `service_role` API keys.
 
-Do step 4 last and only after watching steps 1-3 hold for a full worker cycle.
+   Rotating signing keys is *not* a prerequisite -- see step 0. Nothing this
+   project owns still depends on the legacy secret once steps 1 and 2 are done,
+   so it can be revoked from whatever state it is in.
+
+Do step 3 last and only after watching steps 1-2 hold for a full worker cycle.
 Revoking the legacy key invalidates every token still signed by it, with no
 warning and no partial failure -- anything you missed stops working at once.
 
