@@ -2,14 +2,18 @@
 # One-command worker cutover: mint a cluster-scoped token and switch a site
 # worker from the Supabase service-role key onto it (plan Task 7, slice C).
 #
-# The whole point is that SUPABASE_JWT_SECRET stays on the machine running this
+# The whole point is that the signing material stays on the machine running this
 # script. The token is held in a shell variable, piped to the worker over stdin,
 # and never written to disk locally, never passed as a command-line argument
 # (which would expose it in the remote process list), and never echoed.
 #
-# Usage:
-#   SUPABASE_JWT_SECRET='...' scripts/cutover-worker.sh \
+# Usage (preferred -- ES256 with a key you control):
+#   scripts/cutover-worker.sh --signing-key-file ./signing-key.json \
 #     --worker-id guild-b-lxc-500 --host podD --vmid 500 [--expires-in 365d] [--dry-run]
+#
+# Usage (legacy HS256 -- tokens die when the legacy JWT secret is revoked):
+#   SUPABASE_JWT_SECRET='...' scripts/cutover-worker.sh \
+#     --worker-id guild-b-lxc-500 --host podD --vmid 500
 #
 #   --host   the Proxmox node hosting the worker LXC, reachable over ssh as root
 #   --vmid   the worker container id on that node
@@ -31,6 +35,7 @@ worker_id=""
 host=""
 vmid=""
 expires_in="365d"
+signing_key_file=""
 dry_run=0
 # The `apikey` header must carry a real API key. A minted JWT is rejected there
 # with "Invalid API key" before JWT verification even runs, so the token alone is
@@ -44,6 +49,7 @@ while [ $# -gt 0 ]; do
     --host) host="$2"; shift 2 ;;
     --vmid) vmid="$2"; shift 2 ;;
     --expires-in) expires_in="$2"; shift 2 ;;
+    --signing-key-file) signing_key_file="$2"; shift 2 ;;
     --api-key) api_key="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
@@ -53,8 +59,18 @@ done
 
 [ -n "$worker_id" ] && [ -n "$host" ] && [ -n "$vmid" ] || {
   echo "Need --worker-id, --host and --vmid. See --help." >&2; exit 2; }
-[ -n "${SUPABASE_JWT_SECRET:-}" ] || {
-  echo "SUPABASE_JWT_SECRET is not set." >&2; exit 2; }
+if [ -n "$signing_key_file" ]; then
+  [ -r "$signing_key_file" ] || {
+    echo "Cannot read signing key file: $signing_key_file" >&2; exit 2; }
+  mint_args=(--signing-key-file "$signing_key_file")
+elif [ -n "${SUPABASE_JWT_SECRET:-}" ]; then
+  # HS256. These tokens stop working the moment the legacy JWT secret is
+  # revoked, which is the direction this project is moving in.
+  echo "WARNING: minting HS256 against the legacy JWT secret. Prefer --signing-key-file." >&2
+  mint_args=()
+else
+  echo "Need --signing-key-file (preferred) or SUPABASE_JWT_SECRET." >&2; exit 2
+fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 remote="root@$host"
@@ -79,9 +95,10 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-echo "==> Minting (secret stays on this machine; token is never written locally)"
+echo "==> Minting (signing key stays on this machine; token is never written locally)"
 token=$(node "$repo_root/scripts/mint-worker-token.mjs" \
-          --worker-id "$worker_id" --expires-in "$expires_in" --print 2>/dev/null)
+          --worker-id "$worker_id" --expires-in "$expires_in" \
+          ${mint_args[@]+"${mint_args[@]}"} --print 2>/dev/null)
 [ -n "$token" ] || { echo "Minting produced no token." >&2; exit 1; }
 
 echo "==> Backing up $env_file to $env_file.bak-$stamp"

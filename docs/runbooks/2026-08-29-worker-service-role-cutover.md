@@ -53,33 +53,33 @@ Worth doing once the boundary itself is proven in production.
       `select id, cluster_id, kind, state from public.operations where state in ('pending','running');`
       Wait for it to be empty. A cutover mid-operation leaves a half-executed
       lifecycle.
-- [ ] You have the project's **JWT secret** (Supabase dashboard → Settings → API →
-      JWT Settings).
+- [ ] You have generated an **ES256 signing key you control** and rotated to it
+      (step 0 below). This replaced an earlier precondition asking for the
+      project's legacy JWT secret; that instruction is withdrawn.
 
-      **Checked 2026-08-29 — HS256 minting works, with one caveat.** This project
-      *has* an asymmetric signing key: its JWKS publishes a single **ES256** key
-      (`kid 6f8020a7-…`), so Supabase Auth issues user tokens signed ES256. That
-      does **not** block this runbook, because the legacy HS256 secret is still in
-      the verification key set. Verified empirically rather than assumed: posting
-      the legacy anon key (an HS256 JWT) as a bearer token to
-      `/rest/v1/rpc/worker_heartbeat` returns
-      `42501 permission denied for function worker_heartbeat` — the token
-      verified, PostgREST switched to `anon`, and the grant refused it. The
-      control, the same token with one character of the signature changed,
-      returns `PGRST301 "None of the keys was able to decode the JWT"`. The
-      legacy anon key also still reports `disabled: false`.
+      **Superseded 2026-08-29.** The original plan minted HS256 tokens with the
+      legacy JWT secret, and the earlier version of this bullet recorded that
+      working -- verified empirically at the time: posting the legacy anon key as
+      a bearer token to `/rest/v1/rpc/worker_heartbeat` returned
+      `42501 permission denied for function worker_heartbeat` (the token
+      verified; PostgREST switched to `anon`; the grant refused it), while the
+      same token with one signature character changed returned
+      `PGRST301 "None of the keys was able to decode the JWT"`.
 
-      **The caveat is a live footgun.** Completing the signing-keys migration —
-      revoking the legacy HS256 key in the dashboard — instantly invalidates every
-      worker token minted by `scripts/mint-worker-token.mjs`, stopping
-      provisioning on **both** clusters at once. So while workers run on
-      HS256 tokens: do not revoke the legacy key, and treat that dashboard action
-      as a change that requires re-minting first.
+      Two things killed that approach on the same day. First, the footgun the
+      bullet itself flagged: completing the signing-keys migration invalidates
+      every HS256-signed worker token at once, stopping provisioning on **both**
+      clusters. Second, and decisively, **the legacy JWT secret was exposed** and
+      has to be retired. Tokens whose validity depends on a secret you are about
+      to revoke are not worth minting.
 
-      This is the strongest argument for the Auth-user alternative described
-      below: tokens issued by Supabase Auth itself are signed with the current
-      ES256 key, so they survive legacy-key revocation. Custom ES256 minting is
-      not an option — the platform holds that private key and does not export it.
+      That same bullet claimed custom ES256 minting was "not an option -- the
+      platform holds that private key and does not export it". **That was wrong.**
+      It is true of the key Supabase generates for you; it is not a limit of the
+      platform. `supabase gen signing-key --algorithm ES256` produces a key *you*
+      hold and import, and `scripts/mint-worker-token.mjs --signing-key-file`
+      signs with it. Worker tokens are then independent of the legacy secret and
+      survive its revocation, which is what step 8 needs.
 - [ ] Root SSH to both worker LXCs (Guild-A: vmid 500 on nodeD, Guild-B: vmid 500
       on podD).
 
@@ -90,6 +90,35 @@ restore `SUPABASE_SERVICE_ROLE_KEY`, restart the worker. **Do not rotate the
 service-role key until step 7**, so this remains true throughout.
 
 ---
+
+## 0. Generate and install a signing key you control
+
+**Do this first. It is no longer optional.** The legacy HS256 JWT secret was
+exposed on 2026-08-29 and is being retired, so tokens signed with it are dead on
+arrival once it is revoked. Worker tokens must be signed with a key you control.
+
+```bash
+supabase gen signing-key --algorithm ES256 > signing-key.json
+chmod 600 signing-key.json
+```
+
+Write it somewhere outside any git working tree -- this file is the private half
+of the signing key, and a `git add -A` has already leaked one credential from
+this repository.
+
+Then in Settings -> JWT Keys: import it as a **standby** key, and rotate to it so
+it becomes the in-use key. Supabase keeps verifying tokens signed by the previous
+key until you revoke it, so rotating does not invalidate anything mid-flight.
+
+Confirm the public half is published before minting -- if it is not there, every
+token you mint fails verification with `PGRST301 "No suitable key or wrong key
+type"`:
+
+```bash
+curl -s "$SUPABASE_URL/auth/v1/.well-known/jwks.json" | grep -o '"kid":"[^"]*"'
+```
+
+The `kid` in `signing-key.json` must appear in that list.
 
 ## 1. Register the worker identities
 
@@ -148,13 +177,13 @@ from public.worker_identities order by worker_id;
 
 ## The short path
 
-Steps 2-5 are automated by `scripts/cutover-worker.sh`. It keeps
-`SUPABASE_JWT_SECRET` on your machine: the token is held in a shell variable,
-piped to the worker over stdin, and never written to disk locally, never passed
-as a command-line argument, and never echoed.
+Steps 2-5 are automated by `scripts/cutover-worker.sh`. It keeps the signing key
+on your machine: the token is held in a shell variable, piped to the worker over
+stdin, and never written to disk locally, never passed as a command-line
+argument, and never echoed.
 
 ```bash
-SUPABASE_JWT_SECRET='<jwt secret>' scripts/cutover-worker.sh \
+scripts/cutover-worker.sh --signing-key-file ./signing-key.json \
   --worker-id guild-b-lxc-500 --host podD --vmid 500
 ```
 
@@ -177,14 +206,17 @@ to Guild-A. This runbook assumes Guild-B as canary because Guild-A holds tailnet
 housekeeping, so Guild-B exercises the narrower surface first.
 
 ```bash
-SUPABASE_JWT_SECRET='<jwt secret>' node scripts/mint-worker-token.mjs --worker-id guild-b-lxc-500 --expires-in 365d
+node scripts/mint-worker-token.mjs --worker-id guild-b-lxc-500 \
+  --signing-key-file ./signing-key.json --expires-in 365d
 ```
 
-Writes `worker-token-guild-b-lxc-500.jwt` (0600) in the working directory and
-prints a non-secret summary. The token itself is never printed unless you pass
+Writes `worker-token-guild-b-lxc-500.jwt` (0600) **outside any git working tree**
+-- the script prints the path -- and prints a non-secret summary including the
+`kid` and `algorithm` it used. The token itself is never printed unless you pass
 `--print`.
 
-Record the summary's `jti`, `worker_id`, and `expires_at` in the change record.
+Record the summary's `jti`, `worker_id`, `kid`, and `expires_at` in the change
+record.
 Never record the token.
 
 ## 3. Pause admission on the canary cluster
@@ -283,10 +315,11 @@ additionally exercises tailnet housekeeping, so also confirm
 > them is to revoke that secret, and revoking it invalidates *every* JWT signed
 > with it.
 >
-> **That includes the worker tokens this runbook mints.** They are HS256, signed
-> with the same legacy secret. So revoking the legacy secret to kill
-> `service_role` would kill both workers at the same instant. The two cannot be
-> done independently while workers are on HS256 tokens.
+> **This used to include the worker tokens this runbook mints.** While they were
+> HS256 signed with the same legacy secret, revoking that secret to kill
+> `service_role` would have killed both workers at the same instant. Minting
+> under an imported ES256 key (step 0) is what breaks that coupling, so the two
+> can now be done independently.
 
 Only after **both** workers are healthy on `worker_token` for a full day.
 
@@ -301,7 +334,9 @@ Only after **both** workers are healthy on `worker_token` for a full day.
 3. Replace `service_role` with that secret key wherever it is still used. Checked
    2026-08-29: the Vercel production project holds only `NEXT_PUBLIC_SITE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_URL`, so the console
-   is not a holder. Edge Functions receive `SUPABASE_SECRET_KEYS` alongside the
+   is not a holder. `NEXT_PUBLIC_SUPABASE_ANON_KEY` has since been moved to the
+   publishable key and redeployed, so the console no longer ships a legacy JWT
+   at all. Edge Functions receive `SUPABASE_SECRET_KEYS` alongside the
    legacy variable and can switch by reading the new one. Re-check with
    `vercel env ls production` rather than trusting this note.
 
@@ -309,44 +344,49 @@ Only after **both** workers are healthy on `worker_token` for a full day.
    nothing uses it. Reversible — you can re-activate if you find a caller you
    missed. This is the step that actually retires it.
 
-5. Do **not** revoke the legacy JWT secret while workers run on HS256 tokens.
-   See the next section for how to remove that constraint.
+5. Do **not** revoke the legacy JWT secret while any worker still runs an HS256
+   token. Once both are on ES256 tokens from step 0, the next section retires it.
 
-## 8. Getting off the legacy JWT secret entirely (follow-up work)
+## 8. Retire the legacy JWT secret
 
-The HS256 approach in this runbook is the right short-term move — it takes the
-service-role key off both workers today, which is the actual security win. But it
-ties worker authentication to the legacy JWT secret, the one thing that cannot be
-rotated and that must eventually be revoked.
+Once both workers run ES256 tokens, nothing this project owns depends on the
+legacy HS256 secret, and it can go. Order matters -- doing these out of order
+breaks something at every step:
 
-Supabase's documented escape hatch is to **import a signing key you control**:
+1. **Console off the legacy anon key.** Set `NEXT_PUBLIC_SUPABASE_ANON_KEY` to
+   the publishable key (`sb_publishable_...`) and redeploy. Verify the legacy JWT
+   is no longer in the served bundle:
 
-```sh
-supabase gen signing-key --algorithm ES256
-```
+   ```bash
+   curl -s https://<your-domain>/ | grep -c 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' # expect 0
+   ```
 
-Import it as a standby key in Settings → JWT Keys, rotate to it, and mint worker
-tokens with it instead — the same payload (`role`, `worker_id`, `exp`) plus a
-`kid` header identifying the key. Then the legacy secret can be revoked without
-touching the workers, and the ordering becomes:
+   `NEXT_PUBLIC_` values are inlined at build time, so the env change alone
+   changes nothing until a redeploy.
 
-1. Workers onto ES256 tokens signed with the imported key.
-2. `service_role` replaced by a secret API key and deactivated.
-3. Legacy JWT secret revoked.
+2. **Workers off `service_role`** -- that is steps 2-6 of this runbook.
 
-The alternative — a Supabase Auth user per worker plus a Custom Access Token hook
-— is still viable and is described earlier in this file. The imported-key route is
-simpler here because it keeps the existing minting script's shape: only the
-algorithm and a `kid` header change. Either way, `mint-worker-token.mjs` needs an
-ES256 mode before this can happen.
+3. **Rotate JWT signing keys** to the ES256 key from step 0, if you have not
+   already.
 
-## 8. Close out
+4. **Revoke the previous (legacy) key** in Settings -> JWT Keys, and disable the
+   legacy `anon` / `service_role` API keys.
+
+Do step 4 last and only after watching steps 1-3 hold for a full worker cycle.
+Revoking the legacy key invalidates every token still signed by it, with no
+warning and no partial failure -- anything you missed stops working at once.
+
+## 9. Close out
 
 - [ ] Delete `worker.env.pre-cutover` from both boxes.
 - [ ] Confirm no `.jwt` file remains on any workstation.
 - [ ] Update `docs/PROJECT_STATUS.md` and tick Task 7's remaining boxes.
-- [ ] Record in the change log: date, canary cluster, both `jti` values, rotation
-      time, and the disposable instance's full lifecycle evidence.
+- [ ] Confirm no `signing-key.json` remains on any workstation once both workers
+      are minted and healthy -- the key can be regenerated and re-imported, and a
+      key nobody holds cannot leak.
+- [ ] Record in the change log: date, canary cluster, both `jti` values, the
+      signing `kid`, rotation time, and the disposable instance's full lifecycle
+      evidence.
 
 ---
 
@@ -364,7 +404,8 @@ simply stops recognising it. To re-enable, set `revoked_at = null`.
 
 ## Rotating a worker token
 
-Mint a new one, swap the env value, restart, confirm `--health`. The old token
+Mint a new one (same `--signing-key-file`), swap the env value, restart, confirm
+`--health`. The old token
 stops being used but remains *valid* until it expires — so if it may have leaked,
 revoke the `worker_id` first, deploy the new token, then clear `revoked_at`.
 Accept the gap: it is a brief provisioning pause on one cluster, not an outage
