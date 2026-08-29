@@ -147,4 +147,131 @@ export class WorkerControlPlane {
       p_error: error,
     });
   }
+
+  // --- instance runtime -----------------------------------------------------
+
+  // Only observed-from-infrastructure columns are accepted; the RPC rejects
+  // anything else rather than ignoring it, so a typo fails loudly instead of
+  // silently not persisting.
+  updateInstanceRuntime(instanceId, patch) {
+    return this.#rpc("worker_update_instance_runtime", {
+      p_instance_id: instanceId,
+      p_patch: patch,
+    });
+  }
+
+  // --- housekeeping listings ------------------------------------------------
+
+  listPendingDeletions() {
+    return this.#rpc("worker_list_pending_deletions");
+  }
+
+  listPendingSshKeySyncs() {
+    return this.#rpc("worker_list_pending_ssh_key_syncs");
+  }
+
+  // --- capacity -------------------------------------------------------------
+
+  holdCapacity({ operationId, node, vcpu, memoryGb, diskGb, storageId, expiresAt }) {
+    return this.#rpc("worker_hold_capacity", {
+      p_operation_id: operationId,
+      p_node: node,
+      p_vcpu: vcpu,
+      p_memory_gb: memoryGb,
+      p_disk_gb: diskGb,
+      p_storage_id: storageId,
+      p_expires_at: expiresAt,
+    });
+  }
+
+  releaseCapacity(operationId) {
+    return this.#rpc("worker_release_capacity", { p_operation_id: operationId });
+  }
+
+  listHeldCapacity(node) {
+    return this.#rpc("worker_list_held_capacity", { p_node: node });
+  }
+
+  // --- warm pool ------------------------------------------------------------
+
+  listWarmPoolVms(states) {
+    return this.#rpc("worker_list_warm_pool_vms", { p_states: states });
+  }
+
+  claimWarmPoolVm(instanceId, catalogImageId, catalogPlanId) {
+    return this.#rpc("worker_claim_warm_pool_vm", {
+      p_instance_id: instanceId,
+      p_catalog_image_id: catalogImageId,
+      p_catalog_plan_id: catalogPlanId,
+    });
+  }
+
+  recordWarmPoolVm({ catalogImageId, catalogPlanId, proxmoxVmid, proxmoxNode, tailscaleHostname }) {
+    return this.#rpc("worker_record_warm_pool_vm", {
+      p_catalog_image_id: catalogImageId,
+      p_catalog_plan_id: catalogPlanId,
+      p_proxmox_vmid: proxmoxVmid,
+      p_proxmox_node: proxmoxNode,
+      p_tailscale_hostname: tailscaleHostname,
+    });
+  }
+
+  updateWarmPoolVm(id, state, { tailscaleDeviceId = null, privateIp = null, failureReason = null } = {}) {
+    return this.#rpc("worker_update_warm_pool_vm", {
+      p_warm_pool_vm_id: id,
+      p_state: state,
+      p_tailscale_device_id: tailscaleDeviceId,
+      p_private_ip: privateIp,
+      p_failure_reason: failureReason,
+    });
+  }
+
+  // --- catalog --------------------------------------------------------------
+
+  getPlan(catalogPlanId) {
+    return this.#rpc("worker_get_plan", { p_catalog_plan_id: catalogPlanId });
+  }
+
+  listNodeTemplates(catalogImageId, node) {
+    return this.#rpc("worker_list_node_templates", {
+      p_catalog_image_id: catalogImageId,
+      p_node: node,
+    });
+  }
+
+  // --- scoped reads ---------------------------------------------------------
+
+  getInstance(instanceId) {
+    return this.#rpc("worker_get_instance", { p_instance_id: instanceId });
+  }
+
+  listInstanceSshKeys(instanceId) {
+    return this.#rpc("worker_list_instance_ssh_keys", { p_instance_id: instanceId });
+  }
+
+  getInstanceProject(instanceId) {
+    return this.#rpc("worker_get_instance_project", { p_instance_id: instanceId });
+  }
+
+  // --- tailnet housekeeping -------------------------------------------------
+  //
+  // Tailnet-wide rather than cluster-scoped, and granted by
+  // worker_identities.tailnet_housekeeping rather than by the worker's own env
+  // file - so two workers cannot both believe they own the Tailscale policy and
+  // race a read-modify-write of it.
+
+  getTailnetDesiredState() {
+    return this.#rpc("worker_get_tailnet_desired_state");
+  }
+
+  markProjectAclApplied(projectId) {
+    return this.#rpc("worker_mark_project_acl_applied", { p_project_id: projectId });
+  }
+
+  markMemberEnrolled(membershipId, tailscaleDeviceId) {
+    return this.#rpc("worker_mark_member_enrolled", {
+      p_membership_id: membershipId,
+      p_tailscale_device_id: tailscaleDeviceId,
+    });
+  }
 }

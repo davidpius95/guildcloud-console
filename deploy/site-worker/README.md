@@ -80,6 +80,20 @@ Set by `CONTROL_PLANE_AUTH_MODE` in `/etc/guildcloud/worker.env`:
 scope, and disabling a worker is `update public.worker_identities set
 revoked_at = now() where worker_id = '...'` rather than a JWT-secret rotation.
 
+Tailnet housekeeping (ACL reconciliation, member device enrollment, instance
+device tags) is tailnet-wide rather than cluster-scoped. On the boundary path it
+is granted by `worker_identities.tailnet_housekeeping`, which carries a unique
+partial index so two live workers cannot both hold it; `TAILNET_HOUSEKEEPING_OWNER`
+is consulted only on the legacy path, where nothing prevents two workers from
+both claiming it and racing a read-modify-write of the same Tailscale policy.
+
+To move the role:
+
+```sql
+update public.worker_identities set tailnet_housekeeping = false where worker_id = '<old>';
+update public.worker_identities set tailnet_housekeeping = true  where worker_id = '<new>';
+```
+
 The two credentials are mutually exclusive: the worker refuses to start in
 `worker_token` mode while `SUPABASE_SERVICE_ROLE_KEY` is still set, so a
 half-finished migration cannot look complete while the broad key sits

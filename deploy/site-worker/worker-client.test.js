@@ -147,3 +147,68 @@ test("stage completion forwards status and detail without inventing a cluster", 
     p_error: null,
   });
 });
+
+test("no slice B method lets the caller name a cluster either", async () => {
+  const client = stubClient(() => ({ data: null, error: null }));
+  const plane = new WorkerControlPlane(client);
+
+  await plane.updateInstanceRuntime("i-1", { proxmox_vmid: 101 });
+  await plane.listPendingDeletions();
+  await plane.listPendingSshKeySyncs();
+  await plane.holdCapacity({
+    operationId: "op-1", node: "nodeA", vcpu: 2, memoryGb: 4, diskGb: 40,
+    storageId: "ceph-vm", expiresAt: "2026-08-29T00:00:00.000Z",
+  });
+  await plane.releaseCapacity("op-1");
+  await plane.listHeldCapacity("nodeA");
+  await plane.listWarmPoolVms(["warm"]);
+  await plane.claimWarmPoolVm("i-1", "ubuntu-2404", "std-1");
+  await plane.recordWarmPoolVm({
+    catalogImageId: "ubuntu-2404", catalogPlanId: "std-1",
+    proxmoxVmid: 900, proxmoxNode: "nodeA", tailscaleHostname: "pool-900",
+  });
+  await plane.updateWarmPoolVm("w-1", "warm", { tailscaleDeviceId: "d-1" });
+  await plane.getPlan("std-1");
+  await plane.listNodeTemplates("ubuntu-2404", "nodeA");
+  await plane.getTailnetDesiredState();
+  await plane.markProjectAclApplied("p-1");
+  await plane.markMemberEnrolled("m-1", "d-1");
+
+  const serialized = JSON.stringify(client.calls);
+  assert.doesNotMatch(serialized, /cluster/i, "no RPC argument may carry a cluster id");
+  assert.doesNotMatch(serialized, /guild-a|guild-b/);
+});
+
+test("every client call targets a worker_ RPC, never a table or raw primitive", async () => {
+  const client = stubClient(() => ({ data: null, error: null }));
+  const plane = new WorkerControlPlane(client);
+
+  await plane.heartbeat();
+  await plane.listPendingDeletions();
+  await plane.updateInstanceRuntime("i-1", {});
+  await plane.getTailnetDesiredState();
+
+  for (const call of client.calls) {
+    assert.match(call.name, /^worker_/, `${call.name} is not a worker boundary RPC`);
+  }
+});
+
+test("a warm pool claim that finds nothing returns null rather than throwing", async () => {
+  const client = stubClient(() => ({ data: null, error: null }));
+  const plane = new WorkerControlPlane(client);
+  assert.equal(await plane.claimWarmPoolVm("i-1", "ubuntu-2404", "std-1"), null);
+});
+
+test("housekeeping refusal surfaces as not-ours rather than an identity failure", async () => {
+  // A worker that simply does not hold the role must not look like a worker
+  // whose token was rejected: one is normal, the other is a deploy problem.
+  const client = stubClient(() => ({
+    data: null,
+    error: { code: "42501", message: "worker does not hold the tailnet housekeeping role" },
+  }));
+  const plane = new WorkerControlPlane(client);
+
+  const error = await plane.getTailnetDesiredState().then(() => null, (e) => e);
+  assert.equal(error.isNotOurs, true);
+  assert.equal(error.isIdentityRejected, false);
+});
