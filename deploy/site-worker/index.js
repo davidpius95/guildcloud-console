@@ -209,9 +209,18 @@ function serviceClient() {
 
 // Non-secret operational facts, for `node index.js --health`. Everything here is
 // safe to print into a deploy log: no token, no key, no customer data.
-function healthReport(supabase) {
+//
+// In worker_token mode this makes a real authenticated call rather than only
+// reporting that a client was constructed. Nothing local can tell a good token
+// from a badly-signed one: assertWorkerToken decodes the payload but cannot
+// verify the signature, having no key to verify it with. So a token minted with
+// the wrong secret used to pass every gate here -- and since the cutover removes
+// SUPABASE_SERVICE_ROLE_KEY once health looks fine, the cluster would then fail
+// every RPC with nothing to fall back to. Only the control plane can answer
+// whether a token actually works, so ask it.
+async function healthReport(supabase) {
   const token = process.env.SUPABASE_WORKER_TOKEN;
-  return {
+  const report = {
     workerId: config.workerId,
     clusterId: config.clusterId,
     siteId: config.siteId,
@@ -221,6 +230,21 @@ function healthReport(supabase) {
     releasePath: __dirname,
     controlPlane: supabase ? "configured" : "unconfigured",
   };
+
+  if (!controlPlane) return report;
+
+  try {
+    await controlPlane.heartbeat();
+    report.controlPlane = "authenticated";
+    report.controlPlaneReachable = true;
+  } catch (error) {
+    report.controlPlane = "unauthenticated";
+    report.controlPlaneReachable = false;
+    // The message, not the token: a bad signature reports as a PostgREST auth
+    // failure, an unknown worker as 28000 from current_worker_cluster().
+    report.controlPlaneError = String(error?.message ?? error).slice(0, 200);
+  }
+  return report;
 }
 
 const vaultSecretCache = new Map();
@@ -2163,7 +2187,12 @@ if (process.argv.includes("--print-config")) {
   // so a broken release fails the health gate instead of reporting success.
   try {
     const supabase = serviceClient();
-    console.log(JSON.stringify(healthReport(supabase), null, 2));
+    const report = await healthReport(supabase);
+    console.log(JSON.stringify(report, null, 2));
+    // Exit non-zero when a configured token cannot actually authenticate, so
+    // deploy-pull.sh's activation gate and the cutover script both fail closed
+    // rather than proceeding to remove the service-role key.
+    if (report.controlPlaneReachable === false) process.exitCode = 1;
   } catch (error) {
     console.error(JSON.stringify({ healthy: false, error: String(error?.message ?? error) }, null, 2));
     process.exitCode = 1;
