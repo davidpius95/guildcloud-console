@@ -92,6 +92,15 @@ What remains: retire `service_role` (deactivate, not rotate — it cannot be
 rotated), then revoke the legacy JWT secret and the legacy `anon` key. Nothing
 depends on either any more.
 
-Nine `worker.env.bak-*` files across the two boxes still hold credential copies,
-six of them the service-role key. They should be deleted before that key is
-deactivated, not after.
+**Done 2026-08-29 21:2xZ:** the seven files holding a service-role key copy were
+deleted from both boxes -- four on podD, three on nodeD, each re-checked for the
+key immediately before removal. `grep -rl SUPABASE_SERVICE_ROLE_KEY /etc/guildcloud/`
+now returns nothing on either box. What remains is one `worker.env` and one
+`worker.env.bak-*` per box, both holding worker tokens: the live config and its
+rollback point.
+
+Deleting them before deactivating `service_role` rather than after is the point.
+A key that is about to be turned off is still a live key, and copies of it were
+sitting in four different files on one box because every cutover attempt made
+another backup. The script writes a timestamped backup on each run and never
+prunes, which is how four accumulated on podD in one evening.

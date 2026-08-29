@@ -409,7 +409,15 @@ warning and no partial failure -- anything you missed stops working at once.
 
 ## 9. Close out
 
-- [ ] Delete `worker.env.pre-cutover` from both boxes.
+- [x] Delete every `worker.env.bak-*` holding a service-role key, from both
+      boxes, **before** deactivating that key -- a key awaiting deactivation is
+      still live. Check each file for the key immediately before removing it, and
+      confirm with `grep -rl SUPABASE_SERVICE_ROLE_KEY /etc/guildcloud/`. Keep the
+      most recent worker-token backup on each box as the rollback point. Done
+      2026-08-29: seven files removed (four podD, three nodeD).
+
+      Note that this script backs up on every run and never prunes, so repeated
+      cutover attempts leave a credential copy per attempt -- podD had four.
 - [ ] Confirm no `.jwt` file remains on any workstation.
 - [ ] Update `docs/PROJECT_STATUS.md` and tick Task 7's remaining boxes.
 - [ ] Confirm no `signing-key.json` remains on any workstation once both workers
