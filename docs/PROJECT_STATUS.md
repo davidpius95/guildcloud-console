@@ -284,9 +284,10 @@ clusters -- healthy `exit=0` with a real `proxmoxVersion`, unreadable credential
 Still open: the stopgap Vault grant should be replaced by scoped
 `worker_get_proxmox_credential()` / `worker_set_instance_ssh_password()` RPCs;
 the worker sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide, so the worker
-token travels over unverified TLS; and the non-housekeeping worker calls
-`worker_get_tailnet_desired_state` every cycle and is correctly refused, instead
-of checking its own identity first.
+token travels over unverified TLS;. The tailnet noise is fixed: `worker_holds_tailnet_housekeeping()` lets a worker
+ask instead of being refused, verified in production as `true` for Guild-A,
+`false` for Guild-B, and `28000` for an unknown worker -- so `false` cannot be
+used to sidestep a revocation.
 
 **Historic (superseded by the above).** Worker
 identities are registered and each box's `WORKER_ID` matches, which

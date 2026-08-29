@@ -103,6 +103,23 @@ housekeeper — but the worker calls the RPC anyway rather than checking
 on Guild-A, but it means every cycle on the non-housekeeping cluster reports a
 failure it should never have attempted.
 
+**Fixed the same night**, and worth fixing rather than suppressing: a predictable
+refusal logged as `ok:false` trains whoever reads these logs to skip `ok:false`
+lines, which is the habit that hides a real one. Guild-B printed this line on
+every cycle tonight, including the ten minutes it was genuinely broken.
+
+`worker_holds_tailnet_housekeeping()` answers the question directly, so the
+worker skips work it would be refused. Returning a boolean rather than raising is
+the point -- this is the one place where "you do not hold the role" is an answer
+rather than an error -- but it resolves the cluster first, so an unknown or
+revoked worker still raises `28000`. Verified in production: `true` for Guild-A,
+`false` for Guild-B, `28000` for an unknown worker, and zero refusal lines on
+either cluster since.
+
+An incidental find: the `isNotOurs` suppression already existed but had only ever
+been applied to `reconcile_tailnet_access`, never to the enrollment sync. That is
+why exactly one of the two was noisy.
+
 ## State
 
 | | Guild-A | Guild-B |
