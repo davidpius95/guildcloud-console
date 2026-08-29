@@ -271,24 +271,74 @@ Then repeat steps 2–6 for Guild-A (`--worker-id guild-a-lxc-500`). Guild-A
 additionally exercises tailnet housekeeping, so also confirm
 `reconcile_tailnet_access` runs without `42501`.
 
-## 7. Rotate the service-role key
+## 7. Retire the service-role key
+
+> **Corrected 2026-08-29. "Rotate the service_role key" is not a thing you can
+> do on this project, and the earlier version of this step was wrong.**
+>
+> This project has migrated to JWT Signing Keys. Supabase's own guidance is
+> explicit: *"it is no longer possible to rotate the legacy anon, service and JWT
+> secrets."* The legacy `anon` and `service_role` keys are **not just API keys —
+> they are JWTs signed by the legacy JWT secret**, so the only way to invalidate
+> them is to revoke that secret, and revoking it invalidates *every* JWT signed
+> with it.
+>
+> **That includes the worker tokens this runbook mints.** They are HS256, signed
+> with the same legacy secret. So revoking the legacy secret to kill
+> `service_role` would kill both workers at the same instant. The two cannot be
+> done independently while workers are on HS256 tokens.
 
 Only after **both** workers are healthy on `worker_token` for a full day.
 
 1. Confirm no worker env file still contains `SUPABASE_SERVICE_ROLE_KEY`:
    `grep -l SUPABASE_SERVICE_ROLE_KEY /etc/guildcloud/worker.env*` on both boxes
    (the `.pre-cutover` backups will match — delete them first).
-2. Supabase dashboard → Settings → API → rotate the `service_role` key.
-3. Update every remaining legitimate holder. **Checked 2026-08-29**: the Vercel
-   production project holds only `NEXT_PUBLIC_SITE_URL`,
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_URL` -- it does
-   **not** hold the service-role key, so rotating cannot take the console down.
-   Supabase injects `SUPABASE_SERVICE_ROLE_KEY` into Edge Functions itself, so
-   those pick up the new value without changes. That leaves the two worker env
-   files as the only manual holders, and after the cutover neither should have
-   it. Re-check with `vercel env ls production` before rotating rather than
-   trusting this note.
-4. Redeploy whatever consumed it and verify sign-in plus instance listing.
+
+2. **Create a secret API key** (`sb_secret_...`) in Settings → API Keys. These
+   are not JWTs, are independent of the JWT secret, and can be rotated one at a
+   time without downtime — which is precisely what `service_role` cannot do.
+
+3. Replace `service_role` with that secret key wherever it is still used. Checked
+   2026-08-29: the Vercel production project holds only `NEXT_PUBLIC_SITE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_URL`, so the console
+   is not a holder. Edge Functions receive `SUPABASE_SECRET_KEYS` alongside the
+   legacy variable and can switch by reading the new one. Re-check with
+   `vercel env ls production` rather than trusting this note.
+
+4. **Deactivate** the legacy `service_role` key in Settings → API Keys once
+   nothing uses it. Reversible — you can re-activate if you find a caller you
+   missed. This is the step that actually retires it.
+
+5. Do **not** revoke the legacy JWT secret while workers run on HS256 tokens.
+   See the next section for how to remove that constraint.
+
+## 8. Getting off the legacy JWT secret entirely (follow-up work)
+
+The HS256 approach in this runbook is the right short-term move — it takes the
+service-role key off both workers today, which is the actual security win. But it
+ties worker authentication to the legacy JWT secret, the one thing that cannot be
+rotated and that must eventually be revoked.
+
+Supabase's documented escape hatch is to **import a signing key you control**:
+
+```sh
+supabase gen signing-key --algorithm ES256
+```
+
+Import it as a standby key in Settings → JWT Keys, rotate to it, and mint worker
+tokens with it instead — the same payload (`role`, `worker_id`, `exp`) plus a
+`kid` header identifying the key. Then the legacy secret can be revoked without
+touching the workers, and the ordering becomes:
+
+1. Workers onto ES256 tokens signed with the imported key.
+2. `service_role` replaced by a secret API key and deactivated.
+3. Legacy JWT secret revoked.
+
+The alternative — a Supabase Auth user per worker plus a Custom Access Token hook
+— is still viable and is described earlier in this file. The imported-key route is
+simpler here because it keeps the existing minting script's shape: only the
+algorithm and a `kid` header change. Either way, `mint-worker-token.mjs` needs an
+ES256 mode before this can happen.
 
 ## 8. Close out
 

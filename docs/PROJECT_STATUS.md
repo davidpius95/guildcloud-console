@@ -605,11 +605,22 @@ older infrastructure backlog, still open and still real.
    minting one (needs the project JWT secret, deliberately kept away from any
    agent), pasting it into `/etc/guildcloud/worker.env` with
    `CONTROL_PLANE_AUTH_MODE=worker_token` and the service-role key removed, then
-   rotating that key. Start with **Guild-B** — narrower surface. HS256 minting is
-   confirmed to still work despite the project having an ES256 signing key, but
-   **do not revoke the legacy key** while workers run on minted tokens, and check
-   what else holds the service-role key before rotating (the Vercel deployment
-   may).
+   retiring that key. Start with **Guild-B** — narrower surface.
+
+   **Corrected 2026-08-29: the service-role key cannot be "rotated".** This
+   project has migrated to JWT Signing Keys, and Supabase's guidance is that the
+   legacy `anon`/`service_role`/JWT secrets are no longer rotatable. Those keys
+   *are* JWTs signed by the legacy JWT secret, so the only way to invalidate them
+   is to revoke that secret — which would also invalidate the HS256 worker tokens
+   this cutover mints, killing both workers at once. Retire `service_role` by
+   creating a **secret API key** (`sb_secret_...`, not a JWT, independently
+   rotatable), moving remaining callers to it, and deactivating the legacy key.
+   Vercel is not a holder (checked: only the three `NEXT_PUBLIC_*` vars).
+
+   Getting off the legacy secret entirely is follow-up work: import an ES256
+   signing key via `supabase gen signing-key`, mint worker tokens with that
+   instead, and only then revoke the legacy secret. Recorded in §8 of the
+   runbook.
 2. **Wire the capability contract into the UI and server actions** (plan Task 3)
    so `lib/platform-capabilities.ts` enforces rather than documents, and fix the
    two stale copy strings plus the missing `docs/content/product-claims.md`.
