@@ -36,7 +36,40 @@ import { healthFailures } from "./health-failures.js";
 let controlPlane = null;
 
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+// Proxmox presents a certificate signed by its own PVE Cluster Manager CA, which
+// no public root trusts. The worker used to handle that by setting
+// NODE_TLS_REJECT_UNAUTHORIZED = "0" here -- which disables certificate
+// verification for the WHOLE process, not just Proxmox. Since the Task 7 cutover
+// that process also carries a long-lived worker token to Supabase and an OAuth
+// client secret to Tailscale, so the shortcut put both on connections whose
+// certificate nobody checked. Task 7 exists to limit what a stolen worker
+// credential can do; sending it over unverified TLS reopens the path to stealing
+// one.
+//
+// It was never necessary. Both clusters' node certificates carry the node's IP
+// in subjectAltName, so trusting the cluster's own CA makes verification simply
+// pass -- checked on both: without the CA a connection fails
+// UNABLE_TO_VERIFY_LEAF_SIGNATURE, with it the same connection completes.
+//
+// The CA is installed at /etc/guildcloud/proxmox-ca.pem and pointed to by
+// NODE_EXTRA_CA_CERTS in worker.env. That variable is read by Node at startup,
+// before any of this file runs, which is why it is set through systemd's
+// EnvironmentFile rather than by parseEnvFile below. Adding a CA leaves every
+// other connection verified against the public roots as normal.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+  // Refuse rather than warn. This is the exact shortcut being removed, and a
+  // warning on a worker nobody watches is how it would come back.
+  console.error(
+    JSON.stringify({
+      ok: false,
+      error:
+        "NODE_TLS_REJECT_UNAUTHORIZED=0 disables certificate verification for every " +
+        "connection this process makes, including the worker token sent to Supabase. " +
+        "Trust the Proxmox CA with NODE_EXTRA_CA_CERTS=/etc/guildcloud/proxmox-ca.pem instead.",
+    }),
+  );
+  process.exit(1);
+}
 
 if (!globalThis.WebSocket) {
   globalThis.WebSocket = class DummyWebSocket {};
@@ -290,6 +323,11 @@ async function healthReport(supabase) {
     report.proxmoxCredentialReadable = false;
     report.proxmoxCredentialError = String(error?.message ?? error).slice(0, 200);
   }
+
+  // Named so an operator can see at a glance that the process is verifying
+  // certificates, rather than having to know that no news is good news.
+  report.tlsVerificationEnabled = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
+  report.proxmoxCaConfigured = Boolean(process.env.NODE_EXTRA_CA_CERTS);
 
   if (pveToken) {
     try {
