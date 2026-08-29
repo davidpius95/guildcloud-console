@@ -260,13 +260,24 @@ operational half: mint tokens, canary one cluster, rotate the key. That is writt
 `docs/runbooks/2026-08-29-worker-service-role-cutover.md`, and `CONTROL_PLANE_AUTH_MODE`
 still defaults to `service_role`, so nothing has changed for a running worker yet.
 
-**Step 1 of that runbook is done (2026-08-29).** Both worker identities are
-registered in `worker_identities` — `guild-a-lxc-500` → `guild-a` (holding
-`tailnet_housekeeping`) and `guild-b-lxc-500` → `guild-b` — using the ids the
-workers themselves report. Verified by resolving each identity through the
-boundary: each maps to its own cluster, Guild-B is refused housekeeping, and its
-listings are cluster-scoped. This grants nothing yet; no token exists, and the
-legacy path never reads that table.
+**Both clusters are cutover-ready except for the token (2026-08-29).** Worker
+identities are registered and each box's `WORKER_ID` matches, which
+`assertWorkerToken` requires or the worker refuses to start:
+
+| | Guild-A | Guild-B |
+| --- | --- | --- |
+| Identity | `guild-a-lxc-500-r2` | `guild-b-lxc-500` |
+| Housekeeping | yes (wider surface) | no (**narrower**) |
+| Worker code supports `worker_token` | yes | yes |
+| Token minted | operator | operator |
+
+`guild-a-lxc-500` is **revoked and burned** — its token leaked into this public
+repository and must never be re-minted, hence the `-r2` id. Guild-B's id needed
+no change: only Guild-A's was compromised. **Guild-B is the better canary**, since
+it exercises only the cluster-scoped RPCs.
+
+None of this grants anything yet: no token exists, and the legacy path never
+reads `worker_identities`.
 
 **The remaining steps need a human.** Minting a worker token requires the
 project's JWT secret, which is deliberately kept away from any agent — the whole
@@ -544,6 +555,9 @@ errors that look like a network fault. Use `pve_call` with an explicit
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | Found the delete button had **never** worked: a one-argument `request_instance_deletion` overload set instances to `deleting` and queued nothing. 52 delete requests since 08-10 produced zero delete operations. Dropped it; cleaned up four instances stranded that way | `docs/dev-log/2026-08-29-deploy-drift-leaked-token-and-a-delete-that-never-deleted.md` |
+| 2026-08-29 | Installed the deploy mechanism on the Guild-B worker, which had none at all (hand-copied code, no timer, no releases). Found and fixed a test that was silently rejecting every worker deploy on **both** clusters | same |
+| 2026-08-29 | A minted worker token was committed to this public repo; revoked immediately (inert in one `UPDATE`, no JWT-secret rotation) and the mint script now writes outside any git tree | same |
 | 2026-08-29 | Wired CD: the Vercel project is now connected to GitHub, so `main` auto-deploys and PRs get previews. Also dropped the one-argument `request_instance_deletion` overload, which set instances to `deleting` and queued no work — 52 delete requests since 08-10 had produced zero delete operations — and revoked a worker token that leaked into this public repo (inert immediately; revocation is one UPDATE by design) | — |
 | 2026-08-29 | Confirmed and removed the orphaned VM 111 the delete fault left running on podF, plus five stale cloud-init snippets (three carrying auth keys) on the shared NFS export; logged **G-25**, the worker binding Tailscale devices by hostname, which misattributes private access and defeats teardown on a hostname collision | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
 | 2026-08-29 | Ran the Task 12 end-to-end lifecycle test on a disposable instance and found two production faults: instance creation was impossible on every cluster/image/plan (both admission gates required `monitoring_healthy`, which the worker reports false by design), and **deleting an instance provisioned a new VM instead of deleting it** (delete operations were seeded with create-shaped stages). Both fixed and applied (PR #17). Create, private access, snapshot, restore-replace and upward resize all verified against real hardware | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
@@ -571,11 +585,15 @@ The hardening plan is now the active workstream; the items below it are the
 older infrastructure backlog, still open and still real.
 
 1. **Run the worker cutover** (`docs/runbooks/2026-08-29-worker-service-role-cutover.md`).
-   The code boundary is merged; what remains is operational — mint a token per
-   worker, canary one cluster, then remove `SUPABASE_SERVICE_ROLE_KEY` from both
-   boxes and rotate it. Until that runs the broad key is still live on both
-   workers. Check first whether the project uses asymmetric JWT signing keys, and
-   what else still holds the service-role key (the Vercel deployment may).
+   Everything except the token is now in place on both boxes. What remains is
+   minting one (needs the project JWT secret, deliberately kept away from any
+   agent), pasting it into `/etc/guildcloud/worker.env` with
+   `CONTROL_PLANE_AUTH_MODE=worker_token` and the service-role key removed, then
+   rotating that key. Start with **Guild-B** — narrower surface. HS256 minting is
+   confirmed to still work despite the project having an ES256 signing key, but
+   **do not revoke the legacy key** while workers run on minted tokens, and check
+   what else holds the service-role key before rotating (the Vercel deployment
+   may).
 2. **Wire the capability contract into the UI and server actions** (plan Task 3)
    so `lib/platform-capabilities.ts` enforces rather than documents, and fix the
    two stale copy strings plus the missing `docs/content/product-claims.md`.
