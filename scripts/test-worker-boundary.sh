@@ -52,7 +52,8 @@ for migration in \
   "$repo_root/supabase/migrations/20260829100000_repair_rls_helper_grants.sql" \
   "$repo_root/supabase/migrations/20260829110000_add_atomic_instance_intents.sql" \
   "$repo_root/supabase/migrations/20260829120000_add_cluster_worker_rpc_boundary.sql" \
-  "$repo_root/supabase/migrations/20260829130000_add_worker_housekeeping_rpcs.sql"
+  "$repo_root/supabase/migrations/20260829130000_add_worker_housekeeping_rpcs.sql" \
+  "$repo_root/supabase/migrations/20260829150000_revoke_anon_definer_functions.sql"
 do
   [[ -f "$migration" ]] && "${psql_cmd[@]}" < "$migration" >/dev/null
 done
