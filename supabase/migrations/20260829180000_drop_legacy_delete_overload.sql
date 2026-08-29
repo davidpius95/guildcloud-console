@@ -1,0 +1,35 @@
+-- Drop the one-argument request_instance_deletion overload. It sets an instance
+-- to `deleting` and queues no work at all, which strands the instance and leaves
+-- its VM running indefinitely.
+--
+-- Its entire body is:
+--
+--   update instances set state = 'deleting'
+--    where id = p_instance_id and state <> 'deleting';
+--
+-- No operation row, no stages. The worker's teardown sweep only acts on
+-- instances in `deleting` that have an active instance.delete operation, so it
+-- never sees them.
+--
+-- Evidence: the database contains 52 `instance.delete_requested` audit events
+-- going back to 2026-08-10, and until today exactly zero `instance.delete`
+-- operations. Every console-initiated deletion since this function shipped
+-- created no work. Four instances found stranded this way on 2026-08-29 were
+-- requeued through the two-argument RPC and torn down correctly.
+--
+-- Task 4 added the atomic two-argument version
+-- (p_instance_id uuid, p_idempotency_key text) but left this one in place.
+-- PostgREST resolves overloads by the arguments supplied, so which one a caller
+-- reaches depends on the client build: `main` sends both arguments and gets the
+-- correct function, while a stale deployment sends one and silently strands the
+-- instance.
+--
+-- Dropping it converts that silent corruption into a loud PostgREST 404 for any
+-- caller still sending a single argument, which is the failure mode we want.
+-- The two-argument version is unaffected; nothing in the repository calls the
+-- one-argument form.
+--
+-- Superseded definition originally added in
+-- supabase/migrations/20260810104404_add_request_instance_deletion_rpc.sql.
+
+drop function if exists public.request_instance_deletion(uuid);

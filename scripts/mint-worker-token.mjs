@@ -11,16 +11,24 @@
 //   SUPABASE_JWT_SECRET=... node scripts/mint-worker-token.mjs \
 //     --worker-id guild-a-lxc-500 [--expires-in 365d] [--print]
 //
-// Without --print the token is written to a 0600 file in the current directory
-// rather than to stdout, so it does not land in shell history, terminal
-// scrollback, or a CI log.
+// Without --print the token is written to a 0600 file rather than to stdout, so
+// it does not land in shell history, terminal scrollback, or a CI log.
+//
+// It is written OUTSIDE any git working tree. Writing it to the current
+// directory was the original behaviour and it went wrong immediately: a minted
+// token was swept into a commit by a `git add -A` and pushed to this public
+// repository on 2026-08-29. The identity had to be revoked and re-minted. A
+// tool that emits a credential should not drop it somewhere a routine `git add`
+// will pick up.
 //
 // The signed token carries no cluster. The cluster is resolved by the database
 // from public.worker_identities, so minting a token does not grant access on
 // its own -- an identity row must exist and not be revoked.
 
 import { createHmac, randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { argv, env, exit } from "node:process";
 
 const WORKER_ROLE = "guildcloud_site_worker";
@@ -87,6 +95,24 @@ export function mintWorkerToken({ secret, workerId, expiresInSeconds, now = Date
   return { token: `${signingInput}.${signature}`, payload };
 }
 
+// True when `dir` (or an ancestor) contains a .git entry -- i.e. writing there
+// risks the file being committed.
+export function isInsideGitWorkTree(dir) {
+  let current = resolve(dir);
+  for (;;) {
+    if (existsSync(join(current, ".git"))) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+// Never the current directory when that sits in a repository.
+function resolveOutfile(name) {
+  const cwd = process.cwd();
+  return isInsideGitWorkTree(cwd) ? join(tmpdir(), name) : join(cwd, name);
+}
+
 function main() {
   const args = parseArgs(argv.slice(2));
 
@@ -129,12 +155,13 @@ function main() {
     return;
   }
 
-  const outfile = `worker-token-${payload.worker_id}.jwt`;
+  const outfile = resolveOutfile(`worker-token-${payload.worker_id}.jwt`);
   writeFileSync(outfile, `${token}\n`, { mode: 0o600 });
   console.error(JSON.stringify({ ...summary, written_to: outfile }, null, 2));
   console.error(
-    `\nWrote ${outfile} (0600). Move it to the worker's /etc/guildcloud/worker.env\n` +
-      `as SUPABASE_WORKER_TOKEN, then delete this file. Do not commit it.`,
+    `\nWrote ${outfile} (0600), outside any git working tree.\n` +
+      `Move it into the worker's /etc/guildcloud/worker.env as SUPABASE_WORKER_TOKEN,\n` +
+      `then delete it.`,
   );
 }
 
