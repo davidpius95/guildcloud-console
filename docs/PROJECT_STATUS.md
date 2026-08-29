@@ -17,6 +17,9 @@ paraphrases drift and the plan doesn't.
 - **Gap register**: `docs/phase-0/gap-register.md` (the running list of infrastructure findings, by ID)
 - **Dev log**: `docs/dev-log/` (one dated entry per meaningful change, chronological)
 - **Decision records**: `docs/decisions/` (why a specific call was made)
+- **Replication guide**: `docs/REPLICATION.md` (how to stand the whole
+  platform up in a new environment — control plane, Proxmox, Tailscale,
+  site worker, console — and what the repo still cannot supply)
 - **This file**: what's true *right now*, synthesized from all of the above
 
 ---
@@ -620,6 +623,7 @@ errors that look like a network fault. Use `pve_call` with an explicit
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | **The repository could not rebuild its own database.** Replaying every migration into an empty Postgres failed 29 times out of 42, because Phase 1 built the first control-plane objects straight against the hosted project and migration history began mid-schema. Recovered the missing foundation from live into a baseline plus two repair migrations; a from-zero rebuild now reaches full parity with production (23/23 tables, 63/63 functions). Wrote `docs/REPLICATION.md` and `.env.example`, and corrected a README that still described the deleted `lib/mock-data.ts` as backing most pages | `docs/REPLICATION.md`, `docs/dev-log/2026-08-29-repo-could-not-rebuild-its-own-database.md` |
 | 2026-08-29 | Found the delete button had **never** worked: a one-argument `request_instance_deletion` overload set instances to `deleting` and queued nothing. 52 delete requests since 08-10 produced zero delete operations. Dropped it; cleaned up four instances stranded that way | `docs/dev-log/2026-08-29-deploy-drift-leaked-token-and-a-delete-that-never-deleted.md` |
 | 2026-08-29 | Installed the deploy mechanism on the Guild-B worker, which had none at all (hand-copied code, no timer, no releases). Found and fixed a test that was silently rejecting every worker deploy on **both** clusters | same |
 | 2026-08-29 | The legacy HS256 JWT secret was exposed, forcing the ES256 migration. `mint-worker-token.mjs` and `cutover-worker.sh` gained a `--signing-key-file` mode signing with an imported key; the console moved to the publishable key and no longer ships a legacy JWT | `docs/runbooks/2026-08-29-worker-service-role-cutover.md` |
