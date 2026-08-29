@@ -246,6 +246,22 @@ operational half: mint tokens, canary one cluster, rotate the key. That is writt
 `docs/runbooks/2026-08-29-worker-service-role-cutover.md`, and `CONTROL_PLANE_AUTH_MODE`
 still defaults to `service_role`, so nothing has changed for a running worker yet.
 
+**Step 1 of that runbook is done (2026-08-29).** Both worker identities are
+registered in `worker_identities` — `guild-a-lxc-500` → `guild-a` (holding
+`tailnet_housekeeping`) and `guild-b-lxc-500` → `guild-b` — using the ids the
+workers themselves report. Verified by resolving each identity through the
+boundary: each maps to its own cluster, Guild-B is refused housekeeping, and its
+listings are cluster-scoped. This grants nothing yet; no token exists, and the
+legacy path never reads that table.
+
+**The remaining steps need a human.** Minting a worker token requires the
+project's JWT secret, which is deliberately kept away from any agent — the whole
+argument for a one-shot operator script over Terraform was that the credential
+lives in exactly one place. Steps 4 and 7 additionally need root on the two
+worker LXCs and dashboard access to rotate the service-role key. Guild-B is the
+intended canary, since Guild-A holds housekeeping and so carries the wider
+surface.
+
 ## Repository sync state (checked 2026-08-29)
 
 Everything is merged. `origin/main` @ `5de0562` contains all work; both other remote

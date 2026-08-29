@@ -93,6 +93,31 @@ service-role key until step 7**, so this remains true throughout.
 
 ## 1. Register the worker identities
 
+> **Already done in production, 2026-08-29 16:12 UTC.** Both rows exist and
+> `guild-a-lxc-500` holds `tailnet_housekeeping`. Re-running the SQL below is
+> harmless (`on conflict do nothing`, and the housekeeping `update` is
+> idempotent), so this step is kept for a fresh environment and as the record of
+> what was applied. **Skip to step 2** unless you are setting up a new project.
+>
+> Registering identities grants nothing on its own: no token exists yet, and the
+> running workers are still on `service_role`, which never reads this table.
+>
+> The worker ids were taken from what the workers actually report
+> (`infrastructure_clusters.worker_id`), not assumed from this document — they
+> happened to match. Verified afterwards by resolving each identity through the
+> boundary rather than trusting the insert:
+>
+> | Check | Result |
+> | --- | --- |
+> | `guild-a-lxc-500` resolves | `guild-a` |
+> | `guild-b-lxc-500` resolves | `guild-b` |
+> | Guild-A holds tailnet housekeeping | granted |
+> | Guild-B requests housekeeping | refused (`42501`) |
+> | Guild-B's pending-deletion listing | scoped to its own cluster |
+>
+> Both clusters stayed `open` and heartbeating throughout, with zero active
+> operations.
+
 The token proves *which worker* is calling; this table decides *what that worker
 may touch*. A token for an unregistered worker fails closed with `28000`.
 
