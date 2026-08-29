@@ -23,6 +23,7 @@ TRACKED_DIR="$REPO_DIR/deploy/site-worker"
 RELEASES_DIR=/opt/guildcloud-worker/releases
 CURRENT_LINK=/opt/guildcloud-worker/current
 STATE_FILE=/opt/guildcloud-worker/.deployed-checksum
+DEPLOY_LOG=/var/log/guildcloud-worker-deploy.log
 
 export GIT_SSH_COMMAND="ssh -i /opt/guildcloud-worker/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
 
@@ -37,6 +38,7 @@ git fetch --depth 1 origin main >/tmp/deploy-pull.log 2>&1
 git reset --hard origin/main >>/tmp/deploy-pull.log 2>&1
 
 checksum=$(find "$TRACKED_DIR" -type f -name '*.js' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+commit_sha=$(git rev-parse HEAD)
 previous_checksum=""
 [ -f "$STATE_FILE" ] && previous_checksum=$(cat "$STATE_FILE")
 
@@ -45,6 +47,7 @@ if [ "$checksum" = "$previous_checksum" ]; then
 fi
 
 release_dir="$RELEASES_DIR/$(date -u +%Y%m%dT%H%M%SZ)"
+previous_release=$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)
 mkdir -p "$release_dir"
 cp -a "$TRACKED_DIR"/. "$release_dir"/
 
@@ -57,12 +60,31 @@ for js_file in "$release_dir"/*.js; do
 done
 
 (cd "$release_dir" && npm install --omit=dev --no-audit --no-fund >>/tmp/deploy-pull.log 2>&1)
+(cd "$release_dir" && npm test >>/tmp/deploy-pull.log 2>&1) || {
+  echo "$(date -u +%FT%TZ) REJECTED commit=$commit_sha checksum=$checksum release=$release_dir reason=tests" >> "$DEPLOY_LOG"
+  rm -rf "$release_dir"
+  exit 1
+}
+
+cat > "$release_dir/release-metadata.json" <<EOF
+{"commit":"$commit_sha","checksum":"$checksum","installed_at":"$(date -u +%FT%TZ)","rollback_target":"$previous_release"}
+EOF
 
 ln -sfn "$release_dir" "$CURRENT_LINK.new"
 mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+if ! systemctl restart guildcloud-worker.timer || ! systemctl start guildcloud-worker.service; then
+  if [ -n "$previous_release" ] && [ -d "$previous_release" ]; then
+    ln -sfn "$previous_release" "$CURRENT_LINK.rollback"
+    mv -Tf "$CURRENT_LINK.rollback" "$CURRENT_LINK"
+    systemctl restart guildcloud-worker.timer || true
+    echo "$(date -u +%FT%TZ) ROLLED_BACK commit=$commit_sha checksum=$checksum failed_release=$release_dir rollback_target=$previous_release" >> "$DEPLOY_LOG"
+  else
+    echo "$(date -u +%FT%TZ) FAILED_NO_ROLLBACK commit=$commit_sha checksum=$checksum release=$release_dir" >> "$DEPLOY_LOG"
+  fi
+  exit 1
+fi
 echo "$checksum" > "$STATE_FILE"
-systemctl restart guildcloud-worker.timer
-echo "$(date -u +%FT%TZ) deployed $release_dir" >> /var/log/guildcloud-worker-deploy.log
+echo "$(date -u +%FT%TZ) DEPLOYED commit=$commit_sha checksum=$checksum release=$release_dir rollback_target=$previous_release" >> "$DEPLOY_LOG"
 
 # Keep the current release plus the four before it; anything older is a
 # fully superseded, already-proven-bad-or-obsolete release with no reason

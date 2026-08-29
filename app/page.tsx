@@ -16,39 +16,38 @@ const services = [
     icon: IconServer,
     name: "Guild Instances",
     promise:
-      "Private virtual servers with supported OS images, safe resize, volumes, backup, monitoring, and SSH keys.",
+      "Private virtual servers with supported OS images, SSH keys, Tailscale access, and onsite daily backups.",
     boundary: "No public VPS IP or public SSH in the MVP.",
   },
   {
     icon: IconCube,
     name: "Guild Kubernetes",
-    promise: "One project-isolated shared managed cluster per site.",
-    boundary: "Dedicated clusters are a future premium module.",
+    promise: "Planned managed Kubernetes service — not available yet.",
+    boundary: "No customer Kubernetes control plane is currently offered.",
   },
   {
     icon: IconDatabase,
     name: "Managed PostgreSQL",
-    promise: "Private managed PostgreSQL with backup, recovery, and monitoring.",
-    boundary: "MySQL is future work.",
+    promise: "Planned private managed PostgreSQL service — not available yet.",
+    boundary: "No managed database workload is currently provisioned.",
   },
   {
     icon: IconBucket,
     name: "Object Storage",
-    promise: "S3-compatible application and file storage with versioning.",
-    boundary: "Storage classes expand later.",
+    promise: "Planned S3-compatible object storage — not available yet.",
+    boundary: "No customer object-storage API is currently offered.",
   },
   {
     icon: IconDisk,
     name: "Guild Volumes",
-    promise: "Expandable block storage for instances and persistent workloads.",
-    boundary: "Disk shrinking is not offered in the MVP.",
+    promise: "Planned detachable block storage — not available yet.",
+    boundary: "Only the disk included in the selected instance plan exists today.",
   },
   {
     icon: IconFunction,
     name: "Guild Functions",
-    promise:
-      "Node.js and Python functions for HTTP, schedules, storage events, and PostgreSQL events.",
-    boundary: "Container runtime is advanced/future.",
+    promise: "Planned Node.js and Python functions — not available yet.",
+    boundary: "No customer functions runtime is currently offered.",
   },
 ];
 
@@ -57,24 +56,22 @@ const tiers = [
     name: "Standard",
     price: "Included",
     promise:
-      "Daily encrypted off-site backup, seven-day retention, and restore into a healthy site.",
-    treatment: "Included baseline on every resource.",
+      "Daily onsite Proxmox Backup Server protection with seven-day retention.",
+    treatment: "Offsite and geographic recovery are not available yet.",
     featured: false,
   },
   {
     name: "Protected",
     price: "Paid add-on",
-    promise:
-      "More frequent recovery points, a longer retention option, and priority restore handling.",
-    treatment: "For workloads where a day of loss is too much.",
+    promise: "Not available yet.",
+    treatment: "Requires verified retention, recovery, and support operations.",
     featured: true,
   },
   {
     name: "Warm Standby",
     price: "Premium",
-    promise:
-      "A prepared secondary-site recovery workflow, offered only after real full-site drills pass.",
-    treatment: "Limited capacity. No active-active promise.",
+    promise: "Not available yet.",
+    treatment: "Requires an independent failure domain and successful full-site drills.",
     featured: false,
   },
 ];
@@ -167,7 +164,7 @@ export default function LandingPage() {
             </a>
           </div>
 
-          <p className="mt-5 max-w-xl text-xs text-ink-400">
+          <p className="mt-5 max-w-xl text-xs text-ink-500">
             GuildCloud is not an AWS replacement at launch. It is a focused,
             trustworthy private cloud first — and every claim on this page is
             written to match what has actually been tested.
@@ -176,8 +173,8 @@ export default function LandingPage() {
           <div className="mt-10 grid gap-3 sm:grid-cols-3">
             {[
               ["Private access", "No public SSH route on MVP instances"],
-              ["Clear recovery", "Restores are tested before they are promised"],
-              ["Wallet-first", "Costs stay visible before anything is created"],
+              ["Clear recovery", "Snapshot replacement is verified before completion"],
+              ["Visible pricing", "Plan prices are shown before anything is created"],
             ].map(([title, detail]) => (
               <div key={title} className="rounded-xl border border-ink-100 bg-white/85 p-4 shadow-[0_1px_2px_rgba(23,29,54,0.04)] backdrop-blur">
                 <p className="text-sm font-semibold text-ink-900">{title}</p>
@@ -204,23 +201,23 @@ export default function LandingPage() {
               <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
               <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
               <span className="h-2.5 w-2.5 rounded-full bg-lemon-400" />
-              <span className="ml-3 font-mono text-xs text-ink-400">
+              <span className="ml-3 font-mono text-xs text-ink-500">
                 console.guildcloud.io/instances/api-prod-1
               </span>
             </div>
             <div className="grid gap-6 p-6 sm:grid-cols-3">
               <div>
-                <p className="text-xs font-medium text-ink-400">Private hostname</p>
+                <p className="text-xs font-medium text-ink-500">Private hostname</p>
                 <p className="mt-1 break-all font-mono text-sm text-ink-800">
                   api-prod-1.core.guild.internal
                 </p>
               </div>
               <div>
-                <p className="text-xs font-medium text-ink-400">Hourly price</p>
+                <p className="text-xs font-medium text-ink-500">Hourly price</p>
                 <p className="mt-1 font-mono text-sm text-ink-800">$0.062</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-ink-400">Monthly maximum</p>
+                <p className="text-xs font-medium text-ink-500">Monthly maximum</p>
                 <p className="mt-1 font-mono text-sm text-ink-800">$44.64</p>
               </div>
               <div className="sm:col-span-3">
@@ -236,7 +233,7 @@ export default function LandingPage() {
                       className={
                         i < 4
                           ? "rounded-full bg-lemon-100 px-3 py-1 text-xs font-medium text-lemon-800"
-                          : "rounded-full bg-ink-100 px-3 py-1 text-xs font-medium text-ink-400"
+                          : "rounded-full bg-ink-100 px-3 py-1 text-xs font-medium text-ink-500"
                       }
                     >
                       {stage}
@@ -286,7 +283,7 @@ export default function LandingPage() {
                   <p className="mt-2 text-sm leading-relaxed text-ink-500">
                     {s.promise}
                   </p>
-                  <p className="mt-3 border-t border-ink-100 pt-3 text-xs text-ink-400">
+                  <p className="mt-3 border-t border-ink-100 pt-3 text-xs text-ink-500">
                     <span className="font-medium text-ink-500">Boundary:</span>{" "}
                     {s.boundary}
                   </p>
@@ -315,7 +312,7 @@ export default function LandingPage() {
                 "Individual named administrator accounts with sudo — not shared root",
                 "SSH keys on by default; password SSH is opt-in, private-route only, and never stored by GuildCloud",
                 "Removing a teammate revokes network permission and server login together",
-                "A browser recovery console for exceptional recovery, not ordinary use",
+                "Snapshot replacement from a ready snapshot, with explicit confirmation",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-3 text-sm text-ink-700">
                   <span className="mt-1 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-lemon-400 text-[0.6rem] font-bold text-ink-900">
@@ -328,7 +325,7 @@ export default function LandingPage() {
           </div>
 
           <div className="rounded-xl border border-ink-100 bg-white p-6">
-            <p className="text-xs font-semibold uppercase tracking-widest text-ink-400">
+            <p className="text-xs font-semibold uppercase tracking-widest text-ink-500">
               Network zones
             </p>
             <div className="mt-4 space-y-3">
@@ -348,8 +345,8 @@ export default function LandingPage() {
                       tone === "lemon"
                         ? "text-right text-xs font-medium text-lemon-700 dark:text-lemon-400"
                         : tone === "amber"
-                          ? "text-right text-xs font-medium text-amber-600"
-                          : "text-right text-xs text-ink-400"
+                          ? "text-right text-xs font-medium text-amber-800"
+                          : "text-right text-xs text-ink-500"
                     }
                   >
                     {reach}
@@ -357,7 +354,7 @@ export default function LandingPage() {
                 </div>
               ))}
             </div>
-            <p className="mt-5 text-xs text-ink-400">
+            <p className="mt-5 text-xs text-ink-500">
               You never talk to Proxmox directly. GuildCloud owns the control
               plane; Proxmox is the execution plane behind it.
             </p>
@@ -394,7 +391,7 @@ export default function LandingPage() {
                 <p className="mt-3 text-sm leading-relaxed text-ink-600">
                   {t.promise}
                 </p>
-                <p className="mt-4 border-t border-ink-100 pt-3 text-xs text-ink-400">
+                <p className="mt-4 border-t border-ink-100 pt-3 text-xs text-ink-500">
                   {t.treatment}
                 </p>
               </div>
@@ -415,17 +412,17 @@ export default function LandingPage() {
             Costs you can see before you commit
           </h2>
           <p className="mt-3 max-w-2xl text-ink-500">
-            GuildCloud is wallet-first. Every metered event becomes an explainable
-            ledger entry, and the hourly price and monthly maximum appear before
-            anything is created.
+            The console shows the selected plan's hourly price and monthly maximum
+            before creation. Payment collection, invoices, auto-reload, and a
+            customer usage ledger are not available yet.
           </p>
 
           <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
             {[
-              ["Before creation", "Hourly price, monthly maximum, protection, storage, and add-on costs."],
-              ["One wallet", "Per organization, with optional auto-reload you configure."],
-              ["Local payment rails", "Paystack and Flutterwave, with methods suited to your country and currency."],
-              ["No silent deletion", "Payment failures get retries, notice, and a documented grace period."],
+              ["Available now", "Plan hourly price and monthly maximum are shown before a server request."],
+              ["Usage ledger", "Not available yet. Current balances are not a complete immutable billing ledger."],
+              ["Payment collection", "Not available yet. No payment provider is connected to this console."],
+              ["Invoices", "Not available yet. The billing page does not issue accounting documents."],
             ].map(([title, detail]) => (
               <div key={title} className="rounded-xl border border-ink-100 bg-white p-6">
                 <h3 className="text-sm font-semibold text-ink-900">{title}</h3>
@@ -434,7 +431,7 @@ export default function LandingPage() {
             ))}
           </div>
 
-          <p className="mt-8 max-w-2xl text-xs text-ink-400">
+          <p className="mt-8 max-w-2xl text-xs text-ink-500">
             Plan sizes and prices are derived from measured site capacity. Nothing
             is advertised that cannot be consistently delivered.
           </p>
@@ -479,7 +476,7 @@ export default function LandingPage() {
             </span>
             <span className="text-sm font-semibold text-ink-900">GuildCloud</span>
           </div>
-          <p className="text-xs text-ink-400">
+          <p className="text-xs text-ink-500">
             Private by default, measured capacity, clear bills, tested recovery,
             documented operations.
           </p>

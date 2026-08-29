@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { IconLock, IconChevron, IconShield, IconArrowRight } from "./icons";
-import { Card, CardHeader, Badge, Button } from "./ui";
+import { IconLock, IconChevron, IconArrowRight } from "./icons";
+import { Card, CardHeader } from "./ui";
 import { ConnectDeviceButton } from "./connect-device-button";
 
 export function RemoteAccessGuide({

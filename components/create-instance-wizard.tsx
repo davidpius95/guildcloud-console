@@ -6,42 +6,10 @@ import { useRouter } from "next/navigation";
 import { images, plans } from "@/lib/catalog";
 import { money } from "@/lib/format";
 import type { RealSite } from "@/lib/supabase/queries";
-import type { ProtectionTier } from "@/lib/types";
 import { createInstance } from "@/app/console/instances/actions";
 import { Badge, Button, Card, CardHeader, Note, cx } from "./ui";
-import { IconLock, IconShield, OSLogo } from "./icons";
+import { IconLock, OSLogo } from "./icons";
 import { AddSshKeyModal } from "./add-ssh-key-modal";
-
-const protectionOptions: Array<{
-  id: ProtectionTier;
-  name: string;
-  detail: string;
-  multiplier: number;
-  limited?: boolean;
-}> = [
-  {
-    id: "standard",
-    name: "Standard",
-    detail:
-      "Daily encrypted off-site backup, seven-day retention, restore into a healthy site.",
-    multiplier: 0,
-  },
-  {
-    id: "protected",
-    name: "Protected",
-    detail:
-      "More frequent recovery points, longer retention option, priority restore handling.",
-    multiplier: 0.25,
-  },
-  {
-    id: "warm-standby",
-    name: "Warm Standby",
-    detail:
-      "Prepared secondary-site recovery workflow. Offered only where full-site drills have passed.",
-    multiplier: 0.6,
-    limited: true,
-  },
-];
 
 function Section({
   step,
@@ -149,8 +117,6 @@ export function CreateInstanceWizard({
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [imageId, setImageId] = useState("ubuntu-2404");
   const [planId, setPlanId] = useState("std-2");
-  const [protection, setProtection] = useState<ProtectionTier>("standard");
-  const [volumeGb, setVolumeGb] = useState(0);
   // Optimistic local count so adding a key via the inline modal below
   // unlocks the password-SSH checkbox immediately, without a full page
   // reload - the server-fetched sshKeyCount prop is just the starting value.
@@ -176,19 +142,13 @@ export function CreateInstanceWizard({
   const site = sites.find((s) => s.id === siteId) ?? sites[0];
   const plan = plans.find((p) => p.id === planId)!;
   const image = images.find((i) => i.id === imageId)!;
-  const tier = protectionOptions.find((p) => p.id === protection)!;
 
   const cost = useMemo(() => {
-    const volumeMonthly = volumeGb * 0.1;
-    const protectionMonthly = plan.monthlyMax * tier.multiplier;
-    const monthly = plan.monthlyMax + volumeMonthly + protectionMonthly;
     return {
-      hourly: monthly / 720,
-      monthly,
-      volumeMonthly,
-      protectionMonthly,
+      hourly: plan.hourlyPrice,
+      monthly: plan.monthlyMax,
     };
-  }, [plan, tier, volumeGb]);
+  }, [plan]);
 
   const imageAvailable = templateAvailability.some(
     (t) => t.catalogImageId === imageId && t.siteId === siteId,
@@ -228,7 +188,7 @@ export function CreateInstanceWizard({
         <Section
           step={1}
           title="Site and project"
-          description="A site accepts new work only when compute, storage, private networking, backups, and monitoring are healthy."
+          description="A site accepts new work only when current compute, storage, and private-network capacity pass admission checks."
         >
           <div className="grid gap-3 sm:grid-cols-3">
             {sites.map((s) => (
@@ -374,62 +334,10 @@ export function CreateInstanceWizard({
             ))}
           </div>
 
-          <label className="mt-5 block">
-            <span className="mb-1.5 flex items-baseline justify-between text-xs font-medium text-ink-500">
-              <span>Additional block storage</span>
-              <span className="tabular-nums text-ink-700">
-                {volumeGb} GB · {money(volumeGb * 0.1)}/mo
-              </span>
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={1000}
-              step={50}
-              value={volumeGb}
-              onChange={(e) => setVolumeGb(Number(e.target.value))}
-              className="w-full accent-lemon-500"
-            />
-            <span className="mt-1 block text-xs text-ink-500">
-              Volumes expand later without downtime. Shrinking is not offered.
-            </span>
-          </label>
         </Section>
 
         <Section
           step={4}
-          title="Protection tier"
-          description="Every tier below describes a recovery workflow that has passed a drill."
-        >
-          <div className="space-y-3">
-            {protectionOptions.map((p) => (
-              <Option
-                key={p.id}
-                selected={p.id === protection}
-                onClick={() => setProtection(p.id)}
-              >
-                <div className="flex items-start gap-3">
-                  <IconShield className="mt-0.5 h-4 w-4 shrink-0 text-lemon-600" />
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium">{p.name}</p>
-                      {p.limited ? <Badge tone="amber">Limited capacity</Badge> : null}
-                      <span className="ml-auto text-sm font-semibold tabular-nums">
-                        {p.multiplier === 0
-                          ? "Included"
-                          : `+${money(plan.monthlyMax * p.multiplier)}/mo`}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs opacity-70">{p.detail}</p>
-                  </div>
-                </div>
-              </Option>
-            ))}
-          </div>
-        </Section>
-
-        <Section
-          step={5}
           title="Access and identity"
           description="You receive a named administrator account with sudo. Root password SSH is not the default model."
         >
@@ -542,8 +450,7 @@ export function CreateInstanceWizard({
               ["Project", projects.find((p) => p.id === projectId)!.name],
               ["Image", `${image.name} ${image.version}`],
               ["Plan", `${plan.name} · ${plan.vcpu} vCPU · ${plan.memoryGb} GB`],
-              ["Disk", `${plan.diskGb} GB${volumeGb ? ` + ${volumeGb} GB volume` : ""}`],
-              ["Protection", tier.name],
+              ["Disk", `${plan.diskGb} GB disk`],
               ["Access", passwordSsh ? "SSH keys + password" : "SSH keys only"],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between gap-4 px-5 py-2.5">

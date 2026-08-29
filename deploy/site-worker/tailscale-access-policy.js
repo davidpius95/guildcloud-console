@@ -50,7 +50,6 @@ function grantKey(src, dst) {
 // nothing else unless another distinct VM grant is created later.
 export function desiredMemberInstanceGrants({ memberships, instances, accessGrants }) {
   const membersById = new Map(memberships.map((member) => [member.id, member]));
-  const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
   const desired = new Map();
 
   for (const accessGrant of accessGrants) {

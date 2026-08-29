@@ -6,7 +6,7 @@ const SESSION_REFRESH_TIMEOUT_MS = 1_500;
 // Refreshes the Supabase session cookie on every request. Required by
 // @supabase/ssr: Server Components can't write cookies, so this is the
 // one place session refresh actually persists.
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -47,6 +47,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/console/:path*",
+    "/onboarding/:path*",
   ],
 };

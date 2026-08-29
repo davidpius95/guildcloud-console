@@ -35,9 +35,11 @@ follows the same one-line pattern once that cluster is onboarded.
 Edit `deploy/site-worker/*.js`, commit, push to `main`. Every cluster's
 `guildcloud-worker-deploy.timer` picks it up within ~2 minutes -
 `deploy-pull.sh` stages the new release into its own timestamped directory,
-runs `node --check` on every file before touching anything live, installs
-locked dependencies, then atomically swaps the `current` symlink and
-restarts `guildcloud-worker.timer`. The previous four releases stay on disk
+runs `node --check` and the complete worker test suite before touching anything
+live, installs locked dependencies, then atomically swaps the `current` symlink
+and runs a bounded worker cycle. A failed activation automatically restores the
+previous symlink. Release metadata and the commit/checksum/rollback target are
+written to the release and deployment log. The previous four releases stay on disk
 for rollback; nothing here needs terminal access to any LXC.
 
 ## Verifying a deployed release
