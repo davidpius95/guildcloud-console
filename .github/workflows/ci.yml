@@ -20,6 +20,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Pin npm rather than inheriting whatever the runner image ships. An npm
+      # upgrade previously changed how a hoisted peer (fdir -> picomatch) was
+      # validated, so `npm ci` failed in CI while succeeding locally against the
+      # same lockfile. Pinning makes the lockfile's contract reproducible.
+      - run: npm install -g npm@10.9.8
+      - run: node --version && npm --version
       - run: npm ci
       - run: npm run check:migrations
       - run: npm run lint
@@ -38,6 +44,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Pin npm rather than inheriting whatever the runner image ships. An npm
+      # upgrade previously changed how a hoisted peer (fdir -> picomatch) was
+      # validated, so `npm ci` failed in CI while succeeding locally against the
+      # same lockfile. Pinning makes the lockfile's contract reproducible.
+      - run: npm install -g npm@10.9.8
+      - run: node --version && npm --version
       - run: npm ci
       - run: npm run test:db
       - run: npm run test:intents
@@ -52,6 +64,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Pin npm rather than inheriting whatever the runner image ships. An npm
+      # upgrade previously changed how a hoisted peer (fdir -> picomatch) was
+      # validated, so `npm ci` failed in CI while succeeding locally against the
+      # same lockfile. Pinning makes the lockfile's contract reproducible.
+      - run: npm install -g npm@10.9.8
+      - run: node --version && npm --version
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
