@@ -54,9 +54,32 @@ Worth doing once the boundary itself is proven in production.
       Wait for it to be empty. A cutover mid-operation leaves a half-executed
       lifecycle.
 - [ ] You have the project's **JWT secret** (Supabase dashboard → Settings → API →
-      JWT Settings). If the project has migrated to asymmetric **JWT signing
-      keys**, stop: the minting script signs HS256 against the legacy shared
-      secret, and this runbook needs revising first.
+      JWT Settings).
+
+      **Checked 2026-08-29 — HS256 minting works, with one caveat.** This project
+      *has* an asymmetric signing key: its JWKS publishes a single **ES256** key
+      (`kid 6f8020a7-…`), so Supabase Auth issues user tokens signed ES256. That
+      does **not** block this runbook, because the legacy HS256 secret is still in
+      the verification key set. Verified empirically rather than assumed: posting
+      the legacy anon key (an HS256 JWT) as a bearer token to
+      `/rest/v1/rpc/worker_heartbeat` returns
+      `42501 permission denied for function worker_heartbeat` — the token
+      verified, PostgREST switched to `anon`, and the grant refused it. The
+      control, the same token with one character of the signature changed,
+      returns `PGRST301 "None of the keys was able to decode the JWT"`. The
+      legacy anon key also still reports `disabled: false`.
+
+      **The caveat is a live footgun.** Completing the signing-keys migration —
+      revoking the legacy HS256 key in the dashboard — instantly invalidates every
+      worker token minted by `scripts/mint-worker-token.mjs`, stopping
+      provisioning on **both** clusters at once. So while workers run on
+      HS256 tokens: do not revoke the legacy key, and treat that dashboard action
+      as a change that requires re-minting first.
+
+      This is the strongest argument for the Auth-user alternative described
+      below: tokens issued by Supabase Auth itself are signed with the current
+      ES256 key, so they survive legacy-key revocation. Custom ES256 minting is
+      not an option — the platform holds that private key and does not export it.
 - [ ] Root SSH to both worker LXCs (Guild-A: vmid 500 on nodeD, Guild-B: vmid 500
       on podD).
 
