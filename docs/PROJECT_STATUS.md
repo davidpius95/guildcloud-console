@@ -236,8 +236,8 @@ ledger), Task 12 (staged launch). Task 11 is a deliberate design backlog.
 worker still runs on `SUPABASE_SERVICE_ROLE_KEY` (`deploy/site-worker/index.js:169`) and
 does ~30 direct table writes instead of cluster-scoped RPCs, so a compromised worker has
 broad control-plane access and can act outside its own cluster. This is both a P0 launch
-gate in the plan and a live exposure. `supabase/functions/site-worker-guild-a/` is also
-still present as a third worker copy.
+gate in the plan and a live exposure. `supabase/functions/site-worker-guild-a/index.ts` is already a non-deployable
+tombstone rather than a live third copy.
 
 ## Repository sync state (checked 2026-08-29)
 
