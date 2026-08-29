@@ -14,6 +14,8 @@
 // only inside the script the user chooses to run.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
+import { publishableApiKey, secretApiKey } from "../_shared/api-keys.ts";
+
 const TAILSCALE_TAILNET = "tail345216.ts.net";
 const TAILSCALE_TAG_OWNER = "davidpius95@gmail.com";
 const MEMBER_TAG_PREFIX = "tag:guildcloud-member-";
@@ -41,7 +43,7 @@ function safeConsoleUrl(candidate: unknown): string | null {
 function serviceClient() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    secretApiKey(),
   );
 }
 
@@ -131,7 +133,7 @@ Deno.serve(async (req) => {
     // Identify the real caller via their own session (anon key + forwarded
     // auth header) - separate from the service-role client used below for
     // privileged writes, so we always know exactly who's asking.
-    const userClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    const userClient = createClient(Deno.env.get("SUPABASE_URL")!, publishableApiKey(), {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: userData, error: userError } = await userClient.auth.getUser();

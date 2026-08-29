@@ -8,10 +8,12 @@
 // anyone who isn't an authenticated console user.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
+import { publishableApiKey, secretApiKey } from "../_shared/api-keys.ts";
+
 function serviceClient() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    secretApiKey(),
   );
 }
 
@@ -26,7 +28,7 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401 });
 
-    const userClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    const userClient = createClient(Deno.env.get("SUPABASE_URL")!, publishableApiKey(), {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: userData, error: userError } = await userClient.auth.getUser();
