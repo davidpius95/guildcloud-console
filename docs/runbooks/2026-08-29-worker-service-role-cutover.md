@@ -146,6 +146,30 @@ select worker_id, cluster_id, tailnet_housekeeping, revoked_at
 from public.worker_identities order by worker_id;
 ```
 
+## The short path
+
+Steps 2-5 are automated by `scripts/cutover-worker.sh`. It keeps
+`SUPABASE_JWT_SECRET` on your machine: the token is held in a shell variable,
+piped to the worker over stdin, and never written to disk locally, never passed
+as a command-line argument, and never echoed.
+
+```bash
+SUPABASE_JWT_SECRET='<jwt secret>' scripts/cutover-worker.sh \
+  --worker-id guild-b-lxc-500 --host podD --vmid 500
+```
+
+Add `--dry-run` first to see what it would do. It refuses if the box's
+`WORKER_ID` does not match the id you are minting for, backs up the env file,
+validates the new config with `--print-config` **before** restarting anything,
+and restores the backup automatically if `--health` does not come up.
+
+Guild-A is `--worker-id guild-a-lxc-500-r2 --host nodeD --vmid 500`. Do Guild-B
+first: it does not hold tailnet housekeeping, so it exercises the narrower
+surface.
+
+Requires ssh as root to the Proxmox node. The long-hand steps below remain
+accurate if you would rather do it by hand, or if that ssh path is unavailable.
+
 ## 2. Mint the canary token
 
 Pick the canary cluster from current health, not from habit — do **not** default
@@ -255,9 +279,15 @@ Only after **both** workers are healthy on `worker_token` for a full day.
    `grep -l SUPABASE_SERVICE_ROLE_KEY /etc/guildcloud/worker.env*` on both boxes
    (the `.pre-cutover` backups will match — delete them first).
 2. Supabase dashboard → Settings → API → rotate the `service_role` key.
-3. Update every remaining legitimate holder. **Check before rotating**: the
-   Vercel console deployment and any Edge Function may use it. Rotating without
-   updating those takes the console down.
+3. Update every remaining legitimate holder. **Checked 2026-08-29**: the Vercel
+   production project holds only `NEXT_PUBLIC_SITE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXT_PUBLIC_SUPABASE_URL` -- it does
+   **not** hold the service-role key, so rotating cannot take the console down.
+   Supabase injects `SUPABASE_SERVICE_ROLE_KEY` into Edge Functions itself, so
+   those pick up the new value without changes. That leaves the two worker env
+   files as the only manual holders, and after the cutover neither should have
+   it. Re-check with `vercel env ls production` before rotating rather than
+   trusting this note.
 4. Redeploy whatever consumed it and verify sign-in plus instance listing.
 
 ## 8. Close out
