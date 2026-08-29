@@ -153,11 +153,80 @@ Cleanup after the fix: delete re-requested, **0 stages seeded**, sweep tore the
 VM down. Instance row, snapshot row and capacity holds all gone; production back
 to 7 instances, 0 active operations, 0 live holds.
 
-**Not verified: whether VM 111 on podF was actually removed from Proxmox.** The
-first (broken) delete's sweep should have taken it before the stage machine
-repointed the instance at 112, but both Proxmox MCP servers were failing TLS
-certificate verification at the time, so it could not be confirmed. Worth a
-manual check for an orphaned guest on podF.
+### The orphan: confirmed, and worse than expected
+
+The first pass could not confirm whether VM 111 survived, because both Proxmox
+MCP servers appeared unreachable. **That diagnosis was wrong.** The dedicated
+wrappers (`get_vms`, `get_vm_status`) silently target the server's *default*
+cluster — guild-a — so asking them about podF produced TLS and
+`No route to host` errors that looked like a network fault. `pve_call` with an
+explicit `cluster='guild-b'` reaches both clusters fine. Worth remembering: on
+that MCP, always pass `cluster` rather than trusting the wrappers.
+
+With the right cluster, podF's guest list showed it directly:
+
+```json
+{"name": "verify-t7-e2e", "vmid": 111, "status": "running",
+ "cpus": 2, "maxmem": 4294967296, "maxdisk": 85899345920, "uptime": 3556}
+```
+
+2 vCPU / 4 GB / 80 GB — the std-2 shape it had after the resize, still running an
+hour after the instance was supposedly deleted.
+
+**Why it survived** is the part worth keeping. The broken delete was a race the
+stage machine won outright: it finished at 15:02:24, about 50 seconds after the
+request, while the teardown sweep only runs once per three-minute worker cycle.
+By the time the sweep looked, the instance was `ready` again and no longer a
+deletion candidate — so VM 111 was never a teardown target at all. The follow-up
+delete then removed VM **112**, because that is what the instance row pointed at
+by then.
+
+**A second fault surfaced during cleanup** and is now recorded as **G-25**. The
+worker matches Tailscale devices by hostname, and Tailscale permits duplicate
+hostnames (it disambiguates the *name* with a `-1` suffix, leaving `hostname`
+identical). So VM 112 enrolled as a second device under the same hostname, and
+the worker bound the instance to VM 111's device — recording
+`private_ip 100.106.53.113` in the 112 stage detail while 112 actually held
+`100.69.78.32`. Cleanup therefore deleted the wrong device. Beyond leaving an
+orphan, this means a hostname collision can show a customer connection details
+belonging to a different guest.
+
+### Cleanup performed
+
+- **VM 111 destroyed** on guild-b/podF — stopped, then `DELETE` with `purge=1`
+  and `destroy-unreferenced-disks=1`. podF's guest list re-read afterwards: both
+  111 and 112 absent, leaving the six legitimate instances
+  (`102, 105, 106, 107, 108, 110`), the node template (`9166`), and two legacy
+  guests (`119`, `121`).
+- **Five stale cloud-init snippets removed** from the shared `guild-snippets`
+  NFS export. This needed care: the export is mounted across all six guild-b
+  nodes, so its content listing is cluster-wide, and deleting a snippet a VM
+  still references in `cicustom` makes that VM permanently unstartable at its
+  next boot (the failure `detachVendorSnippet` exists to prevent). Two of the
+  five were named for live VMIDs — `guildcloud-100.yaml` (VM 100 is
+  `guildcloud-dev` on podC, **running**, 8 vCPU) and `guildcloud-102.yaml`
+  (the podF template seed). Both configs were pulled first and **neither had a
+  `cicustom` entry**, so all five were genuinely unreferenced; 113/114/115 had no
+  VM anywhere in the cluster. The three 1436-byte files mattered most: per the
+  worker's own comments those carry a Tailscale auth key and the instance's
+  one-time password, on a share bind-mounted into the worker container. The two
+  0-byte files are almost certainly truncation remnants from the August ENOSPC
+  incident. Store now lists empty; VM 100 verified still running afterwards.
+
+**Still outstanding:** the orphaned tailnet device `instance-1142e8a0-1`
+(id `3346168422532813`, `100.69.78.32`, offline since 15:13:41). The Tailscale
+MCP refuses `device_action delete` at the available permission level, so it needs
+removing from the admin console or with a device-delete-scoped token.
+
+### One reasoning correction worth recording
+
+While hunting the orphan I first argued from capacity: podF showed
+`committed_vcpu 5 / 10 GB` against a `3 / 6` baseline, a delta of exactly one
+std-2 guest. That was treated as proof for a moment, and it was not — the six
+legitimate podF instances would themselves need 7 vCPU, so `committed_vcpu`
+plainly counts only *running* guests. The delta was real corroboration but never
+proof; the tailnet device listing, and then the direct API read, were what
+actually settled it.
 
 ## CI had never passed
 
