@@ -363,6 +363,39 @@ function deleteSnippet(filename) {
   }
 }
 
+// Strips the vendor= entry out of a VM's cicustom.
+//
+// MUST be called before deleteSnippet() for any VM that is staying alive.
+// Proxmox validates every cicustom volume at *start* time, not just at first
+// boot, so a config still pointing at a deleted snippet makes the VM
+// permanently unstartable: `volume 'guild-snippets:snippets/guildcloud-N.yaml'
+// does not exist`. The VM keeps running until something stops it, which is why
+// this stayed invisible - the create path deletes the snippet after a
+// successful enrolment and everything looks fine, then the next resize,
+// restore, host reboot or customer-issued reboot shuts the VM down and it
+// never comes back.
+//
+// Deleting the snippet is still correct (it carries the Tailscale authkey and
+// the one-time password); only the dangling reference is the bug.
+async function detachVendorSnippet(token, node, vmid) {
+  try {
+    const vmConfig = await pve(token, "GET", `nodes/${node}/qemu/${vmid}/config`);
+    const current = vmConfig?.cicustom ?? "";
+    if (!current.includes("vendor=")) return;
+    const parts = current.split(",").filter((p) => p && !p.startsWith("vendor="));
+    await pve(
+      token,
+      "PUT",
+      `nodes/${node}/qemu/${vmid}/config`,
+      parts.length > 0 ? { cicustom: parts.join(",") } : { delete: "cicustom" },
+    );
+  } catch (e) {
+    // Never fail the operation for this: a dangling reference breaks the next
+    // boot, but throwing here would break the boot that is happening now.
+    console.log(JSON.stringify({ ok: false, where: "detachVendorSnippet", vmid, error: String(e) }));
+  }
+}
+
 // Every housekeeping pass below is scoped to config.clusterId, and every
 // Proxmox call uses the row's own stored node - never a module constant.
 // This is the fix for the cross-cluster deletion bug: instance VMID
@@ -1284,6 +1317,7 @@ async function processOneStage(supabase, operation) {
             await supabase.from("instances").update({ private_ip: privateIp }).eq("id", inst.id);
           }
           if (warmDetail.warm_pool_id) {
+            await detachVendorSnippet(token, node, inst.proxmox_vmid);
             deleteSnippet(`guildcloud-${inst.proxmox_vmid}.yaml`);
           }
           await markStage(supabase, next, {
@@ -1348,8 +1382,11 @@ async function processOneStage(supabase, operation) {
             return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
           }
 
-          // Device enrolled — clean up the per-instance snippet file.
+          // Device enrolled — clean up the per-instance snippet file. Detach
+          // the config reference first, or the VM becomes unstartable the next
+          // time anything stops it (see detachVendorSnippet).
           if (tciStage.detail?.ts_snippet_filename) {
+            await detachVendorSnippet(token, node, inst.proxmox_vmid);
             deleteSnippet(tciStage.detail.ts_snippet_filename);
           }
           await supabase.from("instances").update({ private_ip: device.addresses[0], private_hostname: device.name, tailscale_device_id: device.id }).eq("id", inst.id);
@@ -1495,10 +1532,26 @@ async function processOneStage(supabase, operation) {
       if (operation.kind === "instance.snapshot") {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } else {
+        // Bounded, unlike the original: every other retry site in this file
+        // checks NETWORK_ATTACH_EXEC_MAX_MS, but this one looped forever. A
+        // resize whose reboot left the VM off sat here for 137 attempts over
+        // 17 minutes reporting "VM is not running", with the operation stuck
+        // in `running` and the instance therefore never released - no failure,
+        // no alert, nothing to act on.
+        const verifyStartedAt = next.detail?.stage_started_at ?? new Date().toISOString();
         try {
           await pve(token, "POST", `nodes/${node}/qemu/${instance.proxmox_vmid}/agent/ping`);
         } catch (e) {
-          await markStage(supabase, next, { status: "active", error: String(e) });
+          if (Date.now() - new Date(verifyStartedAt).getTime() > NETWORK_ATTACH_EXEC_MAX_MS) {
+            throw new Error(
+              `automated_verification: guest agent on VM ${instance.proxmox_vmid} did not respond within ${NETWORK_ATTACH_EXEC_MAX_MS}ms - last error: ${String(e)}`,
+            );
+          }
+          await markStage(supabase, next, {
+            status: "active",
+            error: String(e),
+            detail: { ...(next.detail ?? {}), stage_started_at: verifyStartedAt },
+          });
           return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
         }
 
