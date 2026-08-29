@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mintWorkerToken, parseDuration } from "./mint-worker-token.mjs";
+import { tmpdir } from "node:os";
+
+import { isInsideGitWorkTree, mintWorkerToken, parseDuration } from "./mint-worker-token.mjs";
 
 const SECRET = "test-secret-not-a-real-jwt-secret";
 
@@ -96,4 +98,12 @@ test("the signature changes with the secret, so a wrong secret cannot pass", () 
   const a = mintWorkerToken({ secret: SECRET, workerId: "w-1", expiresInSeconds: 60, now: 1 });
   const b = mintWorkerToken({ secret: "other", workerId: "w-1", expiresInSeconds: 60, now: 1 });
   assert.notEqual(a.token.split(".")[2], b.token.split(".")[2]);
+});
+
+test("a git working tree is detected, so tokens are never written into a repo", () => {
+  // The original script wrote to the current directory. A minted token was
+  // swept into a commit by `git add -A` and pushed to a public repository on
+  // 2026-08-29; the identity had to be revoked and re-minted.
+  assert.equal(isInsideGitWorkTree(process.cwd()), true, "the repo itself must be detected");
+  assert.equal(isInsideGitWorkTree(tmpdir()), false, "the temp dir must not be");
 });

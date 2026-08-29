@@ -16,3 +16,9 @@ supabase/.temp/
 
 # Isolated implementation workspaces
 .worktrees/
+
+# Minted worker credentials. scripts/mint-worker-token.mjs writes these into the
+# working directory; one was committed to this public repository on 2026-08-29.
+# Never commit them -- they authenticate a site worker to the control plane.
+worker-token-*.jwt
+*.jwt
