@@ -198,3 +198,61 @@ test("describeConfig never includes a secret value, only its name", () => {
   assert.doesNotMatch(described, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.equal(described.includes("secretValue"), false);
 });
+
+test("control-plane auth defaults to the legacy service-role mode", () => {
+  const config = loadWorkerConfig(env());
+  assert.equal(config.controlPlaneAuthMode, "service_role");
+});
+
+test("worker_token mode requires a worker token", () => {
+  assert.throws(
+    () => loadWorkerConfig(env({ CONTROL_PLANE_AUTH_MODE: "worker_token" })),
+    /requires SUPABASE_WORKER_TOKEN/,
+  );
+});
+
+test("worker_token mode refuses to run while the service-role key is still present", () => {
+  // Otherwise a half-finished migration looks complete: the worker would use
+  // its scoped token while the broad key stayed on the box, unrotated.
+  assert.throws(
+    () =>
+      loadWorkerConfig(
+        env({
+          CONTROL_PLANE_AUTH_MODE: "worker_token",
+          SUPABASE_WORKER_TOKEN: "header.payload.signature",
+          SUPABASE_SERVICE_ROLE_KEY: "left-behind",
+        }),
+      ),
+    /refuses to run with SUPABASE_SERVICE_ROLE_KEY still set/,
+  );
+});
+
+test("worker_token mode is accepted once the service-role key is gone", () => {
+  const config = loadWorkerConfig(
+    env({
+      CONTROL_PLANE_AUTH_MODE: "worker_token",
+      SUPABASE_WORKER_TOKEN: "header.payload.signature",
+    }),
+  );
+  assert.equal(config.controlPlaneAuthMode, "worker_token");
+});
+
+test("an unknown control-plane auth mode is rejected", () => {
+  assert.throws(
+    () => loadWorkerConfig(env({ CONTROL_PLANE_AUTH_MODE: "bypass" })),
+    /CONTROL_PLANE_AUTH_MODE must be one of/,
+  );
+});
+
+test("describeConfig reports the auth mode but never the token itself", () => {
+  const described = JSON.stringify(
+    loadWorkerConfig(
+      env({
+        CONTROL_PLANE_AUTH_MODE: "worker_token",
+        SUPABASE_WORKER_TOKEN: "header.super-secret-payload.signature",
+      }),
+    ).describe(),
+  );
+  assert.match(described, /"controlPlaneAuthMode":"worker_token"/);
+  assert.doesNotMatch(described, /super-secret-payload/);
+});

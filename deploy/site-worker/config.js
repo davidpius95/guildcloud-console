@@ -24,6 +24,15 @@ const REQUIRED_STRING_FIELDS = [
 
 const PLACEMENT_CLAIM_MODES = new Set(["legacy", "rpc"]);
 
+// How the worker authenticates to the control plane.
+//   "service_role" - legacy: SUPABASE_SERVICE_ROLE_KEY, broad control-plane
+//                    access, cannot be scoped to one cluster.
+//   "worker_token" - SUPABASE_WORKER_TOKEN, a pre-minted cluster-scoped JWT
+//                    that only carries EXECUTE on the worker_* RPCs.
+// Defaults to the legacy mode so an un-migrated cluster keeps running; the
+// default flips once every production worker has a token (plan Task 7).
+const CONTROL_PLANE_AUTH_MODES = new Set(["service_role", "worker_token"]);
+
 function requireNonBlank(env, key) {
   const value = env[key];
   if (typeof value !== "string" || value.trim() === "") {
@@ -69,6 +78,42 @@ function parsePlacementClaimMode(env) {
   return raw;
 }
 
+function parseControlPlaneAuth(env) {
+  const raw = (env.CONTROL_PLANE_AUTH_MODE ?? "").trim() || "service_role";
+  if (!CONTROL_PLANE_AUTH_MODES.has(raw)) {
+    throw new Error(
+      `CONTROL_PLANE_AUTH_MODE must be one of ${[...CONTROL_PLANE_AUTH_MODES].join(", ")}, ` +
+        `got ${JSON.stringify(raw)}`,
+    );
+  }
+
+  // Requiring exactly one credential is the point: a worker that still has the
+  // service-role key sitting in its env has not actually been constrained, so
+  // refuse rather than let a half-finished migration look complete.
+  const hasServiceRole = typeof env.SUPABASE_SERVICE_ROLE_KEY === "string"
+    && env.SUPABASE_SERVICE_ROLE_KEY.trim() !== "";
+  const hasWorkerToken = typeof env.SUPABASE_WORKER_TOKEN === "string"
+    && env.SUPABASE_WORKER_TOKEN.trim() !== "";
+
+  if (raw === "worker_token") {
+    if (!hasWorkerToken) {
+      throw new Error("CONTROL_PLANE_AUTH_MODE=worker_token requires SUPABASE_WORKER_TOKEN");
+    }
+    if (hasServiceRole) {
+      throw new Error(
+        "CONTROL_PLANE_AUTH_MODE=worker_token refuses to run with SUPABASE_SERVICE_ROLE_KEY " +
+          "still set: remove it from the worker env so the key can be rotated",
+      );
+    }
+  }
+  // The service_role branch deliberately does not require the key here: index.js
+  // already fails startup with a clear message when it is missing, and
+  // duplicating that check would make this function reject the config objects
+  // that every other test builds without Supabase credentials.
+
+  return raw;
+}
+
 function parsePositiveInt(env, key) {
   const raw = requireNonBlank(env, key);
   const value = Number(raw);
@@ -108,6 +153,7 @@ export function loadWorkerConfig(env) {
   config.pvePort = parsePort(env);
   config.backupNamespace = (env.BACKUP_NAMESPACE ?? "").trim();
   config.placementClaimMode = parsePlacementClaimMode(env);
+  config.controlPlaneAuthMode = parseControlPlaneAuth(env);
   config.warmPoolEnabled = parseBoolean(env, "WARM_POOL_ENABLED", false);
   config.tailnetHousekeepingOwner = parseBoolean(env, "TAILNET_HOUSEKEEPING_OWNER", false);
   config.warmPool = parseWarmPool(env, config.warmPoolEnabled);
@@ -126,6 +172,7 @@ export function loadWorkerConfig(env) {
     snippetsDir: config.snippetsDir,
     snippetsStorageId: config.snippetsStorageId,
     placementClaimMode: config.placementClaimMode,
+    controlPlaneAuthMode: config.controlPlaneAuthMode,
     warmPoolEnabled: config.warmPoolEnabled,
     tailnetHousekeepingOwner: config.tailnetHousekeepingOwner,
   });

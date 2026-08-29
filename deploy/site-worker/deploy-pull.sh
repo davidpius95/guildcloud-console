@@ -70,19 +70,44 @@ cat > "$release_dir/release-metadata.json" <<EOF
 {"commit":"$commit_sha","checksum":"$checksum","installed_at":"$(date -u +%FT%TZ)","rollback_target":"$previous_release"}
 EOF
 
-ln -sfn "$release_dir" "$CURRENT_LINK.new"
-mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
-if ! systemctl restart guildcloud-worker.timer || ! systemctl start guildcloud-worker.service; then
+# Activation window: how long a new release has to come up and report healthy
+# before it is treated as a bad deploy. Bounded deliberately - an unbounded wait
+# leaves a broken release live while the script hangs.
+HEALTH_TIMEOUT_SECONDS=${HEALTH_TIMEOUT_SECONDS:-60}
+
+roll_back() {
+  local reason="$1"
   if [ -n "$previous_release" ] && [ -d "$previous_release" ]; then
     ln -sfn "$previous_release" "$CURRENT_LINK.rollback"
     mv -Tf "$CURRENT_LINK.rollback" "$CURRENT_LINK"
     systemctl restart guildcloud-worker.timer || true
-    echo "$(date -u +%FT%TZ) ROLLED_BACK commit=$commit_sha checksum=$checksum failed_release=$release_dir rollback_target=$previous_release" >> "$DEPLOY_LOG"
+    echo "$(date -u +%FT%TZ) ROLLED_BACK reason=$reason commit=$commit_sha checksum=$checksum failed_release=$release_dir rollback_target=$previous_release" >> "$DEPLOY_LOG"
   else
-    echo "$(date -u +%FT%TZ) FAILED_NO_ROLLBACK commit=$commit_sha checksum=$checksum release=$release_dir" >> "$DEPLOY_LOG"
+    echo "$(date -u +%FT%TZ) FAILED_NO_ROLLBACK reason=$reason commit=$commit_sha checksum=$checksum release=$release_dir" >> "$DEPLOY_LOG"
   fi
   exit 1
+}
+
+ln -sfn "$release_dir" "$CURRENT_LINK.new"
+mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+if ! systemctl restart guildcloud-worker.timer || ! systemctl start guildcloud-worker.service; then
+  roll_back startup
 fi
+
+# A release that starts but cannot identify itself to the control plane is not a
+# healthy release: in worker_token mode `--health` fails when the token is
+# missing, malformed, expired, or issued for a different worker, all of which
+# would otherwise surface as a silently idle cluster.
+health_deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SECONDS ))
+health_ok=0
+while [ "$(date +%s)" -lt "$health_deadline" ]; do
+  if (cd "$CURRENT_LINK" && node index.js --health >>/tmp/deploy-pull.log 2>&1); then
+    health_ok=1
+    break
+  fi
+  sleep 5
+done
+[ "$health_ok" -eq 1 ] || roll_back health
 echo "$checksum" > "$STATE_FILE"
 echo "$(date -u +%FT%TZ) DEPLOYED commit=$commit_sha checksum=$checksum release=$release_dir rollback_target=$previous_release" >> "$DEPLOY_LOG"
 
