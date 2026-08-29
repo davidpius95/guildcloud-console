@@ -260,7 +260,24 @@ operational half: mint tokens, canary one cluster, rotate the key. That is writt
 `docs/runbooks/2026-08-29-worker-service-role-cutover.md`, and `CONTROL_PLANE_AUTH_MODE`
 still defaults to `service_role`, so nothing has changed for a running worker yet.
 
-**Both clusters are cutover-ready except for the token (2026-08-29).** Worker
+**Both clusters are cut over (2026-08-29, ~21:10Z).** Guild-A and Guild-B both
+run `CONTROL_PLANE_AUTH_MODE=worker_token` with a cluster-scoped ES256 token and
+no `SUPABASE_SERVICE_ROLE_KEY`. Both heartbeat continuously and complete clean
+cycles; Guild-A's tailnet housekeeping path works under the token.
+
+The cutover broke both clusters first: the boundary never granted
+`guildcloud_site_worker` EXECUTE on `get_vault_secret` / `set_vault_secret`, so
+removing the service-role key removed the Proxmox credential too. Fixed by
+`20260829210000_grant_vault_access_to_worker_role.sql` — a stopgap that is weaker
+than the rest of the boundary, since `get_vault_secret` takes an arbitrary secret
+name and so ignores per-cluster isolation. Scoped replacements are outstanding.
+
+`--health` reported healthy throughout both failures, because it only pings the
+control plane and `worker_heartbeat` needs no Vault. `cutover-worker.sh` uses it
+as the rollback gate, so the automatic rollback did not fire on either cluster.
+That is the more important of the two bugs and is not yet fixed.
+
+**Historic (superseded by the above).** Worker
 identities are registered and each box's `WORKER_ID` matches, which
 `assertWorkerToken` requires or the worker refuses to start:
 
@@ -269,7 +286,7 @@ identities are registered and each box's `WORKER_ID` matches, which
 | Identity | `guild-a-lxc-500-r2` | `guild-b-lxc-500` |
 | Housekeeping | yes (wider surface) | no (**narrower**) |
 | Worker code supports `worker_token` | yes | yes |
-| Token minted | operator | operator |
+| Token minted | done (ES256) | done (ES256) |
 
 `guild-a-lxc-500` is **revoked and burned** — its token leaked into this public
 repository and must never be re-minted, hence the `-r2` id. Guild-B's id needed
