@@ -26,6 +26,7 @@ import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale
 import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
 import { createSnapshot, resizeInstanceResources, rollbackSnapshot } from "./lifecycle.js";
 import { WorkerControlPlane, assertWorkerToken, workerTokenLifetime } from "./worker-client.js";
+import { healthFailures } from "./health-failures.js";
 
 // Set once the client exists. In worker_token mode every control-plane call
 // that has a worker_* RPC goes through this; in legacy service_role mode it
@@ -232,6 +233,22 @@ function serviceClient() {
 // SUPABASE_SERVICE_ROLE_KEY once health looks fine, the cluster would then fail
 // every RPC with nothing to fall back to. Only the control plane can answer
 // whether a token actually works, so ask it.
+//
+// It also exercises the PROXMOX credential, because reaching the control plane
+// is not the same as being able to do any work. On 2026-08-29 the Task 7 cutover
+// removed the service-role key from both clusters without granting the worker
+// role EXECUTE on get_vault_secret, so neither worker could read its Proxmox API
+// token and every operation failed. This function reported
+// controlPlaneReachable: true throughout, on both clusters, because
+// worker_heartbeat needs no Vault.
+//
+// That is not a missed edge case, it is the whole point of the check: cutover-
+// worker.sh and deploy-pull.sh both gate on --health, so a health check that
+// cannot fail the way production fails disables the rollback that exists for
+// exactly this. It fired on neither cluster. Every credential the worker depends
+// on gets exercised here, and reading a credential is not enough -- the Proxmox
+// token is also USED, because a readable token that Proxmox rejects fails just
+// as completely.
 async function healthReport(supabase) {
   const token = process.env.SUPABASE_WORKER_TOKEN;
   const report = {
@@ -245,20 +262,62 @@ async function healthReport(supabase) {
     controlPlane: supabase ? "configured" : "unconfigured",
   };
 
-  if (!controlPlane) return report;
-
-  try {
-    await controlPlane.heartbeat();
-    report.controlPlane = "authenticated";
-    report.controlPlaneReachable = true;
-  } catch (error) {
-    report.controlPlane = "unauthenticated";
-    report.controlPlaneReachable = false;
-    // The message, not the token: a bad signature reports as a PostgREST auth
-    // failure, an unknown worker as 28000 from current_worker_cluster().
-    report.controlPlaneError = String(error?.message ?? error).slice(0, 200);
+  if (controlPlane) {
+    try {
+      await controlPlane.heartbeat();
+      report.controlPlane = "authenticated";
+      report.controlPlaneReachable = true;
+    } catch (error) {
+      report.controlPlane = "unauthenticated";
+      report.controlPlaneReachable = false;
+      // The message, not the token: a bad signature reports as a PostgREST auth
+      // failure, an unknown worker as 28000 from current_worker_cluster().
+      report.controlPlaneError = String(error?.message ?? error).slice(0, 200);
+    }
   }
+
+  // Read the Proxmox API token, then use it. Both halves matter and they fail
+  // differently: a missing grant makes it unreadable, an expired or wrong token
+  // reads fine and is refused. Booleans and error messages only -- getVaultSecret
+  // reports the secret's NAME on failure, never its value.
+  if (!supabase) return report;
+
+  let pveToken = null;
+  try {
+    pveToken = await withHealthTimeout(proxmoxToken(supabase), "reading the Proxmox credential");
+    report.proxmoxCredentialReadable = true;
+  } catch (error) {
+    report.proxmoxCredentialReadable = false;
+    report.proxmoxCredentialError = String(error?.message ?? error).slice(0, 200);
+  }
+
+  if (pveToken) {
+    try {
+      // GET /version is the cheapest authenticated call Proxmox offers and
+      // changes nothing.
+      const version = await withHealthTimeout(pve(pveToken, "GET", "version"), "calling the Proxmox API");
+      report.proxmoxApiReachable = true;
+      report.proxmoxVersion = version?.version ?? null;
+    } catch (error) {
+      report.proxmoxApiReachable = false;
+      report.proxmoxApiError = String(error?.message ?? error).slice(0, 200);
+    }
+  }
+
   return report;
+}
+
+// --health must not hang. Every call it makes is read-only, so abandoning one
+// costs nothing, and a health check that blocks forever is as useless to a
+// deploy gate as one that always passes.
+function withHealthTimeout(promise, what, ms = 15000) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms ${what}`)), ms);
+    }),
+  ]);
 }
 
 const vaultSecretCache = new Map();
@@ -2203,10 +2262,16 @@ if (process.argv.includes("--print-config")) {
     const supabase = serviceClient();
     const report = await healthReport(supabase);
     console.log(JSON.stringify(report, null, 2));
-    // Exit non-zero when a configured token cannot actually authenticate, so
+    // Exit non-zero when ANY credential the worker depends on is broken, so
     // deploy-pull.sh's activation gate and the cutover script both fail closed
-    // rather than proceeding to remove the service-role key.
-    if (report.controlPlaneReachable === false) process.exitCode = 1;
+    // rather than proceeding to remove the service-role key. Checking only the
+    // control plane here is what let the 2026-08-29 cutover report success on
+    // two clusters that could not reach Proxmox at all.
+    const failures = healthFailures(report);
+    if (failures.length) {
+      console.error(`unhealthy: ${failures.join(", ")}`);
+      process.exitCode = 1;
+    }
   } catch (error) {
     console.error(JSON.stringify({ healthy: false, error: String(error?.message ?? error) }, null, 2));
     process.exitCode = 1;
