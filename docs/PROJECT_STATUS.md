@@ -272,10 +272,21 @@ removing the service-role key removed the Proxmox credential too. Fixed by
 than the rest of the boundary, since `get_vault_secret` takes an arbitrary secret
 name and so ignores per-cluster isolation. Scoped replacements are outstanding.
 
-`--health` reported healthy throughout both failures, because it only pings the
+`--health` reported healthy throughout both failures, because it only pinged the
 control plane and `worker_heartbeat` needs no Vault. `cutover-worker.sh` uses it
 as the rollback gate, so the automatic rollback did not fire on either cluster.
-That is the more important of the two bugs and is not yet fixed.
+**Fixed and deployed the same night**: `--health` now reads the Proxmox
+credential and makes one authenticated read-only call with it, reports each
+credential separately, and exits non-zero on any failure. Verified on both
+clusters -- healthy `exit=0` with a real `proxmoxVersion`, unreadable credential
+`exit=1`.
+
+Still open: the stopgap Vault grant should be replaced by scoped
+`worker_get_proxmox_credential()` / `worker_set_instance_ssh_password()` RPCs;
+the worker sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide, so the worker
+token travels over unverified TLS; and the non-housekeeping worker calls
+`worker_get_tailnet_desired_state` every cycle and is correctly refused, instead
+of checking its own identity first.
 
 **Historic (superseded by the above).** Worker
 identities are registered and each box's `WORKER_ID` matches, which

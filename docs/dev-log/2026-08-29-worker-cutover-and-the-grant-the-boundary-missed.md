@@ -60,13 +60,38 @@ fire — on either cluster. And it is what let a successful-looking cutover be
 reported while Guild-B could not reach Proxmox at all.
 
 A health check that cannot fail the way production fails is not a health check.
-It should exercise every credential the worker depends on: read the Proxmox token
-*and* make one authenticated call with it, and the same for Tailscale on whichever
-worker holds housekeeping.
+
+**Fixed the same night.** `--health` now reads the Proxmox credential *and* uses
+it, with a read-only `GET /version`; both halves are needed and they fail
+differently, since a missing grant makes the token unreadable while an expired
+one reads out of the vault perfectly and is refused. Each credential reports
+separately so the deploy log names what broke, and any failure exits non-zero.
+Deployed to both clusters and verified: healthy returns `exit=0` with a real
+`proxmoxVersion` (9.2.5 on Guild-B, 9.2.2 on Guild-A), and a worker that cannot
+read its credential returns `exit=1` with `unhealthy: Proxmox credential`. The
+old check called that second case healthy.
+
+`healthFailures` had to be moved into its own module to be testable at all --
+`index.js` calls `run()` at import time, so nothing could import it from a test.
+That is why logic sitting directly in the rollback path of two deploy scripts had
+no test while it passed through a two-cluster outage.
 
 The missing grant was a ten-minute outage. The health check is why nobody noticed
 for six of those minutes, and why it would have happened again on the second
 cluster.
+
+## A note on verifying the verification
+
+The first measurement of the fix reported `exit=0` for the *failing* case, and
+was nearly written up as a bug in the new code. The measurement was wrong: `$?`
+was read after a pipeline (`node ... | grep | grep`), so it reported grep's exit
+status, not node's. Re-measured without the pipe: `exit=0` healthy, `exit=1`
+broken.
+
+Worth recording next to the bug it was checking. A verification harness that
+reports success because it measured the wrong thing is the same failure as the
+health check that prompted all this -- and it happened while actively looking for
+that failure mode.
 
 ## A smaller finding
 
