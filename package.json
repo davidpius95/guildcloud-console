@@ -11,7 +11,7 @@
     "test:db": "bash scripts/test-multi-cluster-schema.sh",
     "test:intents": "bash scripts/test-instance-intents.sh",
     "test:worker-boundary": "bash scripts/test-worker-boundary.sh",
-    "test:worker": "node --test deploy/site-worker/*.test.js",
+    "test:worker": "node --test deploy/site-worker/*.test.js scripts/*.test.mjs",
     "test:ui": "vitest run",
     "test:e2e": "playwright test",
     "check:migrations": "bash scripts/check-migrations.sh",
