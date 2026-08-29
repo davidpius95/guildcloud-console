@@ -472,6 +472,22 @@ hardcode is still there and should be removed.**
 Note this does *not* unblock creates on its own: the ENOSPC came from the
 cloud-init snippet write, which still targets the full NFS.
 
+## `instances.updated_at` exists as of 2026-08-29
+
+`instances` recorded creation but never last change, so there was no way to ask
+how long an instance had been in its current state — and reaching for
+`created_at` gives a number that looks like an answer and is not one. That caused
+two misdiagnoses: three instances reported as "stuck deleting for three days"
+(2026-08-27) when it had been about a minute, and four reported as stranded since
+08-28 when deletion had been requested that afternoon.
+
+The column is **nullable with no backfill**. `NULL` means "not updated since the
+column was added", which is the truth; backfilling `created_at` would have
+reintroduced the exact failure it fixes. Treat `NULL` as unknown rather than
+coalescing it to `created_at`. A trigger stamps it on real changes only — a
+no-op `UPDATE` does not re-stamp, or the column would be as misleading as
+`created_at` was.
+
 ## Cleaned up after the 2026-08-29 delete fault — one item still open
 
 The broken delete left a real orphan, now **confirmed and removed**: VM 111

@@ -6,7 +6,7 @@
 -- it is calling the same functions with the same privileges.
 
 begin;
-select plan(52);
+select plan(56);
 
 insert into public.worker_identities (worker_id, cluster_id, description) values
   ('worker-guild-a', 'guild-a', 'Guild-A site worker'),
@@ -458,6 +458,58 @@ select throws_ok(
   '23505',
   NULL,
   'two live workers cannot both hold the tailnet housekeeping role'
+);
+
+-- ---------------------------------------------------------------------------
+-- instances.updated_at (added 2026-08-29 after two misdiagnoses read state age
+-- off created_at)
+-- ---------------------------------------------------------------------------
+
+reset role;
+
+-- A dedicated row: the instances above have already been written to by earlier
+-- assertions in this file, so they cannot speak to the untouched case.
+insert into public.instances
+  (id, organization_id, project_id, site_id, cluster_id, name,
+   catalog_image_id, catalog_plan_id, state)
+values
+  ('40000000-0000-4000-8000-0000000000ff', '10000000-0000-4000-8000-000000000001',
+   '30000000-0000-4000-8000-000000000001', 'lag-1', 'guild-a', 'updated-at-probe',
+   'ubuntu-2404', 'std-1', 'ready');
+
+-- No backfill, and INSERT does not stamp: an untouched row must report unknown
+-- rather than a plausible-looking timestamp. That plausible timestamp is exactly
+-- the bug this column replaces.
+select is(
+  (select updated_at from public.instances where id = '40000000-0000-4000-8000-0000000000ff'),
+  null,
+  'an untouched row reports null, not a fabricated time'
+);
+
+update public.instances set state = 'degraded'
+where id = '40000000-0000-4000-8000-0000000000ff';
+
+select isnt(
+  (select updated_at from public.instances where id = '40000000-0000-4000-8000-0000000000ff'),
+  null,
+  'a real change stamps updated_at'
+);
+
+-- A no-op UPDATE must not make the row look freshly touched, or the column is
+-- as misleading as created_at was.
+create temporary table probe_stamp as
+  select updated_at from public.instances where id = '40000000-0000-4000-8000-0000000000ff';
+
+select lives_ok(
+  $$ update public.instances set state = 'degraded'
+     where id = '40000000-0000-4000-8000-0000000000ff' $$,
+  'a no-op update is accepted'
+);
+
+select is(
+  (select updated_at from public.instances where id = '40000000-0000-4000-8000-0000000000ff'),
+  (select updated_at from probe_stamp),
+  'a no-op update does not re-stamp updated_at'
 );
 
 select * from finish();
