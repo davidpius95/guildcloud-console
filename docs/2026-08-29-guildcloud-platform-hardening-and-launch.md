@@ -22,23 +22,22 @@ Per the Global Constraints rule, categories are kept separate:
 | Task | Status | What remains |
 | --- | --- | --- |
 | 1. Baseline schema | **Not started** | No `supabase/baseline/`, no `test:schema:full` |
-| 2. Quality gate | **Real** | Only the `test:schema:full` run, which Task 1 must create |
+| 2. Quality gate | **Real** | Only the `test:schema:full` run, which Task 1 must create. CI itself was repaired in #14 — it had never passed. |
 | 3. Capability contract | **Partial** | Contract is orphaned (see note); `product-claims.md`; two stale copy strings |
-| 4. Atomic lifecycle RPCs | **Real (3 gaps)** | No audit events; no cluster-ownership check in `finish_instance_operation`; resize skips disabled-plan/capacity checks |
+| 4. Atomic lifecycle RPCs | **Real (2 gaps)** | No audit events; resize skips disabled-plan/capacity checks. Cluster-ownership check closed by Task 7. |
 | 5. Snapshot/restore truth | **Real (1 gap)** | Stale-`running` lease reconciliation |
 | 6. Monotonic resize | **Real** | — |
-| 7. Worker privilege | **Partial** | Service-role key + direct table writes still in place; no cluster-scoped worker RPCs; Edge Function copy; G-22 key unrevoked |
+| 7. Worker privilege | **Code complete** | Production cutover and service-role rotation (runbook written); G-22 key unrevoked |
 | 8. Frontend/a11y/auth/E2E | **Partial** | 4 tests total; no fixture E2E, no role matrix, no forgot-password, no MFA, no axe gate |
 | 9. Observability/recovery | **Not started** | Whole task |
 | 10. Billing ledger | **Not started** | Whole task |
 | 11. Provider parity | **Deferred** | Design backlog by intent |
 | 12. Staged launch | **Not started** | Whole task; P0 gates not evaluable until 1, 7, 9 land |
 
-**Recommended continuation point: Task 7.** It is the only outstanding item that is
-both a P0 launch gate ("Worker has no Supabase service-role key and cannot act
-outside its cluster") and a live production exposure. Task 1 should precede Tasks 9
-and 10, since both add migrations to a schema that is still not reproducible from
-this repository.
+**Updated 2026-08-29.** Task 7's code landed in #15. The remaining P0 gate item is
+operational: run the cutover runbook to take the service-role key off both workers
+and rotate it. After that, **Task 1** is the next code work, since Tasks 9 and 10
+both add migrations to a schema this repository still cannot rebuild.
 
 ---
 
@@ -358,8 +357,11 @@ public.finish_instance_operation(p_operation_id uuid, p_outcome text, p_observed
 - [x] Replace-restore must require a `ready` snapshot with matching organization, project, and instance IDs. A null/empty snapshot is always an error.
 - [x] Delete intent must reject `snapshotting`, `resizing`, `restoring`, `provisioning`, and any active operation. It must be idempotent if already deleting.
 - [x] Remove restore-to-new from the action type and UI. Do not re-enable it until a separate design defines PBS/snapshot cloning, IP identity, SSH keys, naming, billing, and cleanup.
-- [ ] `finish_instance_operation` must verify the worker's cluster owns the operation, lock it, make terminal completion idempotent, release reservations, and apply outcome-specific state:
-> **Verified 2026-08-29 — partial.** The implemented function locks the operation and
+- [x] `finish_instance_operation` must verify the worker's cluster owns the operation, lock it, make terminal completion idempotent, release reservations, and apply outcome-specific state:
+> **Updated 2026-08-29 — closed by Task 7.** `worker_finish_operation` (migration
+> `20260829120000`) now performs the cluster-ownership check before delegating, and
+> additionally applies the `instance.create` state transition the worker used to make
+> with a direct write. Original finding, kept for the record: the implemented function locks the operation and
 > instance `FOR UPDATE`, returns early on an already-terminal operation, releases held
 > reservations, and applies every outcome-specific state listed below (including
 > rejecting a resize whose observed resources miss the target plan). **It performs no
@@ -452,19 +454,32 @@ export function validateLifecycleOperation(operation, instance, snapshot) {}
 - Modify: `deploy/site-worker/deploy-pull.sh`
 - Modify: `deploy/site-worker/env.example`
 
-- [ ] Define cluster-scoped worker RPCs for heartbeat/snapshot publication, claim, operation read, stage transition, terminal completion, deletion reconciliation, SSH-key synchronization, warm-pool maintenance, and Tailscale metadata updates.
-- [ ] Each RPC must validate a worker identity mapped to exactly one cluster. It must reject any instance/operation whose stored cluster differs.
-- [ ] Create a dedicated non-bypass database role or JWT claim model with EXECUTE-only grants on worker RPCs and no direct table writes.
+- [x] Define cluster-scoped worker RPCs for heartbeat/snapshot publication, claim, operation read, stage transition, terminal completion, deletion reconciliation, SSH-key synchronization, warm-pool maintenance, and Tailscale metadata updates.
+- [x] Each RPC must validate a worker identity mapped to exactly one cluster. It must reject any instance/operation whose stored cluster differs.
+- [x] Create a dedicated non-bypass database role or JWT claim model with EXECUTE-only grants on worker RPCs and no direct table writes.
 - [ ] Remove `SUPABASE_SERVICE_ROLE_KEY` from worker configuration after the RPC path is deployed and verified. Rotate the old key after every production worker is migrated.
-> **Verified 2026-08-29 — not started; the security core of this task.** `deploy/site-worker/index.js:169` still requires `SUPABASE_SERVICE_ROLE_KEY`, and the worker performs roughly thirty direct table writes (`instances`, `operations`, `operation_stages`, `memberships`, `projects`, `warm_pool_vms`, `capacity_reservations`) rather than going through RPCs. The duplicate-implementation half of this task *is* done: `deploy/site-worker-guild-a/index.js` is now a two-line tombstone, guarded by `deploy/site-worker/single-source.test.js`. `supabase/functions/site-worker-guild-a/index.ts` is already a non-deployable 27-line tombstone whose pg_cron schedule was permanently unscheduled, so that half is genuinely met.
+> **Updated 2026-08-29 — code complete, cutover outstanding (PR #15, `d58694d`).**
+> The boundary shipped in two slices: a `guildcloud_site_worker` role with no table
+> privileges, a `worker_identities` table mapping each worker to exactly one cluster,
+> and `worker_*` RPCs covering every path the worker previously reached by direct
+> table access. The cluster is resolved from the database, never from the token, so a
+> stolen token cannot widen its own scope and revocation is one `UPDATE`.
+>
+> **The service-role key is still on both production workers.** Removing it is the
+> operational half — mint tokens, canary one cluster, rotate — written up in
+> `docs/runbooks/2026-08-29-worker-service-role-cutover.md`. `CONTROL_PLANE_AUTH_MODE`
+> still defaults to `service_role`, so nothing changed for a running worker yet.
+>
+> G-22's Tailscale auth key remains unrevoked; that is infrastructure work, unrelated
+> to this boundary.
 - [x] Replace `deploy/site-worker-guild-a/index.js` with a thin launcher or a tombstone that imports the generic worker; remove the 1,000+ line hardcoded copy.
 - [x] Replace the Supabase Edge Function worker copy with a clear non-deployable reference or delete it after confirming no schedule invokes it.
 - [x] Add a repository test that fails if another worker entrypoint contains Proxmox lifecycle implementation.
 - [x] Change `deploy-pull.sh` to record Git commit SHA, checksum, install status, activation time, and rollback target. Run the full worker test suite before switching the symlink, not just `node --check`.
-- [ ] Add a health command returning non-secret worker version, cluster ID, last successful cycle, last control-plane contact, and current release path.
-- [ ] Add automatic rollback when the new release fails startup/health within the bounded activation window; pause cluster admission before rollback if ownership is uncertain.
+- [x] Add a health command returning non-secret worker version, cluster ID, last successful cycle, last control-plane contact, and current release path.
+- [x] Add automatic rollback when the new release fails startup/health within the bounded activation window; pause cluster admission before rollback if ownership is uncertain.
 - [ ] Audit and revoke the historical reusable Tailscale auth key from G-22, then enumerate existing clones that may have used it and rotate/re-enroll them.
-- [ ] Commit: `git commit -m "security: constrain site workers to cluster RPCs"`.
+- [x] Commit: `git commit -m "security: constrain site workers to cluster RPCs"`.
 
 ---
 
