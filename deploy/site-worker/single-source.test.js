@@ -68,3 +68,46 @@ test("the worker never calls a cluster-parameterised primitive on the boundary p
     );
   }
 });
+
+test("the worker never disables TLS verification for the whole process", async () => {
+  // Setting NODE_TLS_REJECT_UNAUTHORIZED=0 turns off certificate checking for
+  // every connection the process makes, including the worker token sent to
+  // Supabase and the OAuth secret sent to Tailscale -- not only the Proxmox call
+  // it was added for. The supported fix is trusting the Proxmox CA via
+  // NODE_EXTRA_CA_CERTS, which leaves everything else verified.
+  //
+  // Asserted against the source because it is a single line that reads as a
+  // harmless local workaround, and it sat in this file for months.
+  const source = await readFile(new URL("./index.js", import.meta.url), "utf8");
+
+  // index.js legitimately mentions the variable three times: a comment, a guard
+  // that refuses to start when the environment sets it, and a --health field.
+  // Only an assignment through process.env is the bug, so comments are stripped,
+  // `==`/`===`/`!==` are excluded, and the process.env prefix is required --
+  // without it this matched the guard's own error message, which contains the
+  // literal text it warns about.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const assignment =
+    /process\.env(?:\.NODE_TLS_REJECT_UNAUTHORIZED|\["NODE_TLS_REJECT_UNAUTHORIZED"\])\s*(?<![=!<>])=(?!=)\s*["'`]?0/;
+
+  assert.doesNotMatch(code, assignment, "index.js must not disable TLS verification");
+
+  // Prove the assertion can fail. A guard that cannot detect the thing it guards
+  // against is worse than none, since it reads as protection.
+  for (const reintroduced of [
+    'process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";',
+    "process.env.NODE_TLS_REJECT_UNAUTHORIZED='0'",
+    'process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"',
+    "process.env.NODE_TLS_REJECT_UNAUTHORIZED =  0",
+  ]) {
+    assert.match(reintroduced, assignment, `must catch: ${reintroduced}`);
+  }
+
+  // And that it does not flag the legitimate comparisons this file contains.
+  for (const legitimate of [
+    'if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {',
+    'report.tlsVerificationEnabled = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";',
+  ]) {
+    assert.doesNotMatch(legitimate, assignment, `must not flag: ${legitimate}`);
+  }
+});

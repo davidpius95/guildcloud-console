@@ -64,3 +64,24 @@ test("checks that did not run are not treated as failures", () => {
   // Undefined specifically, rather than any falsy value.
   assert.deepEqual(healthFailures({ proxmoxApiReachable: undefined }), []);
 });
+
+test("a worker that verifies no certificates is not healthy", () => {
+  // Reaching everything while checking nothing is not health, it is quietly
+  // insecure -- and it is exactly what the worker did before 2026-08-29, when
+  // NODE_TLS_REJECT_UNAUTHORIZED=0 was set process-wide and the worker token
+  // travelled to Supabase over connections nobody verified.
+  assert.deepEqual(
+    healthFailures({
+      controlPlaneReachable: true,
+      proxmoxCredentialReadable: true,
+      proxmoxApiReachable: true,
+      tlsVerificationEnabled: false,
+    }),
+    ["TLS verification disabled"],
+  );
+});
+
+test("TLS verification being enabled, or unreported, is not a failure", () => {
+  assert.deepEqual(healthFailures({ tlsVerificationEnabled: true }), []);
+  assert.deepEqual(healthFailures({}), []);
+});

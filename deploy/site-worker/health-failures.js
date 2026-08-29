@@ -17,5 +17,9 @@ export function healthFailures(report) {
   if (report.controlPlaneReachable === false) failures.push("control plane");
   if (report.proxmoxCredentialReadable === false) failures.push("Proxmox credential");
   if (report.proxmoxApiReachable === false) failures.push("Proxmox API");
+  // A worker that reaches everything while verifying no certificates is not
+  // healthy, it is quietly insecure. index.js refuses to start in that state, so
+  // this is a second line rather than the only one.
+  if (report.tlsVerificationEnabled === false) failures.push("TLS verification disabled");
   return failures;
 }
