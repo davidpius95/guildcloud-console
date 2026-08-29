@@ -53,7 +53,8 @@ for migration in \
   "$repo_root/supabase/migrations/20260829110000_add_atomic_instance_intents.sql" \
   "$repo_root/supabase/migrations/20260829120000_add_cluster_worker_rpc_boundary.sql" \
   "$repo_root/supabase/migrations/20260829130000_add_worker_housekeeping_rpcs.sql" \
-  "$repo_root/supabase/migrations/20260829150000_revoke_anon_definer_functions.sql"
+  "$repo_root/supabase/migrations/20260829150000_revoke_anon_definer_functions.sql" \
+  "$repo_root/supabase/migrations/20260829190000_add_instances_updated_at.sql"
 do
   [[ -f "$migration" ]] && "${psql_cmd[@]}" < "$migration" >/dev/null
 done
