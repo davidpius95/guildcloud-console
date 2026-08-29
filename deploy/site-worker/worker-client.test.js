@@ -247,3 +247,65 @@ test("holdsTailnetHousekeeping surfaces a revoked worker instead of answering fa
   assert.ok(error, "a revoked worker must raise, not resolve to false");
   assert.match(String(error.message), /unknown or revoked/);
 });
+
+test("no credential RPC ever sends a secret name or a cluster", async () => {
+  // The whole point of the scoped RPCs. The stopgap grant on get_vault_secret
+  // took a caller-supplied name, which let any worker read any secret --
+  // including the other cluster's Proxmox token.
+  const client = stubClient((name) =>
+    name === "worker_get_tailscale_oauth"
+      ? { data: [{ client_id: "id", client_secret: "secret" }], error: null }
+      : { data: "value", error: null },
+  );
+  const plane = new WorkerControlPlane(client);
+
+  await plane.getProxmoxCredential();
+  await plane.getTailscaleOauth();
+  await plane.setInstanceSshPassword("11111111-2222-3333-4444-555555555555", "pw");
+
+  const serialized = JSON.stringify(client.calls);
+  assert.doesNotMatch(serialized, /secret_name/, "no RPC may name a secret");
+  assert.doesNotMatch(serialized, /proxmox_guild|tailscale_guildcloud/, "no vault secret name may be sent");
+  assert.doesNotMatch(serialized, /cluster/i);
+  assert.doesNotMatch(serialized, /guild-a|guild-b/);
+  for (const call of client.calls) assert.match(call.name, /^worker_/);
+});
+
+test("getProxmoxCredential takes no argument at all", async () => {
+  const client = stubClient(() => ({ data: "token", error: null }));
+  const plane = new WorkerControlPlane(client);
+  assert.equal(await plane.getProxmoxCredential(), "token");
+  assert.deepEqual(client.calls, [{ name: "worker_get_proxmox_credential", args: undefined }]);
+});
+
+test("setInstanceSshPassword sends the instance id, and the RPC derives the name", async () => {
+  const client = stubClient(() => ({ data: null, error: null }));
+  const plane = new WorkerControlPlane(client);
+  await plane.setInstanceSshPassword("11111111-2222-3333-4444-555555555555", "pw");
+  assert.deepEqual(client.calls[0].args, {
+    p_instance_id: "11111111-2222-3333-4444-555555555555",
+    p_password: "pw",
+  });
+  // Notably absent from the ARGUMENTS: a derived secret name like
+  // instance_ssh_password_<id>. The RPC's own name contains that substring, so
+  // this must inspect the args rather than the whole call.
+  assert.doesNotMatch(JSON.stringify(client.calls[0].args), /instance_ssh_password/);
+});
+
+test("getTailscaleOauth unwraps the single row and rejects an empty result", async () => {
+  // It is a set-returning function, so PostgREST sends an array even though
+  // there is exactly one row.
+  const ok = new WorkerControlPlane(
+    stubClient(() => ({ data: [{ client_id: "id", client_secret: "secret" }], error: null })),
+  );
+  assert.deepEqual(await ok.getTailscaleOauth(), { client_id: "id", client_secret: "secret" });
+
+  // An empty or half-populated result must raise rather than silently produce
+  // an OAuth exchange with undefined credentials.
+  for (const data of [[], [{ client_id: "id" }], null]) {
+    const plane = new WorkerControlPlane(stubClient(() => ({ data, error: null })));
+    const error = await plane.getTailscaleOauth().then(() => null, (e) => e);
+    assert.ok(error, `${JSON.stringify(data)} must raise`);
+    assert.match(String(error.message), /returned no credential/);
+  }
+});
