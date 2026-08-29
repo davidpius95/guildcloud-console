@@ -72,11 +72,20 @@ health evidence, admission can gate on something actually measured.
 ### Why this was not caught earlier
 
 The worker has published `monitoring_healthy: false` since `bf21d93`
-(2026-08-20), yet creates succeeded on 08-27 and 08-28. Something changed the
-balance between then and now, and **the exact trigger was not determined** —
-worker deploy logs would settle it. What is certain is that the two halves are
-individually reasonable and jointly fatal: an honest "no monitoring here" and a
-gate that treats missing monitoring as a reason to refuse work.
+(2026-08-20), yet creates succeeded on 08-27 and 08-28.
+
+**Determined later the same day** (see
+`2026-08-29-deploy-drift-leaked-token-and-a-delete-that-never-deleted.md`):
+Guild-A's release `20260827T193304Z` was a **hand-patched** build reporting
+`monitoring_healthy: true`, and the release deployed at 06:52 today — right after
+PR #11 merged at 06:51 — reports `false`. Creation died at that moment, matching
+the last successful create at 2026-08-28 20:28. The fault was not introduced by a
+commit: it was a local patch on a production box being overwritten by the code it
+had diverged from.
+
+What remains true either way is that the two halves are individually reasonable
+and jointly fatal: an honest "no monitoring here" and a gate that treats missing
+monitoring as a reason to refuse work.
 
 ## Fault 2: deleting an instance provisioned a new VM
 
