@@ -20,6 +20,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Printed so a future lockfile divergence is visible in the log rather
+      # than something to reverse-engineer from an npm error.
+      - run: node --version && npm --version
       - run: npm ci
       - run: npm run check:migrations
       - run: npm run lint
@@ -38,6 +41,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Printed so a future lockfile divergence is visible in the log rather
+      # than something to reverse-engineer from an npm error.
+      - run: node --version && npm --version
       - run: npm ci
       - run: npm run test:db
       - run: npm run test:intents
@@ -51,6 +57,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Printed so a future lockfile divergence is visible in the log rather
+      # than something to reverse-engineer from an npm error.
+      - run: node --version && npm --version
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
