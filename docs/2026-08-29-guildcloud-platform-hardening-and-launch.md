@@ -27,17 +27,18 @@ Per the Global Constraints rule, categories are kept separate:
 | 4. Atomic lifecycle RPCs | **Real (2 gaps)** | No audit events; resize skips disabled-plan/capacity checks. Cluster-ownership check closed by Task 7. |
 | 5. Snapshot/restore truth | **Real (1 gap)** | Stale-`running` lease reconciliation |
 | 6. Monotonic resize | **Real** | — |
-| 7. Worker privilege | **Code complete** | Production cutover and service-role rotation (runbook written); G-22 key unrevoked |
+| 7. Worker privilege | **Real** | Cutover done on both clusters. Remaining: deploy the migrated Edge Functions, then deactivate `service_role` and revoke the legacy JWT secret (dashboard); G-22 key unrevoked |
 | 8. Frontend/a11y/auth/E2E | **Partial** | 4 tests total; no fixture E2E, no role matrix, no forgot-password, no MFA, no axe gate |
 | 9. Observability/recovery | **Not started** | Whole task |
 | 10. Billing ledger | **Not started** | Whole task |
 | 11. Provider parity | **Deferred** | Design backlog by intent |
 | 12. Staged launch | **Not started** | Whole task; P0 gates not evaluable until 1, 7, 9 land |
 
-**Updated 2026-08-29.** Task 7's code landed in #15. The remaining P0 gate item is
-operational: run the cutover runbook to take the service-role key off both workers
-and rotate it. After that, **Task 1** is the next code work, since Tasks 9 and 10
-both add migrations to a schema this repository still cannot rebuild.
+**Updated 2026-08-29 (night).** Task 7 is done: both workers are off the service-role
+key, on cluster-scoped ES256 tokens, with scoped Vault access and TLS verification on.
+What remains of it is dashboard work gated on deploying the migrated Edge Functions.
+**Task 1** is the next code work, since Tasks 9 and 10 both add migrations to a schema
+this repository still cannot rebuild.
 
 ---
 
@@ -457,18 +458,24 @@ export function validateLifecycleOperation(operation, instance, snapshot) {}
 - [x] Define cluster-scoped worker RPCs for heartbeat/snapshot publication, claim, operation read, stage transition, terminal completion, deletion reconciliation, SSH-key synchronization, warm-pool maintenance, and Tailscale metadata updates.
 - [x] Each RPC must validate a worker identity mapped to exactly one cluster. It must reject any instance/operation whose stored cluster differs.
 - [x] Create a dedicated non-bypass database role or JWT claim model with EXECUTE-only grants on worker RPCs and no direct table writes.
-- [ ] Remove `SUPABASE_SERVICE_ROLE_KEY` from worker configuration after the RPC path is deployed and verified. Rotate the old key after every production worker is migrated.
-> **Updated 2026-08-29 — code complete, cutover outstanding (PR #15, `d58694d`).**
-> The boundary shipped in two slices: a `guildcloud_site_worker` role with no table
-> privileges, a `worker_identities` table mapping each worker to exactly one cluster,
-> and `worker_*` RPCs covering every path the worker previously reached by direct
-> table access. The cluster is resolved from the database, never from the token, so a
-> stolen token cannot widen its own scope and revocation is one `UPDATE`.
+- [x] Remove `SUPABASE_SERVICE_ROLE_KEY` from worker configuration after the RPC path is deployed and verified. ~~Rotate~~ **deactivate** the old key after every production worker is migrated.
+> **Updated 2026-08-29 — cutover complete.** Both production workers run
+> `CONTROL_PLANE_AUTH_MODE=worker_token` with a cluster-scoped ES256 token and no
+> `SUPABASE_SERVICE_ROLE_KEY`. Vault access is scoped too: `worker_*` credential RPCs
+> replaced the broad `get_vault_secret` grant, and the worker now verifies Proxmox
+> certificates rather than disabling TLS process-wide.
 >
-> **The service-role key is still on both production workers.** Removing it is the
-> operational half — mint tokens, canary one cluster, rotate — written up in
-> `docs/runbooks/2026-08-29-worker-service-role-cutover.md`. `CONTROL_PLANE_AUTH_MODE`
-> still defaults to `service_role`, so nothing changed for a running worker yet.
+> **"Rotate the old key" was not possible and the checkbox is corrected above.** This
+> project has migrated to JWT signing keys, and Supabase's guidance is explicit that the
+> legacy `anon`/`service_role`/JWT secrets can no longer be rotated — those keys *are*
+> JWTs signed by the legacy JWT secret. Retiring `service_role` is a deactivation.
+>
+> **Blocked on an Edge Function migration, found 2026-08-29.** Revoking the legacy JWT
+> secret invalidates the legacy `anon` and `service_role` keys at the same instant, and
+> `send-invite-email` and `enroll-device` both still authenticated with them — so
+> revoking would have broken org invitations and device enrollment with no partial
+> failure. Both now read `SUPABASE_SECRET_KEYS` / `SUPABASE_PUBLISHABLE_KEYS` with a
+> legacy fallback; they must be deployed and exercised before anything is revoked.
 >
 > G-22's Tailscale auth key remains unrevoked; that is infrastructure work, unrelated
 > to this boundary.

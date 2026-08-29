@@ -248,93 +248,85 @@ PR #11. Audited directly against the repo on 2026-08-29:
 Phase 1 from scratch), Task 9 (observability, support, restore drills), Task 10 (billing
 ledger), Task 12 (staged launch). Task 11 is a deliberate design backlog.
 
-**Task 7's code has since landed (PR #15, `d58694d`).** The site worker now has a
-`guildcloud_site_worker` database role with no table privileges, a `worker_identities`
-table mapping each worker to exactly one cluster, and `worker_*` RPCs covering every
-path it previously reached by writing tables directly. The cluster is resolved from the
-database rather than from the token, so a stolen worker token cannot widen its own scope
-and revoking a worker is a single `UPDATE` instead of a JWT-secret rotation.
+## Task 7: the worker boundary is complete (2026-08-29)
 
-**The service-role key is still on both production workers.** Removing it is the
-operational half: mint tokens, canary one cluster, rotate the key. That is written up in
-`docs/runbooks/2026-08-29-worker-service-role-cutover.md`, and `CONTROL_PLANE_AUTH_MODE`
-still defaults to `service_role`, so nothing has changed for a running worker yet.
-
-**Both clusters are cut over (2026-08-29, ~21:10Z).** Guild-A and Guild-B both
-run `CONTROL_PLANE_AUTH_MODE=worker_token` with a cluster-scoped ES256 token and
-no `SUPABASE_SERVICE_ROLE_KEY`. Both heartbeat continuously and complete clean
-cycles; Guild-A's tailnet housekeeping path works under the token.
-
-The cutover broke both clusters first: the boundary never granted
-`guildcloud_site_worker` EXECUTE on `get_vault_secret` / `set_vault_secret`, so
-removing the service-role key removed the Proxmox credential too. Fixed by
-`20260829210000_grant_vault_access_to_worker_role.sql` — a stopgap that is weaker
-than the rest of the boundary, since `get_vault_secret` takes an arbitrary secret
-name and so ignores per-cluster isolation. Scoped replacements are outstanding.
-
-`--health` reported healthy throughout both failures, because it only pinged the
-control plane and `worker_heartbeat` needs no Vault. `cutover-worker.sh` uses it
-as the rollback gate, so the automatic rollback did not fire on either cluster.
-**Fixed and deployed the same night**: `--health` now reads the Proxmox
-credential and makes one authenticated read-only call with it, reports each
-credential separately, and exits non-zero on any failure. Verified on both
-clusters -- healthy `exit=0` with a real `proxmoxVersion`, unreadable credential
-`exit=1`.
-
-The stopgap Vault grant is **gone** (2026-08-29). Workers now use
-`worker_get_proxmox_credential()`, `worker_get_tailscale_oauth()` and
-`worker_set_instance_ssh_password(uuid, text)` -- none of which takes a
-caller-supplied secret name -- and `guildcloud_site_worker` no longer holds
-EXECUTE on `get_vault_secret` or `set_vault_secret`. Which secret holds a
-cluster's Proxmox token lives in `infrastructure_clusters` rather than the
-worker's env file, so a worker cannot name another cluster's. Verified in
-production: each worker resolves its own cluster's token and not the other's,
-and both stayed healthy through the revocation, which is what proves the scoped
-path is the one actually in use.
-
-Still open: the worker sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide, so the worker
-token travels over unverified TLS;. The tailnet noise is fixed: `worker_holds_tailnet_housekeeping()` lets a worker
-ask instead of being refused, verified in production as `true` for Guild-A,
-`false` for Guild-B, and `28000` for an unknown worker -- so `false` cannot be
-used to sidestep a revocation.
-
-**Historic (superseded by the above).** Worker
-identities are registered and each box's `WORKER_ID` matches, which
-`assertWorkerToken` requires or the worker refuses to start:
+Both production workers authenticate to the control plane with a cluster-scoped
+ES256 token. Neither holds the Supabase service-role key, and neither can read a
+secret it does not own.
 
 | | Guild-A | Guild-B |
 | --- | --- | --- |
 | Identity | `guild-a-lxc-500-r2` | `guild-b-lxc-500` |
-| Housekeeping | yes (wider surface) | no (**narrower**) |
-| Worker code supports `worker_token` | yes | yes |
-| Token minted | done (ES256) | done (ES256) |
+| Auth mode | `worker_token` | `worker_token` |
+| Service-role key | removed | removed |
+| Tailnet housekeeping | yes (wider surface) | no |
+| TLS verification | on | on |
+| Proxmox reached | 9.2.2 | 9.2.5 |
 
-`guild-a-lxc-500` is **revoked and burned** — its token leaked into this public
-repository and must never be re-minted, hence the `-r2` id. Guild-B's id needed
-no change: only Guild-A's was compromised. **Guild-B is the better canary**, since
-it exercises only the cluster-scoped RPCs.
+**The boundary.** A `guildcloud_site_worker` role with no table privileges, a
+`worker_identities` table mapping each worker to exactly one cluster, and
+`worker_*` RPCs covering every path the worker previously reached by writing
+tables directly. The cluster is resolved from the database, never from the token,
+so a stolen token cannot widen its own scope and revoking a worker is one
+`UPDATE`. That property was tested for real rather than in principle: a minted
+token leaked into this public repository and was neutralised by a single row
+update. `guild-a-lxc-500` is burned and must never be re-minted, hence `-r2`.
 
-None of this grants anything yet: no token exists, and the legacy path never
-reads `worker_identities`.
+**Credentials.** Tokens are ES256, signed with a key this project holds and
+imported as a **standby** key -- rotation is deliberately not part of it, since
+standby keys are accepted for verification (proven: a token under a
+never-rotated standby key returned HTTP 204 from `worker_heartbeat`), and
+rotating would change how every user auth token is signed for no gain here. The
+legacy HS256 path still works in `scripts/mint-worker-token.mjs` and warns,
+because the legacy JWT secret was exposed and is being retired.
 
-**The remaining steps need a human.** Minting a worker token requires signing
-material, which is deliberately kept away from any agent — the whole argument for
-a one-shot operator script over Terraform was that the credential lives in
-exactly one place. Steps 4 and 7 additionally need root on the two worker LXCs
-and dashboard access. Guild-B is the intended canary, since Guild-A holds
-housekeeping and so carries the wider surface.
+**Vault access is scoped.** Workers use `worker_get_proxmox_credential()`,
+`worker_get_tailscale_oauth()` and `worker_set_instance_ssh_password(uuid, text)`.
+None accepts a caller-supplied secret name, and `guildcloud_site_worker` no
+longer holds EXECUTE on `get_vault_secret` or `set_vault_secret`. Which secret
+holds a cluster's Proxmox token now lives in `infrastructure_clusters` rather
+than the worker's env file -- an env-supplied name passed straight through is
+what made asking for another cluster's token possible at all. Verified: each
+worker resolves its own cluster's token and not the other's, and both stayed
+healthy through the revocation, which is what proves the scoped path is the one
+in use.
 
-**The signing material changed on 2026-08-29.** The legacy HS256 JWT secret was
-exposed and is being retired, so tokens signed with it would die the moment it is
-revoked. `scripts/mint-worker-token.mjs` now has an **ES256 mode**: generate a
-key with `supabase gen signing-key --algorithm ES256`, import it as a **standby**
-key, and pass it as `--signing-key-file`. Rotation is deliberately *not* part of
-this: standby keys are accepted for verification, proven on 2026-08-29 by a token
-minted under a never-rotated standby key returning HTTP 204 from
-`worker_heartbeat`. Rotating would change how every user auth token is signed,
-for no gain here. `scripts/cutover-worker.sh` takes the same
-flag. HS256 still works and now warns, because that path has a deadline. Runbook
-step 0 covers key generation; step 8 covers retiring the legacy secret.
+The Tailscale OAuth pair is deliberately **not** cluster-scoped: every worker
+deletes the devices of instances it tears down, so restricting it to the
+housekeeper would break ordinary deletion. The gain there is that the caller
+names nothing, not that it is isolated.
+
+**TLS is verified.** The worker no longer sets `NODE_TLS_REJECT_UNAUTHORIZED=0`;
+each cluster's PVE CA is installed at `/etc/guildcloud/proxmox-ca.pem` and
+trusted via `NODE_EXTRA_CA_CERTS`. The bypass was never necessary -- both node
+certificates already carry the node IP in `subjectAltName`. The worker now
+refuses to start if the variable is set, and a source test locks the assignment
+out.
+
+### What went wrong, and what it cost
+
+The cutover **broke both clusters**. The boundary enumerated the worker's table
+access but missed that it also reads Vault, so removing the service-role key
+removed the Proxmox credential with it. Ten minutes of outage.
+
+`--health` reported healthy throughout, on both clusters, because it only pinged
+the control plane and `worker_heartbeat` needs no Vault. `cutover-worker.sh` uses
+`--health` as its rollback gate, so the automatic rollback fired on neither. That
+was the more expensive bug: the missing grant caused the outage, the health check
+is why nobody noticed for six of the ten minutes and why it recurred on the
+second cluster. `--health` now reads the Proxmox credential *and* uses it,
+reports each credential separately, and exits non-zero on any failure -- verified
+both ways, `exit=0` healthy and `exit=1` with the credential unavailable.
+
+**Still open on this task:** the G-22 historical reusable Tailscale auth key is
+unrevoked (infrastructure work, unrelated to the boundary).
+
+**Needs dashboard access, in this order:** deactivate the legacy `service_role`
+key (it cannot be *rotated* -- this project has migrated to JWT signing keys);
+then revoke the legacy JWT secret and disable the legacy `anon` key; then delete
+the operator's local signing key. The last step invalidates every token still
+signed by that secret at once, with no partial failure, so it goes last and only
+after the others have held for a worker cycle.
 
 ## Repository sync state (checked 2026-08-29)
 
