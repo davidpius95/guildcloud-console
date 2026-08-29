@@ -32,6 +32,11 @@ host=""
 vmid=""
 expires_in="365d"
 dry_run=0
+# The `apikey` header must carry a real API key. A minted JWT is rejected there
+# with "Invalid API key" before JWT verification even runs, so the token alone is
+# not enough. Publishable keys are public by design, so defaulting to one here is
+# safe; override with --api-key if the project's changes.
+api_key="sb_publishable_t_WWRLE-RXN8Lu7Pc8-0Cw_HgHE2OGY"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -39,6 +44,7 @@ while [ $# -gt 0 ]; do
     --host) host="$2"; shift 2 ;;
     --vmid) vmid="$2"; shift 2 ;;
     --expires-in) expires_in="$2"; shift 2 ;;
+    --api-key) api_key="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -90,8 +96,10 @@ printf '%s\n' "$token" | ssh -o BatchMode=yes "$remote" "pct exec $vmid -- sh -c
   tmp=\$(mktemp)
   grep -v -e \"^SUPABASE_SERVICE_ROLE_KEY=\" \
           -e \"^CONTROL_PLANE_AUTH_MODE=\" \
+          -e \"^SUPABASE_PUBLISHABLE_KEY=\" \
           -e \"^SUPABASE_WORKER_TOKEN=\" $env_file > \"\$tmp\"
   printf \"CONTROL_PLANE_AUTH_MODE=worker_token\n\" >> \"\$tmp\"
+  printf \"SUPABASE_PUBLISHABLE_KEY=%s\n\" \"$api_key\" >> \"\$tmp\"
   printf \"SUPABASE_WORKER_TOKEN=%s\n\" \"\$token\" >> \"\$tmp\"
   chmod 600 \"\$tmp\"
   chown root:root \"\$tmp\"

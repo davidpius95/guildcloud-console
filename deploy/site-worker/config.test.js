@@ -220,6 +220,7 @@ test("worker_token mode refuses to run while the service-role key is still prese
         env({
           CONTROL_PLANE_AUTH_MODE: "worker_token",
           SUPABASE_WORKER_TOKEN: "header.payload.signature",
+          SUPABASE_PUBLISHABLE_KEY: "sb_publishable_example",
           SUPABASE_SERVICE_ROLE_KEY: "left-behind",
         }),
       ),
@@ -227,14 +228,32 @@ test("worker_token mode refuses to run while the service-role key is still prese
   );
 });
 
-test("worker_token mode is accepted once the service-role key is gone", () => {
-  const config = loadWorkerConfig(
-    env({
-      CONTROL_PLANE_AUTH_MODE: "worker_token",
-      SUPABASE_WORKER_TOKEN: "header.payload.signature",
-    }),
+test("worker_token mode requires a real API key for the apikey header", () => {
+  // The gateway rejects a minted JWT in `apikey` with "Invalid API key" before
+  // JWT verification runs, so without this the worker could never authenticate.
+  assert.throws(
+    () =>
+      loadWorkerConfig(
+        env({
+          CONTROL_PLANE_AUTH_MODE: "worker_token",
+          SUPABASE_WORKER_TOKEN: "header.payload.signature",
+        }),
+      ),
+    /requires SUPABASE_PUBLISHABLE_KEY or SUPABASE_ANON_KEY/,
   );
-  assert.equal(config.controlPlaneAuthMode, "worker_token");
+});
+
+test("worker_token mode is accepted once the service-role key is gone", () => {
+  for (const apiKeyVar of ["SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY"]) {
+    const config = loadWorkerConfig(
+      env({
+        CONTROL_PLANE_AUTH_MODE: "worker_token",
+        SUPABASE_WORKER_TOKEN: "header.payload.signature",
+        [apiKeyVar]: "sb_publishable_example",
+      }),
+    );
+    assert.equal(config.controlPlaneAuthMode, "worker_token", `with ${apiKeyVar}`);
+  }
 });
 
 test("an unknown control-plane auth mode is rejected", () => {
@@ -250,6 +269,7 @@ test("describeConfig reports the auth mode but never the token itself", () => {
       env({
         CONTROL_PLANE_AUTH_MODE: "worker_token",
         SUPABASE_WORKER_TOKEN: "header.super-secret-payload.signature",
+        SUPABASE_PUBLISHABLE_KEY: "sb_publishable_example",
       }),
     ).describe(),
   );
