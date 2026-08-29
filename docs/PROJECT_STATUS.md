@@ -431,14 +431,41 @@ hardcode is still there and should be removed.**
 Note this does *not* unblock creates on its own: the ENOSPC came from the
 cloud-init snippet write, which still targets the full NFS.
 
-## Unverified after the 2026-08-29 delete fault
+## Cleaned up after the 2026-08-29 delete fault — one item still open
 
-The broken delete path left a possible orphan: **VM 111 on Guild-B podF**. The
-teardown sweep should have removed it before the stage machine repointed the
-instance at a newly-cloned VMID 112 (which was then torn down cleanly), but both
-Proxmox MCP servers were failing TLS certificate verification at the time, so it
-could not be confirmed. Worth checking podF for an orphaned guest and removing it
-if present. Detail: `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md`.
+The broken delete left a real orphan, now **confirmed and removed**: VM 111
+(`verify-t7-e2e`) was still running on Guild-B podF an hour after its instance
+was supposedly deleted, holding 2 vCPU / 4 GB. It survived because the delete was
+a race the stage machine won outright — it finished ~50s after the request, while
+the teardown sweep only runs once per three-minute worker cycle, so by the time
+the sweep looked the instance was `ready` again and no longer a deletion
+candidate. Stopped and destroyed with purge; podF re-read afterwards shows only
+the six legitimate instances, the node template, and two legacy guests.
+
+Cleaned up alongside it: **five stale cloud-init snippets** on the shared
+`guild-snippets` NFS export. Three carried a Tailscale auth key and an instance
+one-time password (per the worker's own comments) on a share bind-mounted into
+the worker container; two were 0-byte truncation remnants of the August ENOSPC
+incident. Each was verified unreferenced first — the export is mounted on all six
+Guild-B nodes, and deleting a snippet a VM still names in `cicustom` makes that
+VM permanently unstartable. Two were named for live VMIDs (VM 100
+`guildcloud-dev`, running; VM 102 the podF template seed) and both configs were
+checked for `cicustom` before deleting.
+
+**Still open:** the orphaned tailnet device `instance-1142e8a0-1`
+(id `3346168422532813`, `100.69.78.32`, offline since 15:13:41). The Tailscale
+MCP refuses device deletion at the available permission level, so it needs the
+admin console or a device-delete-scoped token. Its root cause is now **G-25**:
+the worker binds an instance to its Tailscale device by *hostname*, and Tailscale
+allows duplicate hostnames, so a collision binds the control plane to the wrong
+device — which is also why cleanup deleted VM 111's device rather than 112's.
+
+Also worth carrying forward: the Proxmox MCP's dedicated wrappers
+(`get_vms`, `get_vm_status`) silently target the server's **default** cluster
+(guild-a), so asking them about a Guild-B node returns TLS / `No route to host`
+errors that look like a network fault. Use `pve_call` with an explicit
+`cluster='guild-b'`.
+
 
 ## Open gaps worth knowing about (full list: `docs/phase-0/gap-register.md`)
 
@@ -487,6 +514,7 @@ if present. Detail: `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | Confirmed and removed the orphaned VM 111 the delete fault left running on podF, plus five stale cloud-init snippets (three carrying auth keys) on the shared NFS export; logged **G-25**, the worker binding Tailscale devices by hostname, which misattributes private access and defeats teardown on a hostname collision | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
 | 2026-08-29 | Ran the Task 12 end-to-end lifecycle test on a disposable instance and found two production faults: instance creation was impossible on every cluster/image/plan (both admission gates required `monitoring_healthy`, which the worker reports false by design), and **deleting an instance provisioned a new VM instead of deleting it** (delete operations were seeded with create-shaped stages). Both fixed and applied (PR #17). Create, private access, snapshot, restore-replace and upward resize all verified against real hardware | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
 | 2026-08-29 | Revoked `anon` EXECUTE on three SECURITY DEFINER functions flagged by the security advisor (PR #16) | same |
 | 2026-08-29 | Task 7: cluster-scoped worker RPC boundary (PR #15). New `guildcloud_site_worker` role with no table privileges, `worker_identities` mapping each worker to one cluster, and `worker_*` RPCs replacing every direct table access. Cluster resolved from the database, never the token. Cutover runbook and token-minting script included; service-role key not yet removed | `docs/runbooks/2026-08-29-worker-service-role-cutover.md` |
