@@ -99,6 +99,18 @@ function parseControlPlaneAuth(env) {
     if (!hasWorkerToken) {
       throw new Error("CONTROL_PLANE_AUTH_MODE=worker_token requires SUPABASE_WORKER_TOKEN");
     }
+    // The apikey header cannot be the worker token -- the gateway rejects a
+    // minted JWT there with "Invalid API key" before JWT verification runs. A
+    // real publishable or anon key is required alongside it.
+    const hasApiKey = ["SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY"].some(
+      (key) => typeof env[key] === "string" && env[key].trim() !== "",
+    );
+    if (!hasApiKey) {
+      throw new Error(
+        "CONTROL_PLANE_AUTH_MODE=worker_token requires SUPABASE_PUBLISHABLE_KEY or " +
+          "SUPABASE_ANON_KEY for the apikey header",
+      );
+    }
     if (hasServiceRole) {
       throw new Error(
         "CONTROL_PLANE_AUTH_MODE=worker_token refuses to run with SUPABASE_SERVICE_ROLE_KEY " +

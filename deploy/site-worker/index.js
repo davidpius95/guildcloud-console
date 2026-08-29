@@ -195,9 +195,23 @@ function serviceClient() {
     if (!token) throw new Error(`Missing SUPABASE_WORKER_TOKEN in environment`);
     assertWorkerToken(token, { expectedWorkerId: config.workerId });
 
-    const anonKey = process.env.SUPABASE_ANON_KEY ?? token;
+    // The `apikey` header must carry a real API key -- publishable, or the
+    // legacy anon key. A minted JWT is NOT accepted there: the gateway rejects
+    // it with "Invalid API key" before the request ever reaches JWT
+    // verification. This previously fell back to the token itself when no key
+    // was configured, which meant the worker_token path could never
+    // authenticate no matter how good the token was.
+    //
+    // The token goes on Authorization; the API key identifies the project.
+    const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "worker_token mode needs SUPABASE_PUBLISHABLE_KEY or SUPABASE_ANON_KEY for the apikey " +
+          "header; the worker token is not valid there",
+      );
+    }
     clientOptions.global.headers = { Authorization: `Bearer ${token}` };
-    const client = createClient(url, anonKey, clientOptions);
+    const client = createClient(url, apiKey, clientOptions);
     controlPlane = new WorkerControlPlane(client);
     return client;
   }
