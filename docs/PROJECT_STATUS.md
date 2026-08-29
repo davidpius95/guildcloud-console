@@ -289,8 +289,12 @@ housekeeping and so carries the wider surface.
 **The signing material changed on 2026-08-29.** The legacy HS256 JWT secret was
 exposed and is being retired, so tokens signed with it would die the moment it is
 revoked. `scripts/mint-worker-token.mjs` now has an **ES256 mode**: generate a
-key with `supabase gen signing-key --algorithm ES256`, import and rotate to it,
-and pass it as `--signing-key-file`. `scripts/cutover-worker.sh` takes the same
+key with `supabase gen signing-key --algorithm ES256`, import it as a **standby**
+key, and pass it as `--signing-key-file`. Rotation is deliberately *not* part of
+this: standby keys are accepted for verification, proven on 2026-08-29 by a token
+minted under a never-rotated standby key returning HTTP 204 from
+`worker_heartbeat`. Rotating would change how every user auth token is signed,
+for no gain here. `scripts/cutover-worker.sh` takes the same
 flag. HS256 still works and now warns, because that path has a deadline. Runbook
 step 0 covers key generation; step 8 covers retiring the legacy secret.
 
@@ -631,9 +635,10 @@ older infrastructure backlog, still open and still real.
    work — it is forced, because that secret was exposed. Ordered in §8 of the
    runbook: (1) console onto the publishable key — **done 2026-08-29**, verified
    by grepping the served bundle for the legacy JWT and finding none; (2) workers
-   onto ES256 tokens; (3) rotate signing keys; (4) revoke the legacy secret and
-   deactivate the legacy `anon`/`service_role` keys. Step 4 last, and only after
-   1–3 have held for a worker cycle.
+   onto ES256 tokens signed by an imported standby key — key imported and proven
+   to verify 2026-08-29, cutover pending; (3) revoke the legacy secret and
+   deactivate the legacy `anon`/`service_role` keys. Step 3 last, and only after
+   1–2 have held for a worker cycle. Signing-key rotation is not required.
 2. **Wire the capability contract into the UI and server actions** (plan Task 3)
    so `lib/platform-capabilities.ts` enforces rather than documents, and fix the
    two stale copy strings plus the missing `docs/content/product-claims.md`.
