@@ -158,11 +158,25 @@ created earlier the same day against local dev but the same Supabase
 backend) were both deleted afterward — real Proxmox teardown + Tailscale
 device removal, not just DB rows.
 
-**Not yet set up**: no CD. Test CI exists (`.github/workflows/ci.yml` — lint,
-typecheck, worker tests, pgTAP, build, audit, accessibility) and **passes as of
-2026-08-29**; it had failed on every run since being introduced, because `npm ci`
-exited on a dependency conflict before reaching a test, so the gate was decorative
-until PR #14 repaired it. There is still no deploy step: `vercel --prod` was run manually
+**CD is now wired (2026-08-29).** The Vercel project is connected to the GitHub
+repository (`vercel git connect`), so a push to `main` deploys to production
+automatically and pull requests get preview deployments. Before this, `vercel --prod`
+was a manual step, and the consequences were not hypothetical: production ran a
+**two-day-old build** whose delete button called a superseded RPC overload that
+stranded instances, and three separate faults on 2026-08-29 traced back to code and
+production drifting apart with nothing to catch it.
+
+Test CI exists (`.github/workflows/ci.yml` — lint, typecheck, worker tests, pgTAP,
+build, audit, accessibility) and **passes as of 2026-08-29**; it had failed on every
+run since being introduced, because `npm ci` exited on a dependency conflict before
+reaching a test, so the gate was decorative until PR #14 repaired it.
+
+**One gap remains in the new setup:** Vercel builds independently of GitHub Actions,
+so a commit whose tests fail but whose `next build` succeeds will still deploy. A
+broken build cannot reach production (Vercel runs `npm run build` itself), but a
+failing test suite does not block a deploy. Closing that needs a GitHub Actions job
+holding a `VERCEL_TOKEN` and promoting to production only after CI is green — worth
+doing, and it requires creating that token. Superseded text below: `vercel --prod` was run manually
 from a session, so `main` and production can still drift if someone pushes
 without redeploying. Worth wiring a GitHub → Vercel git integration (or a
 GitHub Actions step) so every merge to `main` auto-deploys, rather than
@@ -530,6 +544,7 @@ errors that look like a network fault. Use `pve_call` with an explicit
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | Wired CD: the Vercel project is now connected to GitHub, so `main` auto-deploys and PRs get previews. Also dropped the one-argument `request_instance_deletion` overload, which set instances to `deleting` and queued no work — 52 delete requests since 08-10 had produced zero delete operations — and revoked a worker token that leaked into this public repo (inert immediately; revocation is one UPDATE by design) | — |
 | 2026-08-29 | Confirmed and removed the orphaned VM 111 the delete fault left running on podF, plus five stale cloud-init snippets (three carrying auth keys) on the shared NFS export; logged **G-25**, the worker binding Tailscale devices by hostname, which misattributes private access and defeats teardown on a hostname collision | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
 | 2026-08-29 | Ran the Task 12 end-to-end lifecycle test on a disposable instance and found two production faults: instance creation was impossible on every cluster/image/plan (both admission gates required `monitoring_healthy`, which the worker reports false by design), and **deleting an instance provisioned a new VM instead of deleting it** (delete operations were seeded with create-shaped stages). Both fixed and applied (PR #17). Create, private access, snapshot, restore-replace and upward resize all verified against real hardware | `docs/dev-log/2026-08-29-task-7-boundary-and-two-production-faults.md` |
 | 2026-08-29 | Revoked `anon` EXECUTE on three SECURITY DEFINER functions flagged by the security advisor (PR #16) | same |
