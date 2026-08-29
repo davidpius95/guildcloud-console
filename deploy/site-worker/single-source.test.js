@@ -2,8 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("the Guild-A launcher contains no second worker implementation", async () => {
-  const launcher = await readFile(new URL("../site-worker-guild-a/index.js", import.meta.url), "utf8");
+// This one guards a *repository* invariant, not a runtime one. deploy-pull.sh
+// copies only deploy/site-worker/ into a release, so on a deployed worker the
+// sibling launcher directory legitimately does not exist -- and a hard failure
+// there blocks every future deploy, because deploy-pull.sh runs `npm test`
+// before switching the symlink. That is exactly what happened: both production
+// workers began rejecting all new releases.
+test("the Guild-A launcher contains no second worker implementation", async (t) => {
+  let launcher;
+  try {
+    launcher = await readFile(new URL("../site-worker-guild-a/index.js", import.meta.url), "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    t.skip("sibling launcher absent: running from a deployed release, not a repo checkout");
+    return;
+  }
   const executableLines = launcher.split("\n").filter((line) => line.trim() && !line.trim().startsWith("//"));
 
   assert.match(launcher, /import\s+["']\.\.\/site-worker\/index\.js["']/);
