@@ -146,3 +146,39 @@ A key that is about to be turned off is still a live key, and copies of it were
 sitting in four different files on one box because every cutover attempt made
 another backup. The script writes a timestamped backup on each run and never
 prunes, which is how four accumulated on podD in one evening.
+
+## The TLS bypass, and why it mattered more after tonight
+
+`index.js` set `NODE_TLS_REJECT_UNAUTHORIZED = "0"` at module scope, uncommented,
+almost certainly for Guild-A's self-signed Proxmox certificate back in August. It
+disables certificate verification for the **whole process**, not the one call it
+was added for.
+
+That was always wrong and became materially worse tonight. After the cutover the
+same process carries a long-lived worker token to Supabase and an OAuth client
+secret to Tailscale. The boundary limits what a stolen worker credential can do;
+sending it over connections nobody verifies reopens the path to stealing one.
+
+**It was never necessary.** Both clusters' node certificates already carry the
+node's IP in `subjectAltName`, and `PVE_HOST` is a bare IP on both — so trusting
+each cluster's own PVE CA makes verification simply pass. Measured before
+changing anything: without the CA a connection fails
+`UNABLE_TO_VERIFY_LEAF_SIGNATURE`; with it, the same connection completes. So the
+fix is verifying properly rather than narrowing the bypass — no new dependency,
+no custom dispatcher.
+
+The worker now refuses to start if the variable is set, rather than warning. Node
+already printed a warning on every single cycle, in both journals, for months.
+Nobody acted on it. A warning on a worker nobody watches is not a control.
+
+Three attempts were needed to write the source test that locks it out. The first
+regex matched the `===` comparisons and a comment; the second matched the guard's
+own error message, which contains the literal text it warns about. It now
+requires a `process.env` prefix, strips comments, and asserts in both directions —
+that four spellings of the assignment are caught, and that the legitimate
+comparisons are not. A guard that cannot detect what it guards against is worse
+than none, because it reads as protection.
+
+Verified on both clusters: `tlsVerificationEnabled: true`, Proxmox reached
+(9.2.5 and 9.2.2), `exit=0`, zero TLS warnings in either journal — and the guard
+itself proven to refuse, `exit=1`, when the variable is forced back on.
