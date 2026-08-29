@@ -1,0 +1,131 @@
+name: Deploy to production
+
+# Promotes `main` to Vercel production, but only after CI has passed on that same
+# commit. Vercel's own Git integration builds independently of GitHub Actions, so
+# with it alone a commit whose tests fail but whose `next build` succeeds still
+# reaches production. This closes that gap.
+#
+# ── Before this can do anything ────────────────────────────────────────────────
+#
+# 1. Add three repository secrets (Settings → Secrets and variables → Actions):
+#
+#      VERCEL_TOKEN        Vercel → Account Settings → Tokens → Create.
+#                          Scope it to this project if the plan allows.
+#      VERCEL_ORG_ID       team_5ZDBGRuejgBLaOq8MWsZJv6h
+#      VERCEL_PROJECT_ID   prj_Jsp0QM82nxRIEo54dhewZCYUFRsM
+#
+#    The two ids are not secret -- they are in .vercel/project.json -- but Vercel's
+#    CLI reads them from the environment, and keeping all three together is
+#    simpler than splitting them across secrets and variables.
+#
+# 2. Stop Vercel's Git integration from deploying production itself, or every
+#    merge deploys twice. Add to vercel.json:
+#
+#      { "git": { "deploymentEnabled": { "main": false } } }
+#
+#    Preview deployments for pull requests keep working; only automatic
+#    production deploys from `main` stop.
+#
+# Do step 2 only after step 1, and after one successful run of this workflow.
+# Doing it first leaves nothing deploying production at all.
+#
+# Until VERCEL_TOKEN exists this workflow ends at the guard below without
+# failing, so it does not fill the Actions tab with red while it waits.
+
+on:
+  workflow_run:
+    workflows: ["GuildCloud CI"]
+    types: [completed]
+    branches: [main]
+
+# Never let two production deploys overlap; a queued one supersedes the running
+# one rather than racing it.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only a green CI run on main. workflow_run fires on failure too, so this is
+    # the actual gate -- without it the job would deploy exactly what CI rejected.
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    steps:
+      - name: Check deploy credentials are configured
+        id: guard
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN is not set; skipping. See the comment at the top of this file." >&2
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Deploy the exact commit CI tested, not whatever main points at now. A
+      # later push during the CI run would otherwise ship untested code.
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Vercel CLI
+        if: steps.guard.outputs.ready == 'true'
+        run: npm install -g vercel@59.10.0
+
+      - name: Pull Vercel production environment
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      # Build here rather than on Vercel so the artifact comes from the reviewed
+      # commit and the deploy step has nothing left to resolve.
+      - name: Build
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy
+        if: steps.guard.outputs.ready == 'true'
+        id: deploy
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          url=$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed $url"
+
+      # A deploy that reports success while the site 500s is worse than a failed
+      # one, because nobody looks again.
+      - name: Verify the deployment responds
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          url="${{ steps.deploy.outputs.url }}"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || true)
+            echo "attempt $attempt: HTTP $code"
+            case "$code" in
+              200|301|302|307|308) exit 0 ;;
+            esac
+            sleep 10
+          done
+          echo "Deployment did not return a success status; check $url" >&2
+          exit 1
