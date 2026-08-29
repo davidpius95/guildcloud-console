@@ -158,9 +158,11 @@ created earlier the same day against local dev but the same Supabase
 backend) were both deleted afterward — real Proxmox teardown + Tailscale
 device removal, not just DB rows.
 
-**Not yet set up**: no CD. There *is* real test CI as of 2026-08-29
-(`.github/workflows/ci.yml` — lint, typecheck, worker tests, pgTAP, build,
-audit, accessibility), but no deploy step: `vercel --prod` was run manually
+**Not yet set up**: no CD. Test CI exists (`.github/workflows/ci.yml` — lint,
+typecheck, worker tests, pgTAP, build, audit, accessibility) and **passes as of
+2026-08-29**; it had failed on every run since being introduced, because `npm ci`
+exited on a dependency conflict before reaching a test, so the gate was decorative
+until PR #14 repaired it. There is still no deploy step: `vercel --prod` was run manually
 from a session, so `main` and production can still drift if someone pushes
 without redeploying. Worth wiring a GitHub → Vercel git integration (or a
 GitHub Actions step) so every merge to `main` auto-deploys, rather than
@@ -232,12 +234,17 @@ PR #11. Audited directly against the repo on 2026-08-29:
 Phase 1 from scratch), Task 9 (observability, support, restore drills), Task 10 (billing
 ledger), Task 12 (staged launch). Task 11 is a deliberate design backlog.
 
-**The security core of Task 7 is untouched and is the recommended next step.** The site
-worker still runs on `SUPABASE_SERVICE_ROLE_KEY` (`deploy/site-worker/index.js:169`) and
-does ~30 direct table writes instead of cluster-scoped RPCs, so a compromised worker has
-broad control-plane access and can act outside its own cluster. This is both a P0 launch
-gate in the plan and a live exposure. `supabase/functions/site-worker-guild-a/index.ts` is already a non-deployable
-tombstone rather than a live third copy.
+**Task 7's code has since landed (PR #15, `d58694d`).** The site worker now has a
+`guildcloud_site_worker` database role with no table privileges, a `worker_identities`
+table mapping each worker to exactly one cluster, and `worker_*` RPCs covering every
+path it previously reached by writing tables directly. The cluster is resolved from the
+database rather than from the token, so a stolen worker token cannot widen its own scope
+and revoking a worker is a single `UPDATE` instead of a JWT-secret rotation.
+
+**The service-role key is still on both production workers.** Removing it is the
+operational half: mint tokens, canary one cluster, rotate the key. That is written up in
+`docs/runbooks/2026-08-29-worker-service-role-cutover.md`, and `CONTROL_PLANE_AUTH_MODE`
+still defaults to `service_role`, so nothing has changed for a running worker yet.
 
 ## Repository sync state (checked 2026-08-29)
 
@@ -471,6 +478,8 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | Task 7: cluster-scoped worker RPC boundary (PR #15). New `guildcloud_site_worker` role with no table privileges, `worker_identities` mapping each worker to one cluster, and `worker_*` RPCs replacing every direct table access. Cluster resolved from the database, never the token. Cutover runbook and token-minting script included; service-role key not yet removed | `docs/runbooks/2026-08-29-worker-service-role-cutover.md` |
+| 2026-08-29 | Repaired CI (PR #14). It had never passed since being introduced: `npm ci` failed on an `@types/node` conflict and a lockfile out of sync with package.json, so no job ever reached a test | — |
 | 2026-08-29 | Platform hardening plan, first commit (`a3b9744`, PR #11): atomic lifecycle RPCs replacing RLS-blocked table writes, one-active-operation index, UPID-awaiting snapshot/restore, monotonic verified resize, real CI + ESLint flat config + `proxy.ts`, duplicate Guild-A worker collapsed to a tombstone. Restore-to-new removed | `docs/2026-08-29-guildcloud-platform-hardening-and-launch.md` |
 | 2026-08-29 | Audited that plan against the repo and recorded honest per-task status in it (54 of its checkboxes verified done; capability contract found orphaned, lifecycle intent found unaudited, worker service-role key found still in place) | same plan doc |
 | 2026-08-27 | Restored the ability to create instances at all (G-24): the wizard's admission gate was far stricter than the RPC that actually places VMs, and the Guild-B worker lacked `VM.Clone` on per-node templates (pool membership did *not* grant it). Added per-node ceiling overrides for podB–podF (podA and Guild-A deliberately untouched) plus explicit template ACLs; verified with two real end-to-end creates on podB and podD | `docs/dev-log/2026-08-27-guild-b-pod-admission-and-clone-acls.md` |
@@ -491,16 +500,18 @@ cloud-init snippet write, which still targets the full NFS.
 The hardening plan is now the active workstream; the items below it are the
 older infrastructure backlog, still open and still real.
 
-1. **Task 7 — take the service-role key off the site worker** (plan Task 7).
-   Define cluster-scoped worker RPCs, move the ~30 direct table writes onto
-   them, drop `SUPABASE_SERVICE_ROLE_KEY` from worker config, then rotate it.
-   This is a P0 launch gate and a live exposure, and the cluster-ownership
-   check missing from `finish_instance_operation` is part of the same change.
+1. **Run the worker cutover** (`docs/runbooks/2026-08-29-worker-service-role-cutover.md`).
+   The code boundary is merged; what remains is operational — mint a token per
+   worker, canary one cluster, then remove `SUPABASE_SERVICE_ROLE_KEY` from both
+   boxes and rotate it. Until that runs the broad key is still live on both
+   workers. Check first whether the project uses asymmetric JWT signing keys, and
+   what else still holds the service-role key (the Vercel deployment may).
 2. **Wire the capability contract into the UI and server actions** (plan Task 3)
    so `lib/platform-capabilities.ts` enforces rather than documents, and fix the
    two stale copy strings plus the missing `docs/content/product-claims.md`.
 3. **Add audit events to the five request RPCs** (plan Task 4) — customer
-   lifecycle intent is currently unaudited.
+   lifecycle intent is currently unaudited. The cluster-ownership gap noted
+   earlier is closed: `worker_finish_operation` now performs that check.
 4. **Task 1 — restore a reproducible baseline schema**, before Tasks 9 and 10
    add more migrations to a schema the repo can't rebuild.
 5. **Bounded-lease reconciliation** for operations stranded in `running`
