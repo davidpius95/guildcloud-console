@@ -30,10 +30,15 @@ fi
 
 for migration_file in "${changed_migrations[@]}"; do
   [[ -f "$migration_file" ]] || continue
-  if rg -qi 'security\s+definer' "$migration_file"; then
-    rg -qi 'set\s+search_path' "$migration_file" || { echo "$migration_file: SECURITY DEFINER missing search_path" >&2; exit 1; }
-    rg -qi 'revoke\s+execute' "$migration_file" || { echo "$migration_file: SECURITY DEFINER missing REVOKE EXECUTE" >&2; exit 1; }
-    rg -qi 'grant\s+execute' "$migration_file" || { echo "$migration_file: SECURITY DEFINER missing GRANT EXECUTE" >&2; exit 1; }
+  # Strip `--` comments before scanning. A migration that only *describes*
+  # SECURITY DEFINER in a comment (for instance one that revokes EXECUTE on
+  # functions it does not define) must not be forced to declare a search_path it
+  # has no function to attach one to.
+  stripped=$(sed 's/--.*$//' "$migration_file")
+  if rg -qi 'security\s+definer' <<<"$stripped"; then
+    rg -qi 'set\s+search_path' <<<"$stripped" || { echo "$migration_file: SECURITY DEFINER missing search_path" >&2; exit 1; }
+    rg -qi 'revoke\s+execute' <<<"$stripped" || { echo "$migration_file: SECURITY DEFINER missing REVOKE EXECUTE" >&2; exit 1; }
+    rg -qi 'grant\s+execute' <<<"$stripped" || { echo "$migration_file: SECURITY DEFINER missing GRANT EXECUTE" >&2; exit 1; }
   fi
 done
 
