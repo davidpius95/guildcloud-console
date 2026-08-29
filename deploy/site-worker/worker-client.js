@@ -260,6 +260,17 @@ export class WorkerControlPlane {
   // file - so two workers cannot both believe they own the Tailscale policy and
   // race a read-modify-write of it.
 
+  // Asks whether this worker holds the role, rather than discovering it by being
+  // refused. Every cluster but one is not the housekeeper, so without this the
+  // non-holders call getTailnetDesiredState every cycle and log the refusal.
+  //
+  // False means "valid worker, not the housekeeper". An unknown or revoked
+  // worker raises rather than returning false, so this cannot be used to sidestep
+  // a revocation.
+  holdsTailnetHousekeeping() {
+    return this.#rpc("worker_holds_tailnet_housekeeping");
+  }
+
   getTailnetDesiredState() {
     return this.#rpc("worker_get_tailnet_desired_state");
   }

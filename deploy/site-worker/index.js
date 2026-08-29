@@ -593,7 +593,7 @@ async function processPendingInstanceDeletions(supabase) {
     }
     // If instance has no cluster_id or proxmox_vmid (failed before placement), clean it up directly
     if (!inst.cluster_id || !inst.proxmox_vmid) {
-      if (holdsTailnetHousekeeping() || inst.cluster_id === config.clusterId) {
+      if ((await holdsTailnetHousekeeping()) || inst.cluster_id === config.clusterId) {
         if (inst.tailscale_device_id) {
           try { await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`); } catch {}
         }
@@ -835,12 +835,25 @@ async function syncInstanceDeviceTags(supabase) {
   }
 }
 
-// On the boundary path the housekeeping role is granted by the control plane,
-// so the worker attempts it and the RPC refuses if it is not the holder - that
-// refusal is normal, not an error. On the legacy path the worker's own env file
-// is the only signal available.
-function holdsTailnetHousekeeping() {
-  return controlPlane ? true : config.tailnetHousekeepingOwner;
+// On the boundary path the control plane decides, and is asked -- previously
+// this returned true unconditionally and let the privileged RPC refuse, so every
+// cluster but the one holder logged a failed housekeeping call every cycle. The
+// refusal was correct; making it happen at all was not.
+//
+// Cached for the life of the process. A worker run is bounded and single-purpose,
+// so the answer cannot meaningfully change within one, and caching keeps this to
+// one extra RPC per cycle rather than one per call site. Housekeeping moving
+// between cycles is picked up on the next run.
+//
+// On the legacy path the worker's own env file is the only signal available.
+let tailnetHousekeepingCache = null;
+
+async function holdsTailnetHousekeeping() {
+  if (!controlPlane) return config.tailnetHousekeepingOwner;
+  if (tailnetHousekeepingCache === null) {
+    tailnetHousekeepingCache = await controlPlane.holdsTailnetHousekeeping();
+  }
+  return tailnetHousekeepingCache;
 }
 
 async function getPlan(supabase, catalogPlanId, columns) {
@@ -2164,12 +2177,13 @@ async function run() {
     // which one (worker_identities.tailnet_housekeeping, uniquely indexed);
     // the env flag is only consulted on the legacy service-role path, where
     // nothing can stop two workers from both claiming it.
-    if (holdsTailnetHousekeeping()) {
+    if (await holdsTailnetHousekeeping()) {
       await reconcileTailnetAccess(supabase);
     }
   } catch (e) {
-    // A worker that simply does not hold the housekeeping role is the normal
-    // case for every cluster but one, so do not report it as a failure.
+    // Kept as a safety net rather than the primary gate: the worker now asks
+    // whether it holds the role before calling, so a refusal here means the role
+    // moved mid-cycle. Still not a failure worth reporting.
     if (!e?.isNotOurs) log.push({ ok: false, stage: "reconcile_tailnet_access", error: String(e) });
   }
 
@@ -2186,7 +2200,7 @@ async function run() {
   }
 
   try {
-    if (holdsTailnetHousekeeping()) {
+    if (await holdsTailnetHousekeeping()) {
       await syncMemberDeviceEnrollment(supabase);
       await syncInstanceDeviceTags(supabase);
     }

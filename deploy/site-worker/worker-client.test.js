@@ -212,3 +212,38 @@ test("housekeeping refusal surfaces as not-ours rather than an identity failure"
   assert.equal(error.isNotOurs, true);
   assert.equal(error.isIdentityRejected, false);
 });
+
+test("holdsTailnetHousekeeping asks the control plane and carries no cluster", async () => {
+  // The point of the RPC: a worker can find out it is not the housekeeper
+  // without calling a privileged RPC and being refused. Like every other call on
+  // this client it names no cluster -- the database resolves that from the token.
+  const client = stubClient((name) =>
+    name === "worker_holds_tailnet_housekeeping" ? { data: false, error: null } : { data: null, error: null },
+  );
+  const plane = new WorkerControlPlane(client);
+
+  assert.equal(await plane.holdsTailnetHousekeeping(), false);
+  assert.deepEqual(client.calls, [{ name: "worker_holds_tailnet_housekeeping", args: undefined }]);
+  assert.doesNotMatch(JSON.stringify(client.calls), /guild-a|guild-b|cluster/i);
+});
+
+test("holdsTailnetHousekeeping returns true for the holder", async () => {
+  const client = stubClient(() => ({ data: true, error: null }));
+  const plane = new WorkerControlPlane(client);
+  assert.equal(await plane.holdsTailnetHousekeeping(), true);
+});
+
+test("holdsTailnetHousekeeping surfaces a revoked worker instead of answering false", async () => {
+  // A revoked worker must not be able to hide behind a plain `false`: the RPC
+  // resolves the cluster first, so revocation raises here exactly as it does on
+  // every other worker_* call.
+  const client = stubClient(() => ({
+    data: null,
+    error: { code: "28000", message: "worker identity is unknown or revoked" },
+  }));
+  const plane = new WorkerControlPlane(client);
+
+  const error = await plane.holdsTailnetHousekeeping().then(() => null, (e) => e);
+  assert.ok(error, "a revoked worker must raise, not resolve to false");
+  assert.match(String(error.message), /unknown or revoked/);
+});
