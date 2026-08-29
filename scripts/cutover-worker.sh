@@ -21,8 +21,9 @@
 # WORKER_ID in the worker's env, or the worker refuses to start.
 #
 # Safety: the env file is backed up, the new config is validated with
-# --print-config BEFORE the service is restarted, and the backup is restored
-# automatically if --health does not come up.
+# --print-config before the service is restarted, and the backup is restored
+# automatically if either validation or --health fails. Writing the env file does
+# not affect the running worker -- systemd only reads it on the next start.
 
 set -euo pipefail
 
@@ -80,8 +81,8 @@ token=$(node "$repo_root/scripts/mint-worker-token.mjs" \
 echo "==> Backing up $env_file to $env_file.bak-$stamp"
 run_in_ct "cp -a $env_file $env_file.bak-$stamp"
 
-# Build the new env remotely from the old one, then validate before activating.
-# The token arrives on stdin so it never appears in the remote process list.
+# Build the new env remotely from the old one. The token arrives on stdin so it
+# never appears in the remote process list.
 echo "==> Staging the new configuration"
 printf '%s\n' "$token" | ssh -o BatchMode=yes "$remote" "pct exec $vmid -- sh -c '
   set -e
@@ -97,15 +98,26 @@ printf '%s\n' "$token" | ssh -o BatchMode=yes "$remote" "pct exec $vmid -- sh -c
   mv \"\$tmp\" $env_file.staged
 '"
 
-echo "==> Validating the staged config before touching the running service"
-run_in_ct "cd /opt/guildcloud-worker/current && set -a && . $env_file.staged && set +a && node index.js --print-config >/dev/null" || {
-  echo "Staged config failed to parse; nothing was activated." >&2
-  run_in_ct "rm -f $env_file.staged"
+# The config must be validated with the new file IN PLACE, not sourced alongside
+# the old one. index.js re-reads $env_file itself and fills in anything the
+# sourced environment left unset -- so with the old file still present it picks
+# SUPABASE_SERVICE_ROLE_KEY back up and trips the guard that refuses to run with
+# both credentials. Validating a staged copy could therefore never pass.
+#
+# Writing the file is safe on its own: systemd only reads it when the service
+# next starts, so the running worker is unaffected until the restart below.
+echo "==> Activating the new configuration"
+run_in_ct "mv $env_file.staged $env_file"
+
+echo "==> Validating it parses"
+run_in_ct "cd /opt/guildcloud-worker/current && node index.js --print-config >/dev/null" || {
+  echo "New config failed to parse; restoring the previous env." >&2
+  run_in_ct "cp -a $env_file.bak-$stamp $env_file"
   exit 1
 }
 
-echo "==> Activating and restarting"
-run_in_ct "mv $env_file.staged $env_file && systemctl restart guildcloud-worker.timer"
+echo "==> Restarting"
+run_in_ct "systemctl restart guildcloud-worker.timer"
 
 echo "==> Health"
 if run_in_ct "cd /opt/guildcloud-worker/current && set -a && . $env_file && set +a && node index.js --health"; then
