@@ -450,13 +450,26 @@ async function detachVendorSnippet(token, node, vmid) {
 // state=deleting" query, run against a hardcoded node, could make this
 // worker delete whatever VM on ITS cluster happens to hold a VMID that was
 async function processPendingInstanceDeletions(supabase) {
-  const { data: pending, error } = await supabase
-    .from("instances")
-    .select("id, cluster_id, proxmox_vmid, proxmox_node, tailscale_device_id")
-    .eq("state", "deleting");
-  if (error) {
-    console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions_select", error: error.message }));
-    return;
+  let pending;
+  if (controlPlane) {
+    // The boundary returns only this cluster's teardowns, each already paired
+    // with its active delete operation - no cross-cluster scan, no second query.
+    try {
+      pending = await controlPlane.listPendingDeletions();
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions_select", error: String(e) }));
+      return;
+    }
+  } else {
+    const { data, error } = await supabase
+      .from("instances")
+      .select("id, cluster_id, proxmox_vmid, proxmox_node, tailscale_device_id")
+      .eq("state", "deleting");
+    if (error) {
+      console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions_select", error: error.message }));
+      return;
+    }
+    pending = data;
   }
   if (!pending || pending.length === 0) return;
 
@@ -464,30 +477,30 @@ async function processPendingInstanceDeletions(supabase) {
   const tsToken = await tailscaleAccessToken(supabase);
 
   for (const inst of pending) {
-    const { data: deletionOperation, error: operationError } = await supabase
-      .from("operations")
-      .select("id")
-      .eq("instance_id", inst.id)
-      .eq("kind", "instance.delete")
-      .in("state", ["pending", "running"])
-      .maybeSingle();
+    // The boundary listing already carries operation_id; the legacy path has to
+    // go and find it.
+    let deletionOperation = inst.operation_id ? { id: inst.operation_id } : null;
+    let operationError = null;
+    if (!deletionOperation) {
+      ({ data: deletionOperation, error: operationError } = await supabase
+        .from("operations")
+        .select("id")
+        .eq("instance_id", inst.id)
+        .eq("kind", "instance.delete")
+        .in("state", ["pending", "running"])
+        .maybeSingle());
+    }
     if (operationError || !deletionOperation) {
       console.log(JSON.stringify({ ok: false, where: "find_deletion_operation", instance_id: inst.id, error: operationError?.message ?? "active deletion operation missing" }));
       continue;
     }
     // If instance has no cluster_id or proxmox_vmid (failed before placement), clean it up directly
     if (!inst.cluster_id || !inst.proxmox_vmid) {
-      if (config.tailnetHousekeepingOwner || inst.cluster_id === config.clusterId) {
+      if (holdsTailnetHousekeeping() || inst.cluster_id === config.clusterId) {
         if (inst.tailscale_device_id) {
           try { await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`); } catch {}
         }
-        const { error: finishError } = await supabase.rpc("finish_instance_operation", {
-          p_operation_id: deletionOperation.id,
-          p_outcome: "succeeded",
-          p_observed: { infrastructure_absent: true },
-          p_error: null,
-        });
-        if (finishError) throw new Error(`Could not finalize deletion: ${finishError.message}`);
+        await finishOperation(supabase, deletionOperation.id, "succeeded", { infrastructure_absent: true });
       }
       continue;
     }
@@ -525,24 +538,16 @@ async function processPendingInstanceDeletions(supabase) {
       if (inst.tailscale_device_id) {
         await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`);
       }
-      const { error: finishError } = await supabase.rpc("finish_instance_operation", {
-        p_operation_id: deletionOperation.id,
-        p_outcome: "succeeded",
-        p_observed: { infrastructure_absent: true },
-        p_error: null,
-      });
-      if (finishError) throw new Error(`Could not finalize deletion: ${finishError.message}`);
+      await finishOperation(supabase, deletionOperation.id, "succeeded", { infrastructure_absent: true });
       console.log(JSON.stringify({ ok: true, where: "instance_deleted_clean_slate", instance_id: inst.id }));
     } catch (e) {
       console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions", instance_id: inst.id, error: String(e) }));
       const message = String(e);
-      const { error: finishError } = await supabase.rpc("finish_instance_operation", {
-        p_operation_id: deletionOperation.id,
-        p_outcome: "failed",
-        p_observed: null,
-        p_error: message,
-      });
-      if (finishError) console.log(JSON.stringify({ ok: false, where: "finish_instance_deletion", instance_id: inst.id, error: finishError.message }));
+      try {
+        await finishOperation(supabase, deletionOperation.id, "failed", null, message);
+      } catch (finishError) {
+        console.log(JSON.stringify({ ok: false, where: "finish_instance_deletion", instance_id: inst.id, error: String(finishError) }));
+      }
     }
   }
 }
@@ -551,12 +556,23 @@ const SSH_SYNC_BEGIN_MARKER = "# BEGIN GUILDCLOUD MANAGED KEYS - do not edit thi
 const SSH_SYNC_END_MARKER = "# END GUILDCLOUD MANAGED KEYS";
 
 async function processPendingSshKeySyncs(supabase) {
-  const { data: pending, error } = await supabase
-    .from("instances")
-    .select("id, organization_id, cluster_id, proxmox_vmid, proxmox_node")
-    .eq("ssh_keys_sync_pending", true)
-    .eq("state", "ready")
-    .eq("cluster_id", config.clusterId);
+  let pending;
+  let error = null;
+  if (controlPlane) {
+    // Keys arrive already joined, so the worker never reads the ssh_keys table.
+    try {
+      pending = await controlPlane.listPendingSshKeySyncs();
+    } catch (e) {
+      error = { message: String(e) };
+    }
+  } else {
+    ({ data: pending, error } = await supabase
+      .from("instances")
+      .select("id, organization_id, cluster_id, proxmox_vmid, proxmox_node")
+      .eq("ssh_keys_sync_pending", true)
+      .eq("state", "ready")
+      .eq("cluster_id", config.clusterId));
+  }
   if (error) {
     console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs_select", error: error.message }));
     return;
@@ -567,8 +583,10 @@ async function processPendingSshKeySyncs(supabase) {
   for (const inst of pending) {
     try {
       assertOperationOwnership(inst, config.clusterId);
-      const { data: keys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
-      const content = (keys ?? []).map((k) => k.public_key).join("\n");
+      const publicKeys = inst.public_keys
+        ?? ((await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id)).data ?? [])
+          .map((k) => k.public_key);
+      const content = publicKeys.join("\n");
       const managedBlock = `${SSH_SYNC_BEGIN_MARKER}\n${content}\n${SSH_SYNC_END_MARKER}\n`;
       const encoded = Buffer.from(managedBlock, "utf8").toString("base64");
       const script = `mkdir -p /home/guildvm/.ssh && touch /home/guildvm/.ssh/authorized_keys && awk '/^${SSH_SYNC_BEGIN_MARKER}$/{skip=1} /^${SSH_SYNC_END_MARKER}$/{skip=0; next} !skip' /home/guildvm/.ssh/authorized_keys > /tmp/gc_preserved_keys && cat /tmp/gc_preserved_keys > /home/guildvm/.ssh/authorized_keys && echo ${encoded} | base64 -d >> /home/guildvm/.ssh/authorized_keys && rm -f /tmp/gc_preserved_keys && chmod 700 /home/guildvm/.ssh && chmod 600 /home/guildvm/.ssh/authorized_keys && chown -R guildvm:guildvm /home/guildvm/.ssh`;
@@ -576,7 +594,7 @@ async function processPendingSshKeySyncs(supabase) {
         command: ["sh", "-c", script],
       });
       await waitForGuestExec(token, inst.proxmox_node, inst.proxmox_vmid, exec.pid);
-      await supabase.from("instances").update({ ssh_keys_sync_pending: false }).eq("id", inst.id);
+      await updateInstanceRuntime(supabase, inst.id, { ssh_keys_sync_pending: false });
     } catch (e) {
       console.log(JSON.stringify({ ok: false, where: "processPendingSshKeySyncs", instance_id: inst.id, error: String(e) }));
     }
@@ -595,10 +613,21 @@ async function processPendingSshKeySyncs(supabase) {
 // Tailnet-wide and cluster-independent - see the run() dispatch below for
 // why only one worker (config.tailnetHousekeepingOwner) ever calls this.
 async function syncMemberDeviceEnrollment(supabase) {
-  const { data: pending, error } = await supabase
-    .from("memberships")
-    .select("id, device_enrolled")
-    .not("user_id", "is", null);
+  let pending;
+  let error = null;
+  if (controlPlane) {
+    try {
+      const desired = await controlPlane.getTailnetDesiredState();
+      pending = (desired.memberships ?? []).filter((member) => member.user_id !== null);
+    } catch (e) {
+      error = { message: String(e) };
+    }
+  } else {
+    ({ data: pending, error } = await supabase
+      .from("memberships")
+      .select("id, device_enrolled")
+      .not("user_id", "is", null));
+  }
   if (error) {
     console.log(JSON.stringify({ ok: false, where: "syncMemberDeviceEnrollment_select", error: error.message }));
     return;
@@ -618,7 +647,11 @@ async function syncMemberDeviceEnrollment(supabase) {
       await ts(tsToken, "POST", `device/${device.id}/tags`, { tags: [tag] });
     }
     if (!member.device_enrolled) {
-      await supabase.from("memberships").update({ device_enrolled: true, tailscale_device_id: device.id }).eq("id", member.id);
+      if (controlPlane) {
+        await controlPlane.markMemberEnrolled(member.id, device.id);
+      } else {
+        await supabase.from("memberships").update({ device_enrolled: true, tailscale_device_id: device.id }).eq("id", member.id);
+      }
     }
   }
 }
@@ -628,19 +661,26 @@ async function syncMemberDeviceEnrollment(supabase) {
 // or tailnet grant. This runs only on the designated housekeeping owner so
 // two site workers never race a read-modify-write of the same Tailscale policy.
 async function reconcileTailnetAccess(supabase) {
-  const results = await Promise.all([
-    supabase.from("projects").select("id, organization_id, slug, tailscale_acl_state"),
-    supabase.from("memberships").select("id, organization_id, role"),
-    supabase.from("instances").select("id, organization_id, project_id, tailscale_device_id"),
-    supabase.from("access_grants").select("membership_id, project_id, resource_type, resource_id"),
-  ]);
-  const [projectsResult, membershipsResult, instancesResult, accessGrantsResult] = results;
-  const queryError = results.find((result) => result.error)?.error;
-  if (queryError) throw new Error(`tailnet access data query failed: ${queryError.message}`);
-  const projects = projectsResult.data;
-  const memberships = membershipsResult.data;
-  const instances = instancesResult.data;
-  const accessGrants = accessGrantsResult.data;
+  let projects;
+  let memberships;
+  let instances;
+  let accessGrants;
+  if (controlPlane) {
+    // One RPC, gated on worker_identities.tailnet_housekeeping, replaces four
+    // unscoped table reads across every organization.
+    const desired = await controlPlane.getTailnetDesiredState();
+    ({ projects, memberships, instances, access_grants: accessGrants } = desired);
+  } else {
+    const results = await Promise.all([
+      supabase.from("projects").select("id, organization_id, slug, tailscale_acl_state"),
+      supabase.from("memberships").select("id, organization_id, role"),
+      supabase.from("instances").select("id, organization_id, project_id, tailscale_device_id"),
+      supabase.from("access_grants").select("membership_id, project_id, resource_type, resource_id"),
+    ]);
+    const queryError = results.find((result) => result.error)?.error;
+    if (queryError) throw new Error(`tailnet access data query failed: ${queryError.message}`);
+    [projects, memberships, instances, accessGrants] = results.map((result) => result.data);
+  }
   if (!projects || !memberships || !instances || !accessGrants) return;
   const token = await tailscaleAccessToken(supabase);
   const policy = await ts(token, "GET", `tailnet/${config.tailscaleTailnet}/acl`);
@@ -663,15 +703,27 @@ async function reconcileTailnetAccess(supabase) {
     await ts(token, "POST", `tailnet/${config.tailscaleTailnet}/acl`, next);
   }
   for (const project of projects.filter((project) => project.tailscale_acl_state !== "applied")) {
-    await supabase.from("projects").update({ tailscale_acl_state: "applied" }).eq("id", project.id);
+    if (controlPlane) {
+      await controlPlane.markProjectAclApplied(project.id);
+    } else {
+      await supabase.from("projects").update({ tailscale_acl_state: "applied" }).eq("id", project.id);
+    }
   }
 }
 
 async function syncInstanceDeviceTags(supabase) {
-  const [{ data: instances }, { data: projects }] = await Promise.all([
-    supabase.from("instances").select("id, project_id, tailscale_device_id").not("tailscale_device_id", "is", null),
-    supabase.from("projects").select("id, slug"),
-  ]);
+  let instances;
+  let projects;
+  if (controlPlane) {
+    const desired = await controlPlane.getTailnetDesiredState();
+    instances = (desired.instances ?? []).filter((instance) => instance.tailscale_device_id !== null);
+    projects = desired.projects ?? [];
+  } else {
+    [{ data: instances }, { data: projects }] = await Promise.all([
+      supabase.from("instances").select("id, project_id, tailscale_device_id").not("tailscale_device_id", "is", null),
+      supabase.from("projects").select("id, slug"),
+    ]);
+  }
   if (!instances || !projects) return;
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const token = await tailscaleAccessToken(supabase);
@@ -684,6 +736,79 @@ async function syncInstanceDeviceTags(supabase) {
       tags: deviceTags,
     });
   }
+}
+
+// On the boundary path the housekeeping role is granted by the control plane,
+// so the worker attempts it and the RPC refuses if it is not the holder - that
+// refusal is normal, not an error. On the legacy path the worker's own env file
+// is the only signal available.
+function holdsTailnetHousekeeping() {
+  return controlPlane ? true : config.tailnetHousekeepingOwner;
+}
+
+async function getPlan(supabase, catalogPlanId, columns) {
+  if (controlPlane) return controlPlane.getPlan(catalogPlanId);
+  const { data } = await supabase.from("catalog_plans").select(columns).eq("id", catalogPlanId).single();
+  return data;
+}
+
+// Cluster-scoped instance read. The column list is kept for the legacy path
+// only; the boundary returns the whole row and the caller uses what it needs.
+async function getInstance(supabase, instanceId, columns) {
+  if (controlPlane) return controlPlane.getInstance(instanceId);
+  const { data } = await supabase.from("instances").select(columns).eq("id", instanceId).single();
+  return data;
+}
+
+// Keyed by instance, so the worker never names an organization it is not
+// currently working for.
+async function listInstanceSshKeys(supabase, inst) {
+  if (controlPlane) {
+    return (await controlPlane.listInstanceSshKeys(inst.id)).map((public_key) => ({ public_key }));
+  }
+  const { data } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", inst.organization_id);
+  return data;
+}
+
+async function getInstanceProject(supabase, inst) {
+  if (controlPlane) return controlPlane.getInstanceProject(inst.id);
+  const { data } = await supabase
+    .from("projects")
+    .select("slug, tailscale_acl_state")
+    .eq("id", inst.project_id)
+    .single();
+  return data;
+}
+
+// Terminal completion. worker_finish_operation additionally verifies that this
+// worker's cluster owns the operation - the check Task 4 specified but left out
+// of finish_instance_operation - and applies the instance.create state
+// transition the worker used to make with a direct write.
+async function finishOperation(supabase, operationId, outcome, observed = null, errorMessage = null) {
+  if (controlPlane) {
+    await controlPlane.finishOperation(operationId, outcome, observed, errorMessage);
+    return;
+  }
+  const { error } = await supabase.rpc("finish_instance_operation", {
+    p_operation_id: operationId,
+    p_outcome: outcome,
+    p_observed: observed,
+    p_error: errorMessage,
+  });
+  if (error) throw new Error(`Could not finalize operation: ${error.message}`);
+}
+
+// Instance runtime fields the worker observes from infrastructure. Routed
+// through the boundary when a worker token is configured, so the column
+// whitelist in worker_update_instance_runtime applies; the direct write remains
+// only for un-migrated service-role clusters.
+async function updateInstanceRuntime(supabase, instanceId, patch) {
+  if (controlPlane) {
+    await controlPlane.updateInstanceRuntime(instanceId, patch);
+    return;
+  }
+  const { error } = await supabase.from("instances").update(patch).eq("id", instanceId);
+  if (error) throw new Error(`could not update instance runtime: ${error.message}`);
 }
 
 // Single-quoted shell literal: wraps in '...' and escapes any embedded
@@ -715,6 +840,12 @@ async function isFromWarmPool(supabase, operation) {
 // to two customers - the second CAS matches no row and returns nothing.
 async function claimWarmVm(supabase, inst, instanceId) {
   if (!config.warmPoolEnabled) return null;
+  if (controlPlane) {
+    // One statement, with the state re-check and SKIP LOCKED inside it, so two
+    // workers cannot hand the same pooled VM to two customers.
+    return controlPlane.claimWarmPoolVm(instanceId, inst.catalog_image_id, inst.catalog_plan_id);
+  }
+
   const { data: candidates } = await supabase
     .from("warm_pool_vms")
     .select("id, proxmox_vmid, tailscale_hostname, tailscale_device_id, private_ip")
@@ -746,11 +877,13 @@ async function maintainWarmPool(supabase, token) {
   if (!config.warmPoolEnabled) return;
   const warmPoolNode = config.warmPool.node;
 
-  const { data: rows } = await supabase
-    .from("warm_pool_vms")
-    .select("id, proxmox_vmid, tailscale_hostname, state, created_at")
-    .eq("cluster_id", config.clusterId)
-    .in("state", ["building", "warm"]);
+  const rows = controlPlane
+    ? await controlPlane.listWarmPoolVms(["building", "warm"])
+    : (await supabase
+        .from("warm_pool_vms")
+        .select("id, proxmox_vmid, tailscale_hostname, state, created_at")
+        .eq("cluster_id", config.clusterId)
+        .in("state", ["building", "warm"])).data;
   const pool = rows ?? [];
 
   // Promote anything that has finished enrolling.
@@ -767,24 +900,38 @@ async function maintainWarmPool(supabase, token) {
     for (const row of building) {
       const device = devices.find((d) => d.hostname === row.tailscale_hostname);
       if (device) {
-        await supabase
-          .from("warm_pool_vms")
-          .update({
-            state: "warm",
-            warmed_at: new Date().toISOString(),
-            tailscale_device_id: device.id,
-            private_ip: (device.addresses ?? []).find((a) => a.startsWith("100.")) ?? null,
-          })
-          .eq("id", row.id);
+        const privateIp = (device.addresses ?? []).find((a) => a.startsWith("100.")) ?? null;
+        if (controlPlane) {
+          await controlPlane.updateWarmPoolVm(row.id, "warm", {
+            tailscaleDeviceId: device.id,
+            privateIp,
+          });
+        } else {
+          await supabase
+            .from("warm_pool_vms")
+            .update({
+              state: "warm",
+              warmed_at: new Date().toISOString(),
+              tailscale_device_id: device.id,
+              private_ip: privateIp,
+            })
+            .eq("id", row.id);
+        }
         console.log(JSON.stringify({ ok: true, where: "warmPool_warmed", vmid: row.proxmox_vmid }));
         continue;
       }
       // Never enrolled: stop holding RAM for a VM that will not become usable.
       if (Date.now() - new Date(row.created_at).getTime() > NETWORK_ATTACH_EXEC_MAX_MS) {
-        await supabase
-          .from("warm_pool_vms")
-          .update({ state: "failed", failure_reason: "did not enrol before timeout" })
-          .eq("id", row.id);
+        if (controlPlane) {
+          await controlPlane.updateWarmPoolVm(row.id, "failed", {
+            failureReason: "did not enrol before timeout",
+          });
+        } else {
+          await supabase
+            .from("warm_pool_vms")
+            .update({ state: "failed", failure_reason: "did not enrol before timeout" })
+            .eq("id", row.id);
+        }
         try {
           await pve(token, "POST", `nodes/${warmPoolNode}/qemu/${row.proxmox_vmid}/status/stop`);
           await pve(token, "DELETE", `nodes/${warmPoolNode}/qemu/${row.proxmox_vmid}`, { purge: 1 });
@@ -801,12 +948,14 @@ async function maintainWarmPool(supabase, token) {
   // any customer identity: no org SSH keys, no tenant tag, no password. The
   // customer's own credentials are pushed at claim time instead.
   try {
-    const { data: templateRows } = await supabase
-      .from("catalog_image_cluster_node_templates")
-      .select("catalog_image_id, cluster_id, node, source_node, proxmox_vmid, storage_id, clone_mode, enabled")
-      .eq("catalog_image_id", config.warmPool.imageId)
-      .eq("cluster_id", config.clusterId)
-      .eq("node", warmPoolNode);
+    const templateRows = controlPlane
+      ? await controlPlane.listNodeTemplates(config.warmPool.imageId, warmPoolNode)
+      : (await supabase
+          .from("catalog_image_cluster_node_templates")
+          .select("catalog_image_id, cluster_id, node, source_node, proxmox_vmid, storage_id, clone_mode, enabled")
+          .eq("catalog_image_id", config.warmPool.imageId)
+          .eq("cluster_id", config.clusterId)
+          .eq("node", warmPoolNode)).data;
     const t = resolveTemplate(templateRows ?? [], {
       imageId: config.warmPool.imageId,
       clusterId: config.clusterId,
@@ -842,7 +991,7 @@ async function maintainWarmPool(supabase, token) {
     ];
     writeSnippet(`guildcloud-${newid}.yaml`, vendorLines.join("\n") + "\n");
 
-    const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", config.warmPool.planId).single();
+    const plan = await getPlan(supabase, config.warmPool.planId, "vcpu, memory_gb");
     await pve(token, "PUT", `nodes/${warmPoolNode}/qemu/${newid}/config`, {
       cores: plan.vcpu,
       memory: plan.memory_gb * 1024,
@@ -854,16 +1003,29 @@ async function maintainWarmPool(supabase, token) {
     });
     await pve(token, "POST", `nodes/${warmPoolNode}/qemu/${newid}/status/start`);
 
-    await supabase.from("warm_pool_vms").insert({
-      cluster_id: config.clusterId,
-      site_id: config.siteId,
-      catalog_image_id: config.warmPool.imageId,
-      catalog_plan_id: config.warmPool.planId,
-      proxmox_vmid: newid,
-      proxmox_node: warmPoolNode,
-      tailscale_hostname: hostname,
-      state: "building",
-    });
+    if (controlPlane) {
+      // cluster_id and site_id come from the worker's identity, not from its
+      // own config, so a misconfigured env file cannot file a pool VM under
+      // another cluster.
+      await controlPlane.recordWarmPoolVm({
+        catalogImageId: config.warmPool.imageId,
+        catalogPlanId: config.warmPool.planId,
+        proxmoxVmid: newid,
+        proxmoxNode: warmPoolNode,
+        tailscaleHostname: hostname,
+      });
+    } else {
+      await supabase.from("warm_pool_vms").insert({
+        cluster_id: config.clusterId,
+        site_id: config.siteId,
+        catalog_image_id: config.warmPool.imageId,
+        catalog_plan_id: config.warmPool.planId,
+        proxmox_vmid: newid,
+        proxmox_node: warmPoolNode,
+        tailscale_hostname: hostname,
+        state: "building",
+      });
+    }
     console.log(JSON.stringify({ ok: true, where: "warmPool_building", vmid: newid }));
   } catch (e) {
     console.log(JSON.stringify({ ok: false, where: "maintainWarmPool_build", error: String(e) }));
@@ -874,6 +1036,24 @@ async function markStage(supabase, stage, patch) {
   const finalPatch = (patch.status === "done" || patch.status === "skipped") && !("error" in patch)
     ? { ...patch, error: null }
     : patch;
+
+  if (controlPlane) {
+    // The boundary keys stages by (operation_id, stage) and re-checks cluster
+    // ownership, rather than trusting a stage row id the worker read earlier.
+    try {
+      await controlPlane.completeStage(
+        stage.operation_id,
+        stage.stage,
+        finalPatch.status,
+        finalPatch.detail ?? null,
+        finalPatch.error ?? null,
+      );
+    } catch (e) {
+      console.log(JSON.stringify({ ok: false, where: "markStage", stage: stage.stage, error: String(e) }));
+    }
+    return;
+  }
+
   const { error } = await supabase.from("operation_stages").update(finalPatch).eq("id", stage.id);
   if (error) console.log(JSON.stringify({ ok: false, where: "markStage", stage: stage.stage, error: error.message }));
 }
@@ -881,18 +1061,26 @@ async function markStage(supabase, stage, patch) {
 async function processOneStage(supabase, operation) {
   assertOperationOwnership(operation, config.clusterId);
 
-  const { data: stages } = await supabase
-    .from("operation_stages")
-    .select("id, operation_id, stage, status, attempt, detail")
-    .eq("operation_id", operation.id)
-    .order("stage");
+  const stages = controlPlane
+    ? (await controlPlane.getOperation(operation.id)).stages
+    : (await supabase
+        .from("operation_stages")
+        .select("id, operation_id, stage, status, attempt, detail")
+        .eq("operation_id", operation.id)
+        .order("stage")).data;
 
   const byStage = new Map(stages.map((s) => [s.stage, s]));
   const next = STAGE_ORDER.map((s) => byStage.get(s)).find((s) => s && (s.status === "pending" || s.status === "active"));
   if (!next) return { status: "no_pending_stage" };
 
-  await supabase.from("operations").update({ state: "running", current_stage: next.stage, updated_at: new Date().toISOString() }).eq("id", operation.id);
-  await markStage(supabase, next, { status: "active", started_at: new Date().toISOString(), attempt: next.attempt + 1 });
+  if (controlPlane) {
+    // Sets the stage active and moves the operation to running in one
+    // cluster-checked call.
+    await controlPlane.startStage(operation.id, next.stage);
+  } else {
+    await supabase.from("operations").update({ state: "running", current_stage: next.stage, updated_at: new Date().toISOString() }).eq("id", operation.id);
+    await markStage(supabase, next, { status: "active", started_at: new Date().toISOString(), attempt: next.attempt + 1 });
+  }
 
   try {
     const token = await proxmoxToken(supabase);
@@ -915,18 +1103,20 @@ async function processOneStage(supabase, operation) {
       } else {
         const status = await pve(token, "GET", `nodes/${node}/status`);
         const availableBytes = status.memory.available;
-        const { data: held } = await supabase.from("capacity_reservations").select("memory_gb").eq("cluster_id", config.clusterId).eq("node", node).eq("state", "held").gt("expires_at", new Date().toISOString());
+        const held = controlPlane
+          ? await controlPlane.listHeldCapacity(node)
+          : (await supabase.from("capacity_reservations").select("memory_gb").eq("cluster_id", config.clusterId).eq("node", node).eq("state", "held").gt("expires_at", new Date().toISOString())).data;
         const heldGb = (held ?? []).reduce((sum, r) => sum + Number(r.memory_gb), 0);
-        const { data: instance } = await supabase.from("instances").select("catalog_plan_id, catalog_image_id").eq("id", operation.instance_id).single();
+        const instance = await getInstance(supabase, operation.instance_id, "catalog_plan_id, catalog_image_id");
 
         let deltaGb = 0;
         if (operation.kind === "instance.resize") {
           const targetPlanId = operation.stages?.target_plan_id || instance?.catalog_plan_id;
-          const { data: targetPlan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", targetPlanId).single();
-          const { data: currentPlan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", instance.catalog_plan_id).single();
+          const targetPlan = await getPlan(supabase, targetPlanId, "memory_gb");
+          const currentPlan = await getPlan(supabase, instance.catalog_plan_id, "memory_gb");
           deltaGb = Math.max(0, Number(targetPlan?.memory_gb ?? 0) - Number(currentPlan?.memory_gb ?? 0));
         } else {
-          const { data: plan } = await supabase.from("catalog_plans").select("memory_gb").eq("id", instance.catalog_plan_id).single();
+          const plan = await getPlan(supabase, instance.catalog_plan_id, "memory_gb");
           deltaGb = Number(plan?.memory_gb ?? 2);
 
           // A claimable warm VM has *already* been paid for in RAM - it is
@@ -937,15 +1127,19 @@ async function processOneStage(supabase, operation) {
           // serve: the first create after warming failed preflight for 4 GB
           // that the warm VM itself was holding.
           const claimable = config.warmPoolEnabled
-            ? await supabase
-                .from("warm_pool_vms")
-                .select("id")
-                .eq("state", "warm")
-                .eq("cluster_id", config.clusterId)
-                .eq("catalog_image_id", instance.catalog_image_id ?? config.warmPool.imageId)
-                .eq("catalog_plan_id", instance.catalog_plan_id)
-                .limit(1)
-                .then((r) => r.data)
+            ? await (controlPlane
+                ? controlPlane.listWarmPoolVms(["warm"]).then((rows) => rows.filter(
+                    (row) => row.catalog_image_id === (instance.catalog_image_id ?? config.warmPool.imageId)
+                      && row.catalog_plan_id === instance.catalog_plan_id).slice(0, 1))
+                : supabase
+                    .from("warm_pool_vms")
+                    .select("id")
+                    .eq("state", "warm")
+                    .eq("cluster_id", config.clusterId)
+                    .eq("catalog_image_id", instance.catalog_image_id ?? config.warmPool.imageId)
+                    .eq("catalog_plan_id", instance.catalog_plan_id)
+                    .limit(1)
+                    .then((r) => r.data))
             : null;
           if (claimable && claimable.length > 0) deltaGb = 0;
         }
@@ -960,20 +1154,38 @@ async function processOneStage(supabase, operation) {
       if (operation.kind === "instance.snapshot" || operation.kind === "instance.restore_replace") {
         await markStage(supabase, next, { status: "skipped", finished_at: new Date().toISOString() });
       } else {
-        const { data: instance } = await supabase.from("instances").select("catalog_plan_id").eq("id", operation.instance_id).single();
+        const instance = await getInstance(supabase, operation.instance_id, "catalog_plan_id");
         const targetPlanId = operation.kind === "instance.resize" ? (operation.stages?.target_plan_id || instance?.catalog_plan_id) : instance?.catalog_plan_id;
-        const { data: plan } = await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", targetPlanId).single();
-        const { data: reservation } = await supabase.from("capacity_reservations").insert({
-          operation_id: operation.id,
-          cluster_id: config.clusterId,
-          site_id: config.siteId,
-          node,
-          storage_id: target.storageId,
-          vcpu: plan.vcpu,
-          memory_gb: plan.memory_gb,
-          disk_gb: plan.disk_gb,
-        }).select("id").single();
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { reservation_id: reservation?.id } });
+        const plan = controlPlane
+          ? await controlPlane.getPlan(targetPlanId)
+          : (await supabase.from("catalog_plans").select("memory_gb, vcpu, disk_gb").eq("id", targetPlanId).single()).data;
+        let reservationId;
+        if (controlPlane) {
+          // cluster_id and site_id are taken from the operation the boundary
+          // already verified this worker owns, not from its own config.
+          reservationId = await controlPlane.holdCapacity({
+            operationId: operation.id,
+            node,
+            vcpu: plan.vcpu,
+            memoryGb: plan.memory_gb,
+            diskGb: plan.disk_gb,
+            storageId: target.storageId,
+            expiresAt: null,
+          });
+        } else {
+          const { data: reservation } = await supabase.from("capacity_reservations").insert({
+            operation_id: operation.id,
+            cluster_id: config.clusterId,
+            site_id: config.siteId,
+            node,
+            storage_id: target.storageId,
+            vcpu: plan.vcpu,
+            memory_gb: plan.memory_gb,
+            disk_gb: plan.disk_gb,
+          }).select("id").single();
+          reservationId = reservation?.id;
+        }
+        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { reservation_id: reservationId } });
       }
     } else if (next.stage === "operation_created" || next.stage === "site_worker_dispatch") {
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
@@ -982,16 +1194,12 @@ async function processOneStage(supabase, operation) {
       // filters the pool on it, and selecting it away made every claim query
       // filter on undefined, match nothing, and silently fall through to a
       // cold clone while the pool sat warm and unused.
-      const { data: inst } = await supabase.from("instances").select("id, name, catalog_image_id, catalog_plan_id, proxmox_vmid").eq("id", operation.instance_id).single();
+      const inst = await getInstance(supabase, operation.instance_id, "id, name, catalog_image_id, catalog_plan_id, proxmox_vmid");
 
       if (operation.kind === "instance.resize") {
         const targetPlanId = operation.stages?.target_plan_id;
-        const { data: plan, error: planError } = await supabase
-          .from("catalog_plans")
-          .select("id, vcpu, memory_gb, disk_gb")
-          .eq("id", targetPlanId)
-          .single();
-        if (planError || !plan) throw new Error(`Resize target plan ${targetPlanId} was not found`);
+        const plan = await getPlan(supabase, targetPlanId, "id, vcpu, memory_gb, disk_gb");
+        if (!plan) throw new Error(`Resize target plan ${targetPlanId} was not found`);
         if (!inst?.proxmox_vmid) throw new Error("Resize target VM is missing its Proxmox VMID");
         const observed = await resizeInstanceResources({
           pve,
@@ -1047,10 +1255,10 @@ async function processOneStage(supabase, operation) {
         const warm = await claimWarmVm(supabase, inst, inst.id);
         if (warm) {
           await pve(token, "PUT", `nodes/${node}/qemu/${warm.proxmox_vmid}/config`, { name: inst.name });
-          await supabase
-            .from("instances")
-            .update({ proxmox_vmid: warm.proxmox_vmid, proxmox_node: node })
-            .eq("id", inst.id);
+          await updateInstanceRuntime(supabase, inst.id, {
+            proxmox_vmid: warm.proxmox_vmid,
+            proxmox_node: node,
+          });
           await markStage(supabase, next, {
             status: "done",
             finished_at: new Date().toISOString(),
@@ -1064,24 +1272,30 @@ async function processOneStage(supabase, operation) {
             },
           });
         } else {
-          const { data: templateRows } = await supabase
-            .from("catalog_image_cluster_node_templates")
-            .select("catalog_image_id, cluster_id, node, source_node, proxmox_vmid, storage_id, clone_mode, enabled")
-            .eq("catalog_image_id", inst.catalog_image_id)
-            .eq("cluster_id", config.clusterId)
-            .eq("node", node);
+          const templateRows = controlPlane
+            ? await controlPlane.listNodeTemplates(inst.catalog_image_id, node)
+            : (await supabase
+                .from("catalog_image_cluster_node_templates")
+                .select("catalog_image_id, cluster_id, node, source_node, proxmox_vmid, storage_id, clone_mode, enabled")
+                .eq("catalog_image_id", inst.catalog_image_id)
+                .eq("cluster_id", config.clusterId)
+                .eq("node", node)).data;
           const t = resolveTemplate(templateRows ?? [], { imageId: inst.catalog_image_id, clusterId: config.clusterId, node });
           const nextid = await pve(token, "GET", "cluster/nextid");
           const newid = Number(nextid);
           const cloneParams = buildCloneParams(t, { newid, name: inst.name, pool: config.pvePoolId, targetNode: node });
           const upid = await pve(token, "POST", `nodes/${t.source_node}/qemu/${t.proxmox_vmid}/clone`, cloneParams);
           await waitForTask(token, t.source_node, upid);
-          await supabase.from("instances").update({ proxmox_vmid: newid, proxmox_node: node, storage_id: t.storage_id }).eq("id", inst.id);
+          await updateInstanceRuntime(supabase, inst.id, {
+            proxmox_vmid: newid,
+            proxmox_node: node,
+            storage_id: t.storage_id,
+          });
           await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { vmid: newid } });
         }
       }
     } else if (next.stage === "template_cloud_init") {
-      const { data: inst } = await supabase.from("instances").select("id, catalog_plan_id, proxmox_vmid, password_ssh_enabled, project_id").eq("id", operation.instance_id).single();
+      const inst = await getInstance(supabase, operation.instance_id, "id, catalog_plan_id, proxmox_vmid, password_ssh_enabled, project_id");
 
       if (operation.kind === "instance.resize" || operation.kind === "instance.restore_replace") {
         let rebooted = false;
@@ -1114,7 +1328,7 @@ async function processOneStage(supabase, operation) {
         // missing is the customer's identity, which is pushed in live rather
         // than baked into a first boot that already happened.
         const poolDetail = await warmPoolDetail(supabase, operation);
-        const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
+        const orgKeys = await listInstanceSshKeys(supabase, inst);
         const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
         const password = crypto.randomUUID() + crypto.randomUUID();
         if (inst.password_ssh_enabled) {
@@ -1158,8 +1372,8 @@ async function processOneStage(supabase, operation) {
           },
         });
       } else {
-        const { data: plan } = await supabase.from("catalog_plans").select("vcpu, memory_gb").eq("id", inst.catalog_plan_id).single();
-        const { data: orgKeys } = await supabase.from("ssh_keys").select("public_key").eq("organization_id", operation.organization_id);
+        const plan = await getPlan(supabase, inst.catalog_plan_id, "vcpu, memory_gb");
+        const orgKeys = await listInstanceSshKeys(supabase, inst);
         const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
         const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
         const password = crypto.randomUUID() + crypto.randomUUID();
@@ -1175,7 +1389,7 @@ async function processOneStage(supabase, operation) {
         // processes on Fedora/RHEL. On Debian/Ubuntu the same runcmd is a
         // no-op if tailscale is already installed (the if-not-present guard).
         const tsToken = await tailscaleAccessToken(supabase);
-        const { data: project } = await supabase.from("projects").select("slug").eq("id", inst.project_id).single();
+        const project = await getInstanceProject(supabase, inst);
         const hostname = `instance-${inst.id.slice(0, 8)}`;
         const deviceTags = ["tag:guildcloud-tenant", `tag:guildcloud-tenant-${project.slug}`, instanceTag(operation.instance_id)];
         await ensureTailscaleTagOwners(tsToken, deviceTags);
@@ -1294,12 +1508,12 @@ async function processOneStage(supabase, operation) {
         });
       }
     } else if (next.stage === "network_access_attach") {
-      const { data: inst } = await supabase.from("instances").select("id, project_id, proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
+      const inst = await getInstance(supabase, operation.instance_id, "id, project_id, proxmox_vmid, private_ip");
 
       if (operation.kind !== "instance.create" && inst?.private_ip) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: inst.private_ip } });
       } else {
-        const { data: project } = await supabase.from("projects").select("slug, tailscale_acl_state").eq("id", inst.project_id).single();
+        const project = await getInstanceProject(supabase, inst);
 
         // Start the clock on first entry, before any wait, and carry it
         // through every retry below. Both waits used to omit stage_started_at,
@@ -1321,12 +1535,9 @@ async function processOneStage(supabase, operation) {
         // (ts_via_cloud_init:true, available for all new provisions) or the
         // old guest-agent exec approach (older operations, kept for
         // backward-compat with in-flight Ubuntu/Debian provisions).
-        const { data: tciStage } = await supabase
-          .from("operation_stages")
-          .select("detail")
-          .eq("operation_id", operation.id)
-          .eq("stage", "template_cloud_init")
-          .single();
+        // Already loaded at the top of this function - no second read, and no
+        // unscoped operation_stages access on the boundary path.
+        const tciStage = byStage.get("template_cloud_init");
         const usedCloudInit = tciStage?.detail?.ts_via_cloud_init === true;
         // hostname is deterministic from inst.id — same formula in both stages.
         const hostname = tciStage?.detail?.hostname ?? `instance-${inst.id.slice(0, 8)}`;
@@ -1360,7 +1571,7 @@ async function processOneStage(supabase, operation) {
 
           const privateIp = warmDetail.private_ip ?? null;
           if (privateIp) {
-            await supabase.from("instances").update({ private_ip: privateIp }).eq("id", inst.id);
+            await updateInstanceRuntime(supabase, inst.id, { private_ip: privateIp });
           }
           if (warmDetail.warm_pool_id) {
             await detachVendorSnippet(token, node, inst.proxmox_vmid);
@@ -1435,7 +1646,11 @@ async function processOneStage(supabase, operation) {
             await detachVendorSnippet(token, node, inst.proxmox_vmid);
             deleteSnippet(tciStage.detail.ts_snippet_filename);
           }
-          await supabase.from("instances").update({ private_ip: device.addresses[0], private_hostname: device.name, tailscale_device_id: device.id }).eq("id", inst.id);
+          await updateInstanceRuntime(supabase, inst.id, {
+            private_ip: device.addresses[0],
+            private_hostname: device.name,
+            tailscale_device_id: device.id,
+          });
           await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
         } else {
           // Legacy exec approach — kept for Ubuntu/Debian instances that were
@@ -1548,7 +1763,11 @@ async function processOneStage(supabase, operation) {
             return { status: "retry_wait", waitMs: VERIFY_RETRY_MS };
           }
 
-          await supabase.from("instances").update({ private_ip: device.addresses[0], private_hostname: device.name, tailscale_device_id: device.id }).eq("id", inst.id);
+          await updateInstanceRuntime(supabase, inst.id, {
+            private_ip: device.addresses[0],
+            private_hostname: device.name,
+            tailscale_device_id: device.id,
+          });
           await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: device.addresses[0] } });
         }
       }
@@ -1557,11 +1776,7 @@ async function processOneStage(supabase, operation) {
       // provisioned VM is automatically enrolled — no per-VM API call needed
       // and no Sys.Audit permission required. Record the static known
       // schedule for this cluster.
-      const { data: instance } = await supabase
-        .from("instances")
-        .select("proxmox_vmid")
-        .eq("id", operation.instance_id)
-        .single();
+      const instance = await getInstance(supabase, operation.instance_id, "proxmox_vmid");
       const detail = {
         backup_job: config.backupJobId,
         storage: config.backupStorage,
@@ -1574,7 +1789,7 @@ async function processOneStage(supabase, operation) {
       };
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail });
     } else if (next.stage === "automated_verification") {
-      const { data: instance } = await supabase.from("instances").select("proxmox_vmid, private_ip").eq("id", operation.instance_id).single();
+      const instance = await getInstance(supabase, operation.instance_id, "proxmox_vmid, private_ip");
       if (operation.kind === "instance.snapshot") {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       } else {
@@ -1645,8 +1860,13 @@ async function processOneStage(supabase, operation) {
       }
     } else if (next.stage === "ready") {
       const lifecycleKinds = new Set(["instance.snapshot", "instance.resize", "instance.restore_replace"]);
-      if (lifecycleKinds.has(operation.kind)) {
-        const observed = byStage.get("proxmox_api_call")?.detail?.observed ?? null;
+      const observed = byStage.get("proxmox_api_call")?.detail?.observed ?? null;
+      if (controlPlane) {
+        // worker_finish_operation covers instance.create too: it sets the
+        // instance ready and releases reservations in the same transaction, so
+        // the three separate writes below are no longer needed.
+        await controlPlane.finishOperation(operation.id, "succeeded", observed);
+      } else if (lifecycleKinds.has(operation.kind)) {
         const { error } = await supabase.rpc("finish_instance_operation", {
           p_operation_id: operation.id,
           p_outcome: "succeeded",
@@ -1668,7 +1888,13 @@ async function processOneStage(supabase, operation) {
     const message = err instanceof Error ? err.message : String(err);
     await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
     const lifecycleKinds = new Set(["instance.snapshot", "instance.resize", "instance.restore_replace"]);
-    if (lifecycleKinds.has(operation.kind)) {
+    if (controlPlane) {
+      try {
+        await controlPlane.finishOperation(operation.id, "failed", null, message);
+      } catch (finishError) {
+        console.log(JSON.stringify({ ok: false, where: "finish_instance_operation", error: String(finishError) }));
+      }
+    } else if (lifecycleKinds.has(operation.kind)) {
       const { error } = await supabase.rpc("finish_instance_operation", {
         p_operation_id: operation.id,
         p_outcome: "failed",
@@ -1837,12 +2063,17 @@ async function run() {
     // Tailnet-wide housekeeping (ACLs, device enrolment) is cluster-
     // independent - running it from every cluster's worker would have two
     // workers racing to edit the same Tailscale ACL policy. Exactly one
-    // deployment is configured as the owner.
-    if (config.tailnetHousekeepingOwner) {
+    // deployment holds the role. On the boundary path the database decides
+    // which one (worker_identities.tailnet_housekeeping, uniquely indexed);
+    // the env flag is only consulted on the legacy service-role path, where
+    // nothing can stop two workers from both claiming it.
+    if (holdsTailnetHousekeeping()) {
       await reconcileTailnetAccess(supabase);
     }
   } catch (e) {
-    log.push({ ok: false, stage: "reconcile_tailnet_access", error: String(e) });
+    // A worker that simply does not hold the housekeeping role is the normal
+    // case for every cluster but one, so do not report it as a failure.
+    if (!e?.isNotOurs) log.push({ ok: false, stage: "reconcile_tailnet_access", error: String(e) });
   }
 
   try {
@@ -1858,12 +2089,12 @@ async function run() {
   }
 
   try {
-    if (config.tailnetHousekeepingOwner) {
+    if (holdsTailnetHousekeeping()) {
       await syncMemberDeviceEnrollment(supabase);
       await syncInstanceDeviceTags(supabase);
     }
   } catch (e) {
-    console.log(JSON.stringify({ ok: false, stage: "sync_tailnet_device_tags", error: String(e) }));
+    if (!e?.isNotOurs) console.log(JSON.stringify({ ok: false, stage: "sync_tailnet_device_tags", error: String(e) }));
   }
 
   // Refill after the operation loop below would have drained it, so a claim

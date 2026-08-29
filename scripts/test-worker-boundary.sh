@@ -51,7 +51,8 @@ docker exec -i "$container_name" psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U supa
 for migration in \
   "$repo_root/supabase/migrations/20260829100000_repair_rls_helper_grants.sql" \
   "$repo_root/supabase/migrations/20260829110000_add_atomic_instance_intents.sql" \
-  "$repo_root/supabase/migrations/20260829120000_add_cluster_worker_rpc_boundary.sql"
+  "$repo_root/supabase/migrations/20260829120000_add_cluster_worker_rpc_boundary.sql" \
+  "$repo_root/supabase/migrations/20260829130000_add_worker_housekeeping_rpcs.sql"
 do
   [[ -f "$migration" ]] && "${psql_cmd[@]}" < "$migration" >/dev/null
 done
@@ -64,6 +65,15 @@ fi
 if grep -Eq '(^|[[:space:]])not ok [0-9]+ -' "$test_log"; then
   rm -f "$test_log"
   echo 'Cluster worker boundary pgTAP contract failed.' >&2
+  exit 1
+fi
+# A plan mismatch means assertions were added or skipped without the count being
+# updated. Without this the suite reports PASS while silently running a
+# different set of tests than it claims to.
+if grep -q 'Looks like you planned' "$test_log"; then
+  grep 'Looks like you planned' "$test_log" >&2
+  rm -f "$test_log"
+  echo 'Cluster worker boundary pgTAP plan count is wrong.' >&2
   exit 1
 fi
 rm -f "$test_log"
