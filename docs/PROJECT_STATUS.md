@@ -281,9 +281,18 @@ credential separately, and exits non-zero on any failure. Verified on both
 clusters -- healthy `exit=0` with a real `proxmoxVersion`, unreadable credential
 `exit=1`.
 
-Still open: the stopgap Vault grant should be replaced by scoped
-`worker_get_proxmox_credential()` / `worker_set_instance_ssh_password()` RPCs;
-the worker sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide, so the worker
+The stopgap Vault grant is **gone** (2026-08-29). Workers now use
+`worker_get_proxmox_credential()`, `worker_get_tailscale_oauth()` and
+`worker_set_instance_ssh_password(uuid, text)` -- none of which takes a
+caller-supplied secret name -- and `guildcloud_site_worker` no longer holds
+EXECUTE on `get_vault_secret` or `set_vault_secret`. Which secret holds a
+cluster's Proxmox token lives in `infrastructure_clusters` rather than the
+worker's env file, so a worker cannot name another cluster's. Verified in
+production: each worker resolves its own cluster's token and not the other's,
+and both stayed healthy through the revocation, which is what proves the scoped
+path is the one actually in use.
+
+Still open: the worker sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide, so the worker
 token travels over unverified TLS;. The tailnet noise is fixed: `worker_holds_tailnet_housekeeping()` lets a worker
 ask instead of being refused, verified in production as `true` for Guild-A,
 `false` for Guild-B, and `28000` for an unknown worker -- so `false` cannot be
