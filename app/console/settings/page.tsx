@@ -5,9 +5,6 @@ import {
   CardHeader,
   Note,
   PageHeader,
-  Table,
-  Td,
-  Th,
 } from "@/components/ui";
 import { TeamAccessCard } from "@/components/team-access-card";
 import { SshKeysCard } from "@/components/ssh-keys-card";

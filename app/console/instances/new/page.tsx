@@ -21,7 +21,7 @@ export default async function NewInstancePage() {
       <>
         <PageHeader
           title="Create a Guild Instance"
-          description="Choose a site, image, plan, protection, and access method. The hourly price and monthly maximum are shown before anything is created."
+          description="Choose a site, image, plan, and access method. The plan's hourly price and monthly maximum are shown before anything is created."
         />
         <Note>
           Only organization Owners and Admins can create instances. Ask an
@@ -49,7 +49,7 @@ export default async function NewInstancePage() {
     <>
       <PageHeader
         title="Create a Guild Instance"
-        description="Choose a site, image, plan, protection, and access method. The hourly price and monthly maximum are shown before anything is created."
+        description="Choose a site, image, plan, and access method. The plan's hourly price and monthly maximum are shown before anything is created."
       />
       <CreateInstanceWizard
         projects={projects}

@@ -76,8 +76,9 @@ export default async function ConsoleDashboard() {
         </Card>
         <Card>
           <Stat
-            label="Wallet balance"
-            value={money(userOrg.organization.walletBalanceCents / 100)}
+            label="Total instances"
+            value={String(instances.length)}
+            hint="Across this organization."
           />
         </Card>
         <Card>

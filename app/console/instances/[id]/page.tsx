@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CopyField } from "@/components/copy-field";
-import { InstanceActions, RecoveryConsoleButton } from "@/components/instance-actions";
-import { DeleteInstanceButton } from "@/components/delete-instance-button";
-import { OperationTimeline } from "@/components/operation-timeline";
+import { InstanceActions } from "@/components/instance-actions";
 import { OperationProgress } from "@/components/operation-progress";
 import { DeletionProgress } from "@/components/deletion-progress";
 import { RevealPasswordButton } from "@/components/reveal-password-button";
@@ -12,24 +10,15 @@ import { ConnectDeviceButton } from "@/components/connect-device-button";
 import { getInstanceWithOperation, getCatalogPlans } from "@/lib/supabase/queries";
 import {
   Badge,
-  Button,
   Card,
   CardHeader,
-  Meter,
   Note,
   PageHeader,
-  StatePill,
   Table,
   Td,
   Th,
 } from "@/components/ui";
-import { IconLock, IconShield, OSLogo, imageIdFromLabel } from "@/components/icons";
-
-const protectionLabel = {
-  standard: "Standard",
-  protected: "Protected",
-  "warm-standby": "Warm Standby",
-} as const;
+import { IconLock, OSLogo } from "@/components/icons";
 
 export default async function InstanceDetailPage({
   params,

@@ -13,3 +13,6 @@ supabase/.temp/
 .claude/settings.local.json
 .claude/*.lock
 .vercel
+
+# Isolated implementation workspaces
+.worktrees/

@@ -28,7 +28,6 @@ export default async function ConsoleLayout({
         <Topbar
           userEmail={userOrg.userEmail ?? userOrg.membership.email ?? "Signed in"}
           organizationName={userOrg.organization.name}
-          walletBalanceCents={userOrg.organization.walletBalanceCents}
           projects={projects.map((p) => ({ id: p.id, name: p.name }))}
         />
         <MobileNav />

@@ -6,7 +6,9 @@ export type ResourceState =
   | "failed"
   | "deleting"
   | "resizing"
-  | "restoring";
+  | "restoring"
+  | "snapshotting"
+  | "delete_failed";
 
 export type ProtectionTier = "standard" | "protected" | "warm-standby";
 

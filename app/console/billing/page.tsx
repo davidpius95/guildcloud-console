@@ -15,7 +15,6 @@ export default async function BillingPage() {
   const userOrg = await getCurrentUserOrg();
   const instances = userOrg ? await getInstancesForOrg(userOrg.organization.id) : [];
 
-  const walletBalance = (userOrg?.organization.walletBalanceCents ?? 0) / 100;
   const billable = instances.filter((i) => i.state !== "failed");
   const committedMonthly = billable.reduce((sum, i) => sum + (i.plan?.monthly_max ?? 0), 0);
 
@@ -26,15 +25,7 @@ export default async function BillingPage() {
         description="What you hold, and what your running instances can cost at most this month."
       />
 
-      <div className="mb-4 grid gap-4 sm:grid-cols-2">
-        <Card>
-          <Stat
-            label="Wallet balance"
-            value={money(walletBalance)}
-            hint="Prepaid credit held against this organization."
-            tone="lemon"
-          />
-        </Card>
+      <div className="mb-4 grid gap-4">
         <Card>
           <Stat
             label="Committed monthly maximum"

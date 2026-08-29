@@ -776,8 +776,50 @@ export type Database = {
         Returns: undefined
       }
       request_instance_deletion: {
-        Args: { p_instance_id: string }
-        Returns: undefined
+        Args: { p_idempotency_key: string; p_instance_id: string }
+        Returns: string
+      }
+      request_instance_create: {
+        Args: {
+          p_catalog_image_id: string
+          p_catalog_plan_id: string
+          p_idempotency_key: string
+          p_instance_id: string
+          p_name: string
+          p_operation_id: string
+          p_password_ssh_enabled: boolean
+          p_project_id: string
+          p_site_id: string
+        }
+        Returns: {
+          instance_id: string
+          operation_id: string
+          replayed: boolean
+        }[]
+      }
+      request_instance_resize: {
+        Args: {
+          p_idempotency_key: string
+          p_instance_id: string
+          p_target_plan_id: string
+        }
+        Returns: string
+      }
+      request_instance_restore_replace: {
+        Args: {
+          p_idempotency_key: string
+          p_instance_id: string
+          p_snapshot_id: string
+        }
+        Returns: string
+      }
+      request_instance_snapshot: {
+        Args: {
+          p_idempotency_key: string
+          p_instance_id: string
+          p_name: string
+        }
+        Returns: string
       }
       reveal_instance_ssh_password: {
         Args: { p_instance_id: string }

@@ -13,7 +13,6 @@ import {
   IconProjects,
   IconServer,
   IconSettings,
-  IconWallet,
 } from "./icons";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -46,12 +45,10 @@ function initialsFor(email: string) {
 export function Topbar({
   userEmail,
   organizationName,
-  walletBalanceCents,
   projects,
 }: {
   userEmail: string;
   organizationName: string;
-  walletBalanceCents: number;
   projects: TopbarProject[];
 }) {
   const [projectOpen, setProjectOpen] = useState(false);
@@ -64,7 +61,6 @@ export function Topbar({
   // genuine to badge. Showing a fabricated unread count trained users to
   // ignore the bell before it ever meant anything.
   const unread = 0;
-  const walletLabel = `$${(walletBalanceCents / 100).toFixed(2)}`;
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-ink-100/80 bg-white/85 px-4 backdrop-blur-md sm:px-6 dark:border-white/5 dark:bg-[#171d36]/80">
@@ -127,17 +123,6 @@ export function Topbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
-        <Link
-          href="/console/billing"
-            className="hidden items-center gap-2 rounded-lg bg-lemon-50 px-3 py-1.5 text-sm ring-1 ring-inset ring-lemon-200 transition-all duration-200 hover:-translate-y-px hover:bg-lemon-100 sm:flex"
-        >
-          <IconWallet className="h-4 w-4 text-lemon-700 dark:text-lemon-400" />
-          <span className="text-lemon-800">Wallet</span>
-          <span className="font-semibold tabular-nums text-lemon-900">
-            {walletLabel}
-          </span>
-        </Link>
-
         <div className="relative">
           <button
             type="button"

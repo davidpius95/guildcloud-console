@@ -14,7 +14,7 @@ import {
   deleteInstance,
 } from "@/app/console/instances/actions";
 
-type ModalKind = "resize" | "snapshot" | "restore" | "delete" | "recovery" | null;
+type ModalKind = "resize" | "snapshot" | "restore" | "delete" | null;
 
 export type RealSnapshot = {
   id: string;
@@ -48,6 +48,8 @@ export function InstanceActions({
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const readySnapshots = snapshots.filter((snapshot) => snapshot.state === "ready");
+
   return (
     <>
       <div className="flex flex-wrap gap-2">
@@ -57,7 +59,12 @@ export function InstanceActions({
         <Button variant="secondary" size="sm" onClick={() => setModal("snapshot")}>
           Snapshot
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => setModal("restore")}>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={readySnapshots.length === 0 || instance.state !== "ready"}
+          onClick={() => setModal("restore")}
+        >
           Restore
         </Button>
         <Button variant="danger" size="sm" onClick={() => setModal("delete")}>
@@ -124,32 +131,24 @@ export function InstanceActions({
 
       <RestoreModal
         instance={instance as Instance}
-        snapshots={snapshots}
+        snapshots={readySnapshots}
         open={modal === "restore"}
         isSubmitting={isSubmitting}
         onClose={() => setModal(null)}
-        onConfirm={async (mode, snapshotId) => {
+        onConfirm={async (snapshotId) => {
           if (isReal) {
             setIsSubmitting(true);
-            const res = await restoreInstance(instance.id, mode, snapshotId);
+            const res = await restoreInstance(instance.id, snapshotId);
             setIsSubmitting(false);
             setModal(null);
             if (res.error) {
               setNotice(`Failed to restore: ${res.error}`);
             } else {
-              setNotice(
-                mode === "replace"
-                  ? `Restore operation submitted to replace ${instance.name}.`
-                  : `Restore operation submitted for new instance.`,
-              );
+              setNotice(`Restore operation submitted to replace ${instance.name}.`);
             }
           } else {
             setModal(null);
-            setNotice(
-              mode === "replace"
-                ? `Restore scheduled to replace the live instance. This is a mock console.`
-                : `Restore scheduled to a new instance. The current instance is untouched.`,
-            );
+            setNotice("Restore is unavailable outside the real control plane.");
           }
         }}
       />
@@ -178,37 +177,6 @@ export function InstanceActions({
           }
         }}
       />
-    </>
-  );
-}
-
-export function RecoveryConsoleButton({ instance }: { instance: Instance }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
-        Open recovery console
-      </Button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={`Recovery console — ${instance.name}`}
-        description="For exceptional recovery, not ordinary use. This session is proxied through the site worker and does not depend on the private overlay being reachable."
-        width="max-w-lg"
-        footer={
-          <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>
-            Close
-          </Button>
-        }
-      >
-        <div className="rounded-lg bg-[#0e1226] px-4 py-3 font-mono text-xs text-lemon-300">
-          <p>Connecting to {instance.privateHostname}…</p>
-          <p className="mt-1 text-ink-500">
-            This is a mock console — no real serial/VNC session is opened. In
-            the real product this pane streams a live terminal.
-          </p>
-        </div>
-      </Modal>
     </>
   );
 }
@@ -390,21 +358,20 @@ function RestoreModal({
   open: boolean;
   isSubmitting?: boolean;
   onClose: () => void;
-  onConfirm: (mode: "new" | "replace", snapshotId?: string) => void;
+  onConfirm: (snapshotId: string) => void;
 }) {
-  const [mode, setMode] = useState<"new" | "replace">("new");
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string>(
     snapshots[0]?.id ?? "",
   );
   const [confirmText, setConfirmText] = useState("");
-  const canConfirm = mode === "new" || confirmText === instance.name;
+  const canConfirm = selectedSnapshotId.length > 0 && confirmText === instance.name;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={`Restore ${instance.name}`}
-      description="Restores never silently overwrite a live workload."
+      description="Replace this instance's disk with a verified ready snapshot."
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose} disabled={isSubmitting}>
@@ -412,16 +379,12 @@ function RestoreModal({
           </Button>
           <Button
             size="sm"
-            variant={mode === "replace" ? "danger" : "primary"}
+            variant="danger"
             disabled={!canConfirm}
             loading={isSubmitting}
-            onClick={() => onConfirm(mode, selectedSnapshotId)}
+            onClick={() => onConfirm(selectedSnapshotId)}
           >
-            {isSubmitting
-              ? "Restoring..."
-              : mode === "replace"
-                ? "Replace live instance"
-                : "Restore to new instance"}
+            {isSubmitting ? "Restoring..." : "Replace live instance"}
           </Button>
         </>
       }
@@ -446,54 +409,20 @@ function RestoreModal({
           </div>
         ) : null}
 
-        <button
-          type="button"
-          onClick={() => setMode("new")}
-          className={cx(
-            "block w-full rounded-lg px-4 py-3 text-left ring-1 ring-inset transition-all",
-            mode === "new"
-              ? "bg-lemon-50 ring-2 ring-lemon-500"
-              : "bg-white ring-ink-200 hover:ring-ink-300",
-          )}
-        >
-          <span className="block text-sm font-medium text-ink-900">
-            Restore to a new instance
+        <Note tone="warning">
+          Destructive: the current disk state is discarded after the snapshot rollback succeeds.
+        </Note>
+        <label className="block pt-1">
+          <span className="mb-1.5 block text-xs font-medium text-ink-500">
+            Type <span className="font-mono text-ink-700">{instance.name}</span> to confirm
           </span>
-          <span className="mt-0.5 block text-xs text-ink-500">
-            Recommended. {instance.name} keeps running, untouched.
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("replace")}
-          className={cx(
-            "block w-full rounded-lg px-4 py-3 text-left ring-1 ring-inset transition-all",
-            mode === "replace"
-              ? "bg-rose-50 ring-2 ring-rose-400"
-              : "bg-white ring-ink-200 hover:ring-ink-300",
-          )}
-        >
-          <span className="block text-sm font-medium text-ink-900">
-            Replace this live instance
-          </span>
-          <span className="mt-0.5 block text-xs text-ink-500">
-            Destructive. The current disk state is discarded once the restore verifies.
-          </span>
-        </button>
-
-        {mode === "replace" ? (
-          <label className="block pt-1">
-            <span className="mb-1.5 block text-xs font-medium text-ink-500">
-              Type <span className="font-mono text-ink-700">{instance.name}</span> to confirm
-            </span>
-            <input
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              placeholder={instance.name}
-              className="w-full rounded-lg bg-white px-3 py-2 font-mono text-sm text-ink-800 ring-1 ring-inset ring-rose-200 placeholder:text-ink-300 focus:outline-2 focus:outline-offset-2 focus:outline-rose-500"
-            />
-          </label>
-        ) : null}
+          <input
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder={instance.name}
+            className="w-full rounded-lg bg-white px-3 py-2 font-mono text-sm text-ink-800 ring-1 ring-inset ring-rose-200 placeholder:text-ink-300 focus:outline-2 focus:outline-offset-2 focus:outline-rose-500"
+          />
+        </label>
       </div>
     </Modal>
   );

@@ -24,6 +24,7 @@ import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTem
 import { collectClusterSnapshot } from "./health-snapshot.js";
 import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale-access-policy.js";
 import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
+import { createSnapshot, resizeInstanceResources, rollbackSnapshot } from "./lifecycle.js";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -49,7 +50,7 @@ function parseEnvFile(filePath) {
         if (!process.env[key]) process.env[key] = val;
       }
     }
-  } catch (_e) {
+  } catch {
     // ignore
   }
 }
@@ -65,7 +66,7 @@ function assertSecureWorkerEnvFile(filePath) {
   let stat;
   try {
     stat = fs.statSync(filePath);
-  } catch (_e) {
+  } catch {
     return; // File not present - fine locally, loadWorkerConfig will fail loudly if required vars are missing.
   }
   const mode = stat.mode & 0o777;
@@ -417,14 +418,30 @@ async function processPendingInstanceDeletions(supabase) {
   const tsToken = await tailscaleAccessToken(supabase);
 
   for (const inst of pending) {
+    const { data: deletionOperation, error: operationError } = await supabase
+      .from("operations")
+      .select("id")
+      .eq("instance_id", inst.id)
+      .eq("kind", "instance.delete")
+      .in("state", ["pending", "running"])
+      .maybeSingle();
+    if (operationError || !deletionOperation) {
+      console.log(JSON.stringify({ ok: false, where: "find_deletion_operation", instance_id: inst.id, error: operationError?.message ?? "active deletion operation missing" }));
+      continue;
+    }
     // If instance has no cluster_id or proxmox_vmid (failed before placement), clean it up directly
     if (!inst.cluster_id || !inst.proxmox_vmid) {
       if (config.tailnetHousekeepingOwner || inst.cluster_id === config.clusterId) {
         if (inst.tailscale_device_id) {
-          try { await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`); } catch (_) {}
+          try { await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`); } catch {}
         }
-        await supabase.from("operations").delete().eq("instance_id", inst.id);
-        await supabase.from("instances").delete().eq("id", inst.id);
+        const { error: finishError } = await supabase.rpc("finish_instance_operation", {
+          p_operation_id: deletionOperation.id,
+          p_outcome: "succeeded",
+          p_observed: { infrastructure_absent: true },
+          p_error: null,
+        });
+        if (finishError) throw new Error(`Could not finalize deletion: ${finishError.message}`);
       }
       continue;
     }
@@ -439,7 +456,7 @@ async function processPendingInstanceDeletions(supabase) {
           try {
             await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/status/stop`);
             await sleep(2000);
-          } catch (_e) {
+          } catch {
             // already stopped or not running
           }
           try {
@@ -460,21 +477,26 @@ async function processPendingInstanceDeletions(supabase) {
         deleteSnippet(`guildcloud-${inst.proxmox_vmid}.yaml`);
       }
       if (inst.tailscale_device_id) {
-        try {
-          await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`);
-        } catch (e) {
-          console.log(JSON.stringify({ ok: false, where: "ts_device_delete", instance_id: inst.id, error: String(e) }));
-        }
+        await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`);
       }
-      await supabase.from("operations").delete().eq("instance_id", inst.id);
-      await supabase.from("instances").delete().eq("id", inst.id);
+      const { error: finishError } = await supabase.rpc("finish_instance_operation", {
+        p_operation_id: deletionOperation.id,
+        p_outcome: "succeeded",
+        p_observed: { infrastructure_absent: true },
+        p_error: null,
+      });
+      if (finishError) throw new Error(`Could not finalize deletion: ${finishError.message}`);
       console.log(JSON.stringify({ ok: true, where: "instance_deleted_clean_slate", instance_id: inst.id }));
     } catch (e) {
       console.log(JSON.stringify({ ok: false, where: "processPendingInstanceDeletions", instance_id: inst.id, error: String(e) }));
       const message = String(e);
-      if (message.includes("Permission check failed") || message.includes("not found") || message.includes("no such vm")) {
-        await supabase.from("instances").delete().eq("id", inst.id);
-      }
+      const { error: finishError } = await supabase.rpc("finish_instance_operation", {
+        p_operation_id: deletionOperation.id,
+        p_outcome: "failed",
+        p_observed: null,
+        p_error: message,
+      });
+      if (finishError) console.log(JSON.stringify({ ok: false, where: "finish_instance_deletion", instance_id: inst.id, error: finishError.message }));
     }
   }
 }
@@ -918,26 +940,58 @@ async function processOneStage(supabase, operation) {
 
       if (operation.kind === "instance.resize") {
         const targetPlanId = operation.stages?.target_plan_id;
-        const { data: plan } = await supabase.from("catalog_plans").select("id, vcpu, memory_gb").eq("id", targetPlanId).single();
-        if (plan && inst?.proxmox_vmid) {
-          await pve(token, "PUT", `nodes/${node}/qemu/${inst.proxmox_vmid}/config`, { cores: plan.vcpu, memory: plan.memory_gb * 1024 });
-          await supabase.from("instances").update({ catalog_plan_id: plan.id }).eq("id", inst.id);
-        }
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { resized_to: targetPlanId } });
+        const { data: plan, error: planError } = await supabase
+          .from("catalog_plans")
+          .select("id, vcpu, memory_gb, disk_gb")
+          .eq("id", targetPlanId)
+          .single();
+        if (planError || !plan) throw new Error(`Resize target plan ${targetPlanId} was not found`);
+        if (!inst?.proxmox_vmid) throw new Error("Resize target VM is missing its Proxmox VMID");
+        const observed = await resizeInstanceResources({
+          pve,
+          waitForTask,
+          token,
+          node,
+          vmid: inst.proxmox_vmid,
+          target: plan,
+        });
+        await markStage(supabase, next, {
+          status: "done",
+          finished_at: new Date().toISOString(),
+          detail: { resized_to: targetPlanId, observed },
+        });
       } else if (operation.kind === "instance.snapshot") {
         const snapname = operation.stages?.proxmox_snapname;
-        if (snapname && inst?.proxmox_vmid) {
-          await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/snapshot`, { snapname, description: "GuildCloud snapshot" });
-          await supabase.from("instance_snapshots").update({ state: "ready" }).eq("proxmox_snapname", snapname);
-        }
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { snapname } });
+        if (!inst?.proxmox_vmid) throw new Error("Snapshot target VM is missing its Proxmox VMID");
+        const observed = await createSnapshot({
+          pve,
+          waitForTask,
+          token,
+          node,
+          vmid: inst.proxmox_vmid,
+          snapname,
+        });
+        await markStage(supabase, next, {
+          status: "done",
+          finished_at: new Date().toISOString(),
+          detail: { snapname, observed },
+        });
       } else if (operation.kind === "instance.restore_replace") {
         const snapname = operation.stages?.proxmox_snapname;
-        if (snapname && inst?.proxmox_vmid) {
-          const upid = await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/snapshot/${snapname}/rollback`);
-          await waitForTask(token, node, upid);
-        }
-        await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { restored_from: snapname } });
+        if (!inst?.proxmox_vmid) throw new Error("Restore target VM is missing its Proxmox VMID");
+        const observed = await rollbackSnapshot({
+          pve,
+          waitForTask,
+          token,
+          node,
+          vmid: inst.proxmox_vmid,
+          snapname,
+        });
+        await markStage(supabase, next, {
+          status: "done",
+          finished_at: new Date().toISOString(),
+          detail: { restored_from: snapname, observed },
+        });
       } else {
         // Warm path first: a pooled VM has already paid the clone, the boot
         // and the Tailscale enrolment that make cold provisioning take
@@ -1544,9 +1598,21 @@ async function processOneStage(supabase, operation) {
         await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString(), detail: { private_ip: instance.private_ip, tcp_22_reachable: true } });
       }
     } else if (next.stage === "ready") {
-      await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
-      await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
-      await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
+      const lifecycleKinds = new Set(["instance.snapshot", "instance.resize", "instance.restore_replace"]);
+      if (lifecycleKinds.has(operation.kind)) {
+        const observed = byStage.get("proxmox_api_call")?.detail?.observed ?? null;
+        const { error } = await supabase.rpc("finish_instance_operation", {
+          p_operation_id: operation.id,
+          p_outcome: "succeeded",
+          p_observed: observed,
+          p_error: null,
+        });
+        if (error) throw new Error(`Could not finalize ${operation.kind}: ${error.message}`);
+      } else {
+        await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
+        await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
+        await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
+      }
       await markStage(supabase, next, { status: "done", finished_at: new Date().toISOString() });
       return { status: "operation_succeeded" };
     }
@@ -1555,10 +1621,21 @@ async function processOneStage(supabase, operation) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
-    await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
-    await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
-    if (operation.instance_id) {
-      await supabase.from("instances").update({ state: "failed" }).eq("id", operation.instance_id);
+    const lifecycleKinds = new Set(["instance.snapshot", "instance.resize", "instance.restore_replace"]);
+    if (lifecycleKinds.has(operation.kind)) {
+      const { error } = await supabase.rpc("finish_instance_operation", {
+        p_operation_id: operation.id,
+        p_outcome: "failed",
+        p_observed: null,
+        p_error: message,
+      });
+      if (error) console.log(JSON.stringify({ ok: false, where: "finish_instance_operation", error: error.message }));
+    } else {
+      await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
+      await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
+      if (operation.instance_id) {
+        await supabase.from("instances").update({ state: "failed" }).eq("id", operation.instance_id);
+      }
     }
     return { status: "operation_failed" };
   }
@@ -1650,7 +1727,7 @@ async function publishSnapshot(supabase, token) {
       backup_healthy: backupHealthy,
       // No monitoring system is wired up yet - see the comment on
       // measureBackupHealthy above for why this stays false rather than true.
-      monitoring_healthy: true,
+      monitoring_healthy: false,
     },
   });
   if (error) console.log(JSON.stringify({ ok: false, where: "publish_cluster_snapshot", error: error.message }));
@@ -1760,10 +1837,7 @@ async function run() {
       log.push({ operation_id: operation.id, ...outcome });
 
       if (outcome.status === "no_pending_stage") {
-        await supabase.from("operations").update({ state: "succeeded", ended_at: new Date().toISOString() }).eq("id", operation.id);
-        await supabase.from("instances").update({ state: "ready" }).eq("id", operation.instance_id);
-        processedAny = true;
-        continue;
+        throw new Error(`Operation ${operation.id} has no runnable stage and was not finalized`);
       }
       processedAny = true;
       if (outcome.status === "retry_wait") await sleep(outcome.waitMs);
