@@ -149,7 +149,9 @@ if run_in_ct "cd /opt/guildcloud-worker/current && set -a && . $env_file && set 
   echo
   echo "Cutover complete for $worker_id."
   echo "The service-role key is gone from $env_file (backup: $env_file.bak-$stamp)."
-  echo "Watch two worker cycles before doing the other cluster, then rotate the key."
+  echo "Watch two worker cycles before doing the other cluster."
+  echo "Do NOT rotate signing keys -- the standby key already verifies (runbook step 0)."
+  echo "Retiring service_role is runbook step 7; it is a deactivation, not a rotation."
 else
   echo "Health check failed; restoring the previous env and restarting." >&2
   run_in_ct "cp -a $env_file.bak-$stamp $env_file && systemctl restart guildcloud-worker.timer"
