@@ -331,8 +331,29 @@ async function getVaultSecret(supabase, name) {
   return data;
 }
 
+// On the boundary path the cluster -- and so which secret -- is resolved by the
+// database from this worker's identity. config.pveTokenSecretName is only
+// consulted on the legacy service-role path; naming the secret in the worker's
+// own env file is exactly what let a worker ask for another cluster's token.
 async function proxmoxToken(supabase) {
+  if (controlPlane) {
+    if (!vaultSecretCache.has("__proxmox")) {
+      vaultSecretCache.set("__proxmox", await controlPlane.getProxmoxCredential());
+    }
+    return vaultSecretCache.get("__proxmox");
+  }
   return getVaultSecret(supabase, config.pveTokenSecretName);
+}
+
+// The boundary derives the secret name from the instance id and refuses an
+// instance outside this cluster, so a worker cannot overwrite another cluster's
+// password -- or any other secret -- by choosing a name.
+async function setInstanceSshPassword(supabase, instanceId, password) {
+  if (controlPlane) return controlPlane.setInstanceSshPassword(instanceId, password);
+  await supabase.rpc("set_vault_secret", {
+    p_secret_name: `instance_ssh_password_${instanceId}`,
+    p_secret_value: password,
+  });
 }
 
 async function pve(token, method, pathStr, params) {
@@ -417,8 +438,14 @@ async function tailscaleAccessToken(supabase) {
   if (tailscaleTokenCache && tailscaleTokenCache.expiresAt > Date.now() + 60000) {
     return tailscaleTokenCache.accessToken;
   }
-  const clientId = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_id");
-  const clientSecret = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_secret");
+  let clientId;
+  let clientSecret;
+  if (controlPlane) {
+    ({ client_id: clientId, client_secret: clientSecret } = await controlPlane.getTailscaleOauth());
+  } else {
+    clientId = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_id");
+    clientSecret = await getVaultSecret(supabase, "tailscale_guildcloud_worker_oauth_client_secret");
+  }
   const resp = await fetchWithRetry("https://api.tailscale.com/api/v2/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1442,7 +1469,7 @@ async function processOneStage(supabase, operation) {
         const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
         const password = crypto.randomUUID() + crypto.randomUUID();
         if (inst.password_ssh_enabled) {
-          await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });
+          await setInstanceSshPassword(supabase, inst.id, password);
         }
 
         const hostname = `instance-${inst.id.slice(0, 8)}`;
@@ -1488,7 +1515,7 @@ async function processOneStage(supabase, operation) {
         const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
         const password = crypto.randomUUID() + crypto.randomUUID();
         if (inst.password_ssh_enabled) {
-          await supabase.rpc("set_vault_secret", { p_secret_name: `instance_ssh_password_${inst.id}`, p_secret_value: password });
+          await setInstanceSshPassword(supabase, inst.id, password);
         }
 
         // Generate Tailscale auth key and upload a per-instance cloud-init

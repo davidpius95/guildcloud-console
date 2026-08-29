@@ -253,6 +253,36 @@ export class WorkerControlPlane {
     return this.#rpc("worker_get_instance_project", { p_instance_id: instanceId });
   }
 
+  // --- credentials -----------------------------------------------------------
+  //
+  // None of these takes a secret name. The database resolves what this worker may
+  // read from its identity, so a worker cannot ask for another cluster's Proxmox
+  // token -- which the stopgap grant on get_vault_secret allowed.
+
+  getProxmoxCredential() {
+    return this.#rpc("worker_get_proxmox_credential");
+  }
+
+  // Returns [{ client_id, client_secret }] -- a set-returning function, so
+  // PostgREST sends an array even though there is exactly one row.
+  async getTailscaleOauth() {
+    const rows = await this.#rpc("worker_get_tailscale_oauth");
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row?.client_id || !row?.client_secret) {
+      throw new Error("worker_get_tailscale_oauth returned no credential");
+    }
+    return row;
+  }
+
+  // The secret name is derived from the instance id inside the RPC, and the
+  // instance must belong to this worker's cluster.
+  setInstanceSshPassword(instanceId, password) {
+    return this.#rpc("worker_set_instance_ssh_password", {
+      p_instance_id: instanceId,
+      p_password: password,
+    });
+  }
+
   // --- tailnet housekeeping -------------------------------------------------
   //
   // Tailnet-wide rather than cluster-scoped, and granted by
