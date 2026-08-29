@@ -4,4 +4,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Clusters without a read-only SSH deploy key pull the public repository over
+# anonymous HTTPS instead. Guild-A leaves this unset and uses its deploy key.
+# Set per host, e.g.:
+#   Environment=GUILDCLOUD_REPO_URL=https://github.com/davidpius95/guildcloud-console.git
 ExecStart=/bin/sh /opt/guildcloud-worker/deploy-pull.sh

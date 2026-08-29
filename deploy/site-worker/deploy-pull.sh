@@ -25,7 +25,23 @@ CURRENT_LINK=/opt/guildcloud-worker/current
 STATE_FILE=/opt/guildcloud-worker/.deployed-checksum
 DEPLOY_LOG=/var/log/guildcloud-worker-deploy.log
 
-export GIT_SSH_COMMAND="ssh -i /opt/guildcloud-worker/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+# Which remote to pull from, and how to authenticate to it. Guild-A uses a
+# read-only SSH deploy key, which is why that is the default. Guild-B has no
+# deploy key: the repository is public, so it pulls over anonymous HTTPS and sets
+# GUILDCLOUD_REPO_URL in its systemd unit instead. Keeping this configurable is
+# what lets both clusters run this identical script rather than drifting into two
+# hand-maintained copies -- which is how Guild-B ended up with no deploy
+# mechanism at all.
+#
+# If the repository is ever made private, the HTTPS path stops working and that
+# cluster needs a deploy key like Guild-A's.
+REPO_URL="${GUILDCLOUD_REPO_URL:-git@github.com:davidpius95/guildcloud-console.git}"
+
+case "$REPO_URL" in
+  git@*|ssh://*)
+    export GIT_SSH_COMMAND="ssh -i /opt/guildcloud-worker/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+    ;;
+esac
 
 cd "$REPO_DIR"
 # Real bug found live on the Guild-A predecessor of this script: something
@@ -33,7 +49,7 @@ cd "$REPO_DIR"
 # deploy for ~3 days (git fetch fails, `set -e` exits the script early,
 # nothing else runs) - no alerting caught it, only a manual journalctl check
 # did. Self-heal the remote on every run rather than trust it stays SSH.
-git remote set-url origin git@github.com:davidpius95/guildcloud-console.git
+git remote set-url origin "$REPO_URL"
 git fetch --depth 1 origin main >/tmp/deploy-pull.log 2>&1
 git reset --hard origin/main >>/tmp/deploy-pull.log 2>&1
 
