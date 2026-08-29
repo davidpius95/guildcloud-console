@@ -158,8 +158,12 @@ created earlier the same day against local dev but the same Supabase
 backend) were both deleted afterward — real Proxmox teardown + Tailscale
 device removal, not just DB rows.
 
-**Not yet set up**: no CI/CD — `vercel --prod` was run manually from this
-session, so `main` and production can drift again if someone pushes
+**Not yet set up**: no CD. Test CI exists (`.github/workflows/ci.yml` — lint,
+typecheck, worker tests, pgTAP, build, audit, accessibility) and **passes as of
+2026-08-29**; it had failed on every run since being introduced, because `npm ci`
+exited on a dependency conflict before reaching a test, so the gate was decorative
+until PR #14 repaired it. There is still no deploy step: `vercel --prod` was run manually
+from a session, so `main` and production can still drift if someone pushes
 without redeploying. Worth wiring a GitHub → Vercel git integration (or a
 GitHub Actions step) so every merge to `main` auto-deploys, rather than
 relying on someone remembering to run `vercel --prod`.
@@ -174,7 +178,83 @@ G-21) — that one serves a different, self-hosted instance on Guild-A/B
 infrastructure via the Cloudflare Tunnel + Caddy ingress, not Vercel. See
 `docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md`.
 
-## Current initiative: multi-cluster placement — LIVE in production (2026-08-25)
+## Current initiative: platform hardening and launch (started 2026-08-29)
+
+Plan: `docs/2026-08-29-guildcloud-platform-hardening-and-launch.md` (12 tasks).
+It carries its own verified status table — read that for per-task detail; this
+section is the summary.
+
+The plan's goal is to turn the working control plane into an honest, recoverable,
+secure, operable service without rewriting the Next.js/Supabase/Proxmox/Tailscale
+foundations. One commit has landed so far — `a3b9744 "fix: harden instance
+lifecycle correctness"` (branch `guildcloud-correctness`), merged to `main` via
+PR #11. Audited directly against the repo on 2026-08-29:
+
+**Real (done and verified):**
+- **Task 2, quality gate.** `next lint` (removed in Next 16) replaced with flat-config
+  ESLint; `middleware.ts` renamed to `proxy.ts` with the 1.5s bounded session refresh
+  preserved; `scripts/check-migrations.sh` rejects duplicate timestamps, `CONCURRENTLY`,
+  and SECURITY DEFINER functions missing `search_path`/REVOKE/GRANT; real CI at
+  `.github/workflows/ci.yml` (three jobs, Postgres image pinned by digest).
+  `npm audit --omit=dev` is clean.
+- **Task 4, atomic lifecycle intent.** `20260829110000_add_atomic_instance_intents.sql`
+  adds all five `request_instance_*` RPCs plus `finish_instance_operation`, extends the
+  instance-state constraint (`snapshotting`, `resizing`, `restoring`, `delete_failed`),
+  and adds a unique partial index enforcing **one active operation per instance**.
+  `app/console/instances/actions.ts` is now RPC-only — the RLS-blocked multi-statement
+  writes that could silently match zero rows are gone. Restore-to-new (which created a
+  blank VM rather than restoring data) is removed entirely.
+- **Task 5/6, truthful worker execution.** `deploy/site-worker/lifecycle.js` awaits every
+  Proxmox UPID, confirms the snapshot actually appears in the VM list, rejects an empty
+  snapshot instead of rebooting as a successful no-op, resolves the real boot disk rather
+  than hardcoding `scsi0`, refuses any disk shrink, and never reports success after a
+  partial disk failure. Nine unit tests cover it.
+- **Task 7, duplicate worker removed.** `deploy/site-worker-guild-a/index.js` — the
+  1,293-line second source of truth — is now a two-line tombstone, with
+  `single-source.test.js` failing the build if a second Proxmox implementation reappears.
+
+**Partial — do not read as done:**
+- **Task 3, capability contract.** `lib/platform-capabilities.ts` exists and the console
+  surfaces were made honest by hand, but **nothing imports the contract** except its own
+  test. The flags document intent without enforcing anything, so flipping one changes no
+  behaviour. Two stale strings survive: `components/sidebar.tsx:173` still says "Guild-B
+  onboarding", and `app/console/projects/[id]/page.tsx:48` still claims Phase 2 isn't
+  wired up. `docs/content/product-claims.md` was never created.
+- **Task 4 gaps.** No request RPC writes an audit event — customer lifecycle intent is
+  currently **unaudited**. `finish_instance_operation` never checks that the calling
+  worker's cluster owns the operation. Resize skips the disabled-plan and site-capacity
+  checks.
+- **Task 5 gap.** No bounded-lease reconciliation for operations stranded in `running`.
+  `snapshots` and `replaceRestore` are already enabled, so this is customer-reachable.
+- **Task 8.** Vitest/Testing Library/Playwright are installed and in CI, but the suite is
+  four tests. No fixture E2E project, no seeded role matrix, no axe gate, and **no
+  forgot-password or MFA route exists at all**.
+
+**Not started:** Task 1 (reproducible baseline schema — the repo still cannot rebuild
+Phase 1 from scratch), Task 9 (observability, support, restore drills), Task 10 (billing
+ledger), Task 12 (staged launch). Task 11 is a deliberate design backlog.
+
+**Task 7's code has since landed (PR #15, `d58694d`).** The site worker now has a
+`guildcloud_site_worker` database role with no table privileges, a `worker_identities`
+table mapping each worker to exactly one cluster, and `worker_*` RPCs covering every
+path it previously reached by writing tables directly. The cluster is resolved from the
+database rather than from the token, so a stolen worker token cannot widen its own scope
+and revoking a worker is a single `UPDATE` instead of a JWT-secret rotation.
+
+**The service-role key is still on both production workers.** Removing it is the
+operational half: mint tokens, canary one cluster, rotate the key. That is written up in
+`docs/runbooks/2026-08-29-worker-service-role-cutover.md`, and `CONTROL_PLANE_AUTH_MODE`
+still defaults to `service_role`, so nothing has changed for a running worker yet.
+
+## Repository sync state (checked 2026-08-29)
+
+Everything is merged. `origin/main` @ `5de0562` contains all work; both other remote
+branches (`guildcloud-correctness`, `Davidcode/guildcloud-console-service-30aa09`) are
+strictly behind it with nothing ahead, no worktree holds uncommitted work beyond a
+`@types/node` version-range bump sitting uncommitted in the main checkout, and the stash
+is empty.
+
+## Previous initiative: multi-cluster placement — LIVE in production (2026-08-25)
 
 Plan: `docs/superpowers/plans/2026-08-18-multi-cluster-placement.md` (12
 tasks). Design: `docs/superpowers/specs/2026-08-18-multi-cluster-placement-design.md`.
@@ -398,6 +478,10 @@ cloud-init snippet write, which still targets the full NFS.
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-29 | Task 7: cluster-scoped worker RPC boundary (PR #15). New `guildcloud_site_worker` role with no table privileges, `worker_identities` mapping each worker to one cluster, and `worker_*` RPCs replacing every direct table access. Cluster resolved from the database, never the token. Cutover runbook and token-minting script included; service-role key not yet removed | `docs/runbooks/2026-08-29-worker-service-role-cutover.md` |
+| 2026-08-29 | Repaired CI (PR #14). It had never passed since being introduced: `npm ci` failed on an `@types/node` conflict and a lockfile out of sync with package.json, so no job ever reached a test | — |
+| 2026-08-29 | Platform hardening plan, first commit (`a3b9744`, PR #11): atomic lifecycle RPCs replacing RLS-blocked table writes, one-active-operation index, UPID-awaiting snapshot/restore, monotonic verified resize, real CI + ESLint flat config + `proxy.ts`, duplicate Guild-A worker collapsed to a tombstone. Restore-to-new removed | `docs/2026-08-29-guildcloud-platform-hardening-and-launch.md` |
+| 2026-08-29 | Audited that plan against the repo and recorded honest per-task status in it (54 of its checkboxes verified done; capability contract found orphaned, lifecycle intent found unaudited, worker service-role key found still in place) | same plan doc |
 | 2026-08-27 | Restored the ability to create instances at all (G-24): the wizard's admission gate was far stricter than the RPC that actually places VMs, and the Guild-B worker lacked `VM.Clone` on per-node templates (pool membership did *not* grant it). Added per-node ceiling overrides for podB–podF (podA and Guild-A deliberately untouched) plus explicit template ACLs; verified with two real end-to-end creates on podB and podD | `docs/dev-log/2026-08-27-guild-b-pod-admission-and-clone-acls.md` |
 | 2026-08-27 | Pointed a new Cloudflare-DNS domain (`cloud.guild-technologies.com`) at the real Vercel prod deployment; found and fixed two real bugs in the separate self-hosted `guildcloud-console.guild-technologies.com` route on the Guild-A ingress box (stale dead-host IP causing a 502, then a wrong port pointed at the fleet-worker process instead of the Next.js portal) | `docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md` |
 | 2026-08-25 | Deleted `lib/mock-data.ts` and every fabricated surface (4,938 lines removed): real identity in the topbar/dashboard, real sites via a new `list_admittable_sites()` RPC, honest "Coming soon" states for the 9 unbuilt features, real billing figures. Fixed alongside it: enrollment link re-minted on every click (~3s → ~900ms, and it no longer silently retires a link the member may have saved), no route to enroll a second device once enrolled, dark-mode-invisible step numerals, stale onboarding copy | — |
@@ -413,36 +497,56 @@ cloud-init snippet write, which still targets the full NFS.
 
 ## What's next
 
-Multi-cluster placement itself is live and proven (see above) — remaining
-work is hardening and closing real gaps found along the way, not finishing
-the core initiative:
+The hardening plan is now the active workstream; the items below it are the
+older infrastructure backlog, still open and still real.
 
-1. **Durable fix for the PBS disk-space issue**: tighten retention on the
+1. **Run the worker cutover** (`docs/runbooks/2026-08-29-worker-service-role-cutover.md`).
+   The code boundary is merged; what remains is operational — mint a token per
+   worker, canary one cluster, then remove `SUPABASE_SERVICE_ROLE_KEY` from both
+   boxes and rotate it. Until that runs the broad key is still live on both
+   workers. Check first whether the project uses asymmetric JWT signing keys, and
+   what else still holds the service-role key (the Vercel deployment may).
+2. **Wire the capability contract into the UI and server actions** (plan Task 3)
+   so `lib/platform-capabilities.ts` enforces rather than documents, and fix the
+   two stale copy strings plus the missing `docs/content/product-claims.md`.
+3. **Add audit events to the five request RPCs** (plan Task 4) — customer
+   lifecycle intent is currently unaudited. The cluster-ownership gap noted
+   earlier is closed: `worker_finish_operation` now performs that check.
+4. **Task 1 — restore a reproducible baseline schema**, before Tasks 9 and 10
+   add more migrations to a schema the repo can't rebuild.
+5. **Bounded-lease reconciliation** for operations stranded in `running`
+   (plan Task 5) — reachable today, since snapshots/restore are enabled.
+6. **Forgot-password and MFA** (plan Task 8) — neither route exists.
+
+Older infrastructure backlog, unchanged:
+
+7. **Durable fix for the PBS disk-space issue**: tighten retention on the
    large legacy guests (vm/600, vm/122, vm/100/120/200) so the 2026-08-22
    ENOSPC incident doesn't recur — today's GC only bought back headroom,
    it didn't change what's growing.
-2. **Build the per-project membership concept** that would let
+8. **Build the per-project membership concept** that would let
    `access_grants` actually enforce something — right now an enrolled
    member reaches every project in their org regardless of what the
    Access policy card shows (schema change, not an ACL change; G-01's
    network-level fix doesn't touch this).
-3. **Remove the hardcoded storage values** in
+9. **Remove the hardcoded storage values** in
    `deploy/site-worker/health-snapshot.js:61` (`guild-templates` reported
    as a flat 1TB/10GB) — placement scoring is currently working around
    this, not using it, but it's misleading dead-looking-live code.
-4. Guild-B backup job (§2.8 of the plan) — not started yet.
-5. Investigate why the 3 failed Guild-B create attempts on podF
+10. Guild-B backup job (§2.8 of the plan) — not started yet.
+11. Investigate why the 3 failed Guild-B create attempts on podF
    (2026-08-21) never got a useful cleanup/retry path — the stuck
    `state: deleting` instance found today suggests the deletion path has
    a gap for instances whose create failed with a VMID already allocated.
-6. Fan out/build templates on more Guild-B nodes (podE has one now —
+12. Fan out/build templates on more Guild-B nodes (podE has one now —
    `ui-test-guild-b-vm` landed there — but only opportunistically; not a
    deliberate fan-out), or land the deferred shared-NFS-template-storage
    work above so per-node templates aren't needed at all.
-7. A deliberate, repeatable real UI end-to-end test (create → verify
+13. A deliberate, repeatable real UI end-to-end test (create → verify
    placement → full lifecycle → clean up) now that the infrastructure
    actually supports it without manual intervention.
-8. **Wire up CI/CD for the production deployment**: right now `vercel --prod`
+14. **Wire up CD for the production deployment** (test CI now exists, deploy
+    does not): right now `vercel --prod`
    is a manual step run from a session — no GitHub → Vercel git integration,
    no Actions workflow. `main` and production will drift again the moment
    someone pushes without remembering to redeploy.

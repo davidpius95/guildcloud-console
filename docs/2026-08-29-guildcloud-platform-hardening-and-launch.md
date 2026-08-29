@@ -10,6 +10,37 @@
 
 **Spec:** `/Users/user/Documents/Codex/2026-08-06/realtime-voice-chat-2/outputs/GuildCloud-Master-Plan.docx`, `docs/architecture.md`, `docs/PROJECT_STATUS.md`, and `docs/phase-0/gap-register.md`.
 
+## Implementation Status (verified 2026-08-29 against `main` @ `5de0562`)
+
+Checkboxes above/below reflect a direct audit of the repository, not self-reporting.
+All hardening work to date landed in one commit, `a3b9744 "fix: harden instance
+lifecycle correctness"` (branch `guildcloud-correctness`), now merged to `main` via
+PR #11. No unmerged branch, worktree, or stash holds additional plan work.
+
+Per the Global Constraints rule, categories are kept separate:
+
+| Task | Status | What remains |
+| --- | --- | --- |
+| 1. Baseline schema | **Not started** | No `supabase/baseline/`, no `test:schema:full` |
+| 2. Quality gate | **Real** | Only the `test:schema:full` run, which Task 1 must create. CI itself was repaired in #14 — it had never passed. |
+| 3. Capability contract | **Partial** | Contract is orphaned (see note); `product-claims.md`; two stale copy strings |
+| 4. Atomic lifecycle RPCs | **Real (2 gaps)** | No audit events; resize skips disabled-plan/capacity checks. Cluster-ownership check closed by Task 7. |
+| 5. Snapshot/restore truth | **Real (1 gap)** | Stale-`running` lease reconciliation |
+| 6. Monotonic resize | **Real** | — |
+| 7. Worker privilege | **Code complete** | Production cutover and service-role rotation (runbook written); G-22 key unrevoked |
+| 8. Frontend/a11y/auth/E2E | **Partial** | 4 tests total; no fixture E2E, no role matrix, no forgot-password, no MFA, no axe gate |
+| 9. Observability/recovery | **Not started** | Whole task |
+| 10. Billing ledger | **Not started** | Whole task |
+| 11. Provider parity | **Deferred** | Design backlog by intent |
+| 12. Staged launch | **Not started** | Whole task; P0 gates not evaluable until 1, 7, 9 land |
+
+**Updated 2026-08-29.** Task 7's code landed in #15. The remaining P0 gate item is
+operational: run the cutover runbook to take the service-role key off both workers
+and rotate it. After that, **Task 1** is the next code work, since Tasks 9 and 10
+both add migrations to a schema this repository still cannot rebuild.
+
+---
+
 ## Global Constraints
 
 - Read the binding master plan before making implementation choices. Report Phase 0-9 work as **real**, **partial**, **deferred**, **blocked**, or **unverified**; never merge those categories.
@@ -196,17 +227,18 @@ provisioning -> ready | failed
 - Create: `.github/workflows/ci.yml`
 - Create: `scripts/check-migrations.sh`
 
-- [ ] Read `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md` and `node_modules/next/dist/docs/01-app/03-api-reference/05-config/03-eslint.md` before editing.
-- [ ] Install matching `eslint` and `eslint-config-next` dev dependencies. Configure `core-web-vitals` plus TypeScript rules using flat config.
-- [ ] Replace `"lint": "next lint"` with `"lint": "eslint ."` and add `check` that runs lint, typecheck, worker tests, database tests, and build.
-- [ ] Rename `middleware.ts` to `proxy.ts` and rename exported `middleware` to `proxy`; preserve the matcher and 1.5-second bounded session refresh.
-- [ ] Add `scripts/check-migrations.sh` to reject duplicate migration timestamps, files with transaction-breaking production commands, and newly created security-definer functions missing explicit `search_path`, REVOKE, and GRANT statements.
-- [ ] Create CI jobs for dependency install via `npm ci`, lint, typecheck, worker tests, schema tests, production build, and `npm audit --omit=dev`.
-- [ ] Pin the disposable PostgreSQL image by digest as the existing harness does.
-- [ ] Upload only test/build logs; never upload `.env*`, database dumps, or worker configuration.
+- [x] Read `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md` and `node_modules/next/dist/docs/01-app/03-api-reference/05-config/03-eslint.md` before editing.
+- [x] Install matching `eslint` and `eslint-config-next` dev dependencies. Configure `core-web-vitals` plus TypeScript rules using flat config.
+- [x] Replace `"lint": "next lint"` with `"lint": "eslint ."` and add `check` that runs lint, typecheck, worker tests, database tests, and build.
+- [x] Rename `middleware.ts` to `proxy.ts` and rename exported `middleware` to `proxy`; preserve the matcher and 1.5-second bounded session refresh.
+- [x] Add `scripts/check-migrations.sh` to reject duplicate migration timestamps, files with transaction-breaking production commands, and newly created security-definer functions missing explicit `search_path`, REVOKE, and GRANT statements.
+- [x] Create CI jobs for dependency install via `npm ci`, lint, typecheck, worker tests, schema tests, production build, and `npm audit --omit=dev`.
+- [x] Pin the disposable PostgreSQL image by digest as the existing harness does.
+- [x] Upload only test/build logs; never upload `.env*`, database dumps, or worker configuration.
 - [ ] Run `npm run lint`, `npm run typecheck`, `npm run test:worker`, `npm run test:db`, `npm run test:schema:full`, `npm run build`, and `npm audit --omit=dev`.
-- [ ] Upgrade the vulnerable PostCSS/nanoid dependency chain using the smallest non-breaking lockfile change; rerun all commands.
-- [ ] Commit: `git commit -m "ci: enforce Next 16 quality and schema gates"`.
+> **Verified 2026-08-29:** every gate except `test:schema:full` exists and passes; `npm audit --omit=dev` reports 0 vulnerabilities. This item stays open only because Task 1 has not created `test:schema:full`.
+- [x] Upgrade the vulnerable PostCSS/nanoid dependency chain using the smallest non-breaking lockfile change; rerun all commands.
+- [x] Commit: `git commit -m "ci: enforce Next 16 quality and schema gates"`.
 
 ---
 
@@ -249,17 +281,29 @@ export const platformCapabilities = {
 ```
 
 - [ ] Add a failing unit/component assertion that every visible action maps to an enabled capability.
-- [ ] Remove protection-tier and extra-volume controls, pricing, and copy from the create wizard. Do not add hidden inputs for unbuilt features.
-- [ ] Disable/hide Resize, Snapshot, Restore, and Recovery Console until their later tasks turn each capability on independently.
-- [ ] Keep server-side guards in the corresponding actions; hiding a button is not authorization.
-- [ ] Replace “daily encrypted off-site backup” with the proven statement: onsite daily PBS backup, seven-day retention, geographic/offsite recovery not yet available.
-- [ ] Remove payment-provider, auto-reload, invoice, monitoring, volume, and managed-service claims from customer-facing active-product copy.
+- [x] Remove protection-tier and extra-volume controls, pricing, and copy from the create wizard. Do not add hidden inputs for unbuilt features.
+- [x] Disable/hide Resize, Snapshot, Restore, and Recovery Console until their later tasks turn each capability on independently.
+- [x] Keep server-side guards in the corresponding actions; hiding a button is not authorization.
+- [x] Replace “daily encrypted off-site backup” with the proven statement: onsite daily PBS backup, seven-day retention, geographic/offsite recovery not yet available.
+- [x] Remove payment-provider, auto-reload, invoice, monitoring, volume, and managed-service claims from customer-facing active-product copy.
 - [ ] Change Guild-B “onboarding” to an evidence-based status or remove cluster identity from customer navigation entirely.
-- [ ] Replace dead “View audit” actions with real `/console/settings/audit` links.
+- [x] Replace dead “View audit” actions with real `/console/settings/audit` links.
 - [ ] Remove stale project copy claiming Phase 2 is not wired when real provisioning is live.
 - [ ] Create `docs/content/product-claims.md` with columns: claim, customer surface, implementation evidence, owner, and last verified date.
 - [ ] Test desktop and mobile authenticated flows. Verify no disabled capability can be submitted with a crafted form or direct server-action call.
-- [ ] Commit: `git commit -m "fix: align console capabilities with production reality"`.
+> **Verified 2026-08-29 — the contract is orphaned.** `lib/platform-capabilities.ts`
+> exists and is asserted by `tests/components/truthful-capabilities.test.tsx`, but
+> **no component or server action imports it** — the only consumers are the file
+> itself and that test. The console was made honest by hand-editing each surface, so
+> the flags document intent without enforcing it, and flipping one changes nothing.
+> Wiring `platformCapabilities` into rendering and server-action guards is the real
+> remaining work here, alongside `docs/content/product-claims.md`,
+> `components/sidebar.tsx:173` ("Guild-B onboarding") and
+> `app/console/projects/[id]/page.tsx:48` (stale "Phase 2 ... not wired up yet").
+> Contract key names also drifted from the spec above (`replaceRestore` vs
+> `restoreReplace`, `monitoring` vs `customerMonitoring`, and managed services split
+> into four flags); `restoreToNew` was deliberately dropped rather than set false.
+- [x] Commit: `git commit -m "fix: align console capabilities with production reality"`.
 
 ---
 
@@ -296,16 +340,34 @@ public.request_instance_deletion(p_instance_id uuid, p_idempotency_key text) ret
 public.finish_instance_operation(p_operation_id uuid, p_outcome text, p_observed jsonb, p_error text default null) returns void
 ```
 
-- [ ] Extend the instance-state constraint with `snapshotting`, `resizing`, `restoring`, and `delete_failed`.
-- [ ] Add a unique partial index on `operations(instance_id)` where state is `pending` or `running` and instance ID is non-null.
-- [ ] Every request RPC must use `SECURITY DEFINER`, `SET search_path = public, pg_temp`, explicit caller-role validation, `SELECT ... FOR UPDATE` on the instance, org/project ownership checks, and explicit EXECUTE grants.
+- [x] Extend the instance-state constraint with `snapshotting`, `resizing`, `restoring`, and `delete_failed`.
+- [x] Add a unique partial index on `operations(instance_id)` where state is `pending` or `running` and instance ID is non-null.
+- [x] Every request RPC must use `SECURITY DEFINER`, `SET search_path = public, pg_temp`, explicit caller-role validation, `SELECT ... FOR UPDATE` on the instance, org/project ownership checks, and explicit EXECUTE grants.
 - [ ] `request_instance_create` must validate Owner/Admin, project ownership, site/image/plan eligibility, SSH reachability, and idempotency; create instance, operation, stages, and audit event in one transaction.
+> **Verified 2026-08-29 — one gap across all five request RPCs.** Role, ownership,
+> state, idempotency, and atomic instance/operation/stage creation are all implemented.
+> **None of the request RPCs writes an audit event** (`log_audit_event` appears zero
+> times in the migration), so customer lifecycle intent is currently unaudited.
+> `request_instance_resize` additionally omits the disabled-plan and site-capacity
+> checks this plan requires; it validates only that the target exists and does not
+> reduce vCPU, RAM, or disk. Old and target resources *are* recorded in operation
+> metadata as specified.
 - [ ] Snapshot intent must normalize the display name, generate an internal Proxmox-safe name server-side, create the snapshot row, operation, stages, and audit event atomically, and move the instance to `snapshotting`.
 - [ ] Resize intent must reject the current plan, any lower CPU/RAM/disk plan, disabled plans, unavailable site capacity, and concurrent operations; record old and target resource values in immutable operation metadata.
-- [ ] Replace-restore must require a `ready` snapshot with matching organization, project, and instance IDs. A null/empty snapshot is always an error.
-- [ ] Delete intent must reject `snapshotting`, `resizing`, `restoring`, `provisioning`, and any active operation. It must be idempotent if already deleting.
-- [ ] Remove restore-to-new from the action type and UI. Do not re-enable it until a separate design defines PBS/snapshot cloning, IP identity, SSH keys, naming, billing, and cleanup.
-- [ ] `finish_instance_operation` must verify the worker's cluster owns the operation, lock it, make terminal completion idempotent, release reservations, and apply outcome-specific state:
+- [x] Replace-restore must require a `ready` snapshot with matching organization, project, and instance IDs. A null/empty snapshot is always an error.
+- [x] Delete intent must reject `snapshotting`, `resizing`, `restoring`, `provisioning`, and any active operation. It must be idempotent if already deleting.
+- [x] Remove restore-to-new from the action type and UI. Do not re-enable it until a separate design defines PBS/snapshot cloning, IP identity, SSH keys, naming, billing, and cleanup.
+- [x] `finish_instance_operation` must verify the worker's cluster owns the operation, lock it, make terminal completion idempotent, release reservations, and apply outcome-specific state:
+> **Updated 2026-08-29 — closed by Task 7.** `worker_finish_operation` (migration
+> `20260829120000`) now performs the cluster-ownership check before delegating, and
+> additionally applies the `instance.create` state transition the worker used to make
+> with a direct write. Original finding, kept for the record: the implemented function locks the operation and
+> instance `FOR UPDATE`, returns early on an already-terminal operation, releases held
+> reservations, and applies every outcome-specific state listed below (including
+> rejecting a resize whose observed resources miss the target plan). **It performs no
+> cluster-ownership check** — any caller holding the service-role key can finalize an
+> operation belonging to either cluster. That check is the open half of this item and
+> is coupled to Task 7's worker-identity model.
   - snapshot success -> snapshot `ready`, instance `ready`;
   - snapshot failure -> snapshot `failed`, instance `ready`;
   - resize success -> update plan then instance `ready`;
@@ -313,11 +375,11 @@ public.finish_instance_operation(p_operation_id uuid, p_outcome text, p_observed
   - restore success -> instance `ready`;
   - restore failure -> instance `degraded`.
 - [ ] Write pgTAP tests for owner/admin success, lower-role denial, cross-org denial, cross-instance snapshot denial, missing snapshot, double submit, concurrent resize/delete, active-operation uniqueness, rollback on stage insert failure, and idempotent finish.
-- [ ] Add a two-session concurrency test proving only one of resize, restore, or delete can win for the same ready instance.
-- [ ] Regenerate Supabase types from the verified schema rather than hand-writing only the new RPCs.
-- [ ] Refactor server actions into validation/translation only. Success requires a returned operation ID; surface safe database error codes as clear UX copy.
-- [ ] Run all database, worker, type, lint, and build gates.
-- [ ] Commit: `git commit -m "fix: make instance lifecycle intent atomic"`.
+- [x] Add a two-session concurrency test proving only one of resize, restore, or delete can win for the same ready instance.
+- [x] Regenerate Supabase types from the verified schema rather than hand-writing only the new RPCs.
+- [x] Refactor server actions into validation/translation only. Success requires a returned operation ID; surface safe database error codes as clear UX copy.
+- [x] Run all database, worker, type, lint, and build gates.
+- [x] Commit: `git commit -m "fix: make instance lifecycle intent atomic"`.
 
 ---
 
@@ -339,18 +401,19 @@ export async function rollbackSnapshot({ pve, waitForTask, node, vmid, snapname 
 export function validateLifecycleOperation(operation, instance, snapshot) {}
 ```
 
-- [ ] Extract Proxmox snapshot/restore behavior from the loop into testable functions.
-- [ ] Write failing tests proving snapshot POST must return a non-empty UPID and `waitForTask` must succeed before completion.
-- [ ] Write tests for Proxmox task failure, timeout, missing VMID, missing node, missing snapshot, wrong snapshot owner, and retry after a worker restart.
-- [ ] For snapshot, call Proxmox, await UPID, verify the snapshot appears in the VM snapshot list, then call `finish_instance_operation`.
-- [ ] For restore, re-read the snapshot and instance from the worker RPC immediately before the side effect; reject any mismatch.
-- [ ] Await rollback UPID. Reboot/start only after rollback succeeds. Automated verification must confirm guest agent or the approved SSH fallback before success.
-- [ ] Store sanitized Proxmox task ID, start/finish times, attempt count, and verification result in operation-stage detail. Never store tokens or full API responses.
+- [x] Extract Proxmox snapshot/restore behavior from the loop into testable functions.
+- [x] Write failing tests proving snapshot POST must return a non-empty UPID and `waitForTask` must succeed before completion.
+- [x] Write tests for Proxmox task failure, timeout, missing VMID, missing node, missing snapshot, wrong snapshot owner, and retry after a worker restart.
+- [x] For snapshot, call Proxmox, await UPID, verify the snapshot appears in the VM snapshot list, then call `finish_instance_operation`.
+- [x] For restore, re-read the snapshot and instance from the worker RPC immediately before the side effect; reject any mismatch.
+- [x] Await rollback UPID. Reboot/start only after rollback succeeds. Automated verification must confirm guest agent or the approved SSH fallback before success.
+- [x] Store sanitized Proxmox task ID, start/finish times, attempt count, and verification result in operation-stage detail. Never store tokens or full API responses.
 - [ ] Make a repeated worker cycle recognize an already-created snapshot or already-applied rollback and converge instead of duplicating the side effect.
 - [ ] Add reconciliation for operations left `running` beyond a bounded lease; inspect Proxmox state before retrying.
-- [ ] Enable `snapshots` and `restoreReplace` capabilities only after worker tests and a non-production Proxmox fixture/stub pass.
-- [ ] Keep `restoreToNew` false.
-- [ ] Commit: `git commit -m "fix: await and reconcile snapshot restore tasks"`.
+> **Verified 2026-08-29 — the one open item in Task 5.** `deploy/site-worker/lifecycle.js` awaits every UPID, confirms the snapshot appears in the VM list, rejects an empty snapshot, and converges on replay; there is still no bounded-lease sweep for operations stranded in `running`. Note `snapshots` and `replaceRestore` are already `true` in the capability contract, so this gap is customer-reachable.
+- [x] Enable `snapshots` and `restoreReplace` capabilities only after worker tests and a non-production Proxmox fixture/stub pass.
+- [x] Keep `restoreToNew` false.
+- [x] Commit: `git commit -m "fix: await and reconcile snapshot restore tasks"`.
 
 ---
 
@@ -364,16 +427,16 @@ export function validateLifecycleOperation(operation, instance, snapshot) {}
 - Modify: `lib/platform-capabilities.ts`
 - Create: `docs/decisions/2026-08-29-resize-semantics.md`
 
-- [ ] Record the policy: resize is upward-only for vCPU, RAM, and root disk; no downgrade and no root-disk shrink.
-- [ ] Read live VM configuration and resolve the actual boot disk key. Do not hardcode `scsi0` unless template verification proves every supported image uses it.
-- [ ] Compare observed cores, memory MiB, and disk GiB with the target plan. Refuse unknown/multiple-root layouts and record a customer-safe failure.
-- [ ] Apply CPU and memory configuration, await any task returned, then grow the disk by the positive delta through Proxmox's resize endpoint.
-- [ ] Never update `instances.catalog_plan_id` until all Proxmox changes and post-change reads succeed.
-- [ ] If CPU/memory succeeds but disk growth fails, mark the operation failed and instance degraded with observed resources; do not lie by reverting only the database.
-- [ ] Add tests for no-op target, downgrade, disk shrink, exact growth delta, non-`scsi0` disk, timeout, partial application, worker retry, and idempotent already-resized observation.
-- [ ] Update modal copy to state that the VM may reboot and disk expansion cannot be undone.
-- [ ] Enable `resize` only after all fixture tests pass. If safe disk identification cannot be proven for an image/template, keep resize disabled for that capability combination.
-- [ ] Commit: `git commit -m "feat: implement monotonic verified instance resize"`.
+- [x] Record the policy: resize is upward-only for vCPU, RAM, and root disk; no downgrade and no root-disk shrink.
+- [x] Read live VM configuration and resolve the actual boot disk key. Do not hardcode `scsi0` unless template verification proves every supported image uses it.
+- [x] Compare observed cores, memory MiB, and disk GiB with the target plan. Refuse unknown/multiple-root layouts and record a customer-safe failure.
+- [x] Apply CPU and memory configuration, await any task returned, then grow the disk by the positive delta through Proxmox's resize endpoint.
+- [x] Never update `instances.catalog_plan_id` until all Proxmox changes and post-change reads succeed.
+- [x] If CPU/memory succeeds but disk growth fails, mark the operation failed and instance degraded with observed resources; do not lie by reverting only the database.
+- [x] Add tests for no-op target, downgrade, disk shrink, exact growth delta, non-`scsi0` disk, timeout, partial application, worker retry, and idempotent already-resized observation.
+- [x] Update modal copy to state that the VM may reboot and disk expansion cannot be undone.
+- [x] Enable `resize` only after all fixture tests pass. If safe disk identification cannot be proven for an image/template, keep resize disabled for that capability combination.
+- [x] Commit: `git commit -m "feat: implement monotonic verified instance resize"`.
 
 ---
 
@@ -391,18 +454,32 @@ export function validateLifecycleOperation(operation, instance, snapshot) {}
 - Modify: `deploy/site-worker/deploy-pull.sh`
 - Modify: `deploy/site-worker/env.example`
 
-- [ ] Define cluster-scoped worker RPCs for heartbeat/snapshot publication, claim, operation read, stage transition, terminal completion, deletion reconciliation, SSH-key synchronization, warm-pool maintenance, and Tailscale metadata updates.
-- [ ] Each RPC must validate a worker identity mapped to exactly one cluster. It must reject any instance/operation whose stored cluster differs.
-- [ ] Create a dedicated non-bypass database role or JWT claim model with EXECUTE-only grants on worker RPCs and no direct table writes.
+- [x] Define cluster-scoped worker RPCs for heartbeat/snapshot publication, claim, operation read, stage transition, terminal completion, deletion reconciliation, SSH-key synchronization, warm-pool maintenance, and Tailscale metadata updates.
+- [x] Each RPC must validate a worker identity mapped to exactly one cluster. It must reject any instance/operation whose stored cluster differs.
+- [x] Create a dedicated non-bypass database role or JWT claim model with EXECUTE-only grants on worker RPCs and no direct table writes.
 - [ ] Remove `SUPABASE_SERVICE_ROLE_KEY` from worker configuration after the RPC path is deployed and verified. Rotate the old key after every production worker is migrated.
-- [ ] Replace `deploy/site-worker-guild-a/index.js` with a thin launcher or a tombstone that imports the generic worker; remove the 1,000+ line hardcoded copy.
-- [ ] Replace the Supabase Edge Function worker copy with a clear non-deployable reference or delete it after confirming no schedule invokes it.
-- [ ] Add a repository test that fails if another worker entrypoint contains Proxmox lifecycle implementation.
-- [ ] Change `deploy-pull.sh` to record Git commit SHA, checksum, install status, activation time, and rollback target. Run the full worker test suite before switching the symlink, not just `node --check`.
-- [ ] Add a health command returning non-secret worker version, cluster ID, last successful cycle, last control-plane contact, and current release path.
-- [ ] Add automatic rollback when the new release fails startup/health within the bounded activation window; pause cluster admission before rollback if ownership is uncertain.
+> **Updated 2026-08-29 — code complete, cutover outstanding (PR #15, `d58694d`).**
+> The boundary shipped in two slices: a `guildcloud_site_worker` role with no table
+> privileges, a `worker_identities` table mapping each worker to exactly one cluster,
+> and `worker_*` RPCs covering every path the worker previously reached by direct
+> table access. The cluster is resolved from the database, never from the token, so a
+> stolen token cannot widen its own scope and revocation is one `UPDATE`.
+>
+> **The service-role key is still on both production workers.** Removing it is the
+> operational half — mint tokens, canary one cluster, rotate — written up in
+> `docs/runbooks/2026-08-29-worker-service-role-cutover.md`. `CONTROL_PLANE_AUTH_MODE`
+> still defaults to `service_role`, so nothing changed for a running worker yet.
+>
+> G-22's Tailscale auth key remains unrevoked; that is infrastructure work, unrelated
+> to this boundary.
+- [x] Replace `deploy/site-worker-guild-a/index.js` with a thin launcher or a tombstone that imports the generic worker; remove the 1,000+ line hardcoded copy.
+- [x] Replace the Supabase Edge Function worker copy with a clear non-deployable reference or delete it after confirming no schedule invokes it.
+- [x] Add a repository test that fails if another worker entrypoint contains Proxmox lifecycle implementation.
+- [x] Change `deploy-pull.sh` to record Git commit SHA, checksum, install status, activation time, and rollback target. Run the full worker test suite before switching the symlink, not just `node --check`.
+- [x] Add a health command returning non-secret worker version, cluster ID, last successful cycle, last control-plane contact, and current release path.
+- [x] Add automatic rollback when the new release fails startup/health within the bounded activation window; pause cluster admission before rollback if ownership is uncertain.
 - [ ] Audit and revoke the historical reusable Tailscale auth key from G-22, then enumerate existing clones that may have used it and rotate/re-enroll them.
-- [ ] Commit: `git commit -m "security: constrain site workers to cluster RPCs"`.
+- [x] Commit: `git commit -m "security: constrain site workers to cluster RPCs"`.
 
 ---
 
@@ -423,12 +500,13 @@ export function validateLifecycleOperation(operation, instance, snapshot) {}
 - Modify: `app/(auth)/sign-in/page.tsx`
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] Install Vitest, Testing Library, jsdom, Playwright, and axe integration as dev dependencies.
-- [ ] Component-test capability visibility, form validation, busy-state action disabling, restore snapshot selection, destructive confirmation, keyboard focus, error announcements, and mobile navigation.
+- [x] Install Vitest, Testing Library, jsdom, Playwright, and axe integration as dev dependencies.
+- [x] Component-test capability visibility, form validation, busy-state action disabling, restore snapshot selection, destructive confirmation, keyboard focus, error announcements, and mobile navigation.
 - [ ] Build an isolated Supabase fixture project/database for E2E. Never run destructive E2E against production.
 - [ ] Seed Owner, Admin, Developer, Billing, and Read-only users plus two organizations; verify cross-org rows never render and lower roles cannot submit mutations.
 - [ ] Test idempotent double submit, active-operation conflict, delete disabled while busy, failed operation recovery copy, and no fake recovery console.
 - [ ] Add forgot-password and reset-password using Supabase Auth's recovery flow, approved redirect allowlist, non-enumerating success copy, and expired-link handling.
+> **Verified 2026-08-29 — not started.** No password-recovery or MFA route exists anywhere under `app/`. Test tooling (Vitest, Testing Library, Playwright) is installed and wired into CI, but the suite is four tests: two component files and one public-accessibility spec. There is no isolated Supabase fixture project, no seeded role matrix, and no axe gate.
 - [ ] Add an MFA enrollment/challenge design and implementation behind an organization setting; require MFA for platform operators before making it a customer requirement.
 - [ ] Run axe scans on sign-in, dashboard, instance list, create wizard, instance detail, networking, billing, and settings at desktop and mobile viewports.
 - [ ] Capture authenticated screenshots for release review; do not commit screenshots containing real user data or enrollment tokens.
