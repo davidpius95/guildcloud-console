@@ -41,6 +41,7 @@ jobs:
       - run: npm ci
       - run: npm run test:db
       - run: npm run test:intents
+      - run: npm run test:worker-boundary
 
   public-accessibility:
     runs-on: ubuntu-latest

@@ -25,6 +25,15 @@ import { collectClusterSnapshot } from "./health-snapshot.js";
 import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale-access-policy.js";
 import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
 import { createSnapshot, resizeInstanceResources, rollbackSnapshot } from "./lifecycle.js";
+import { WorkerControlPlane, assertWorkerToken, workerTokenLifetime } from "./worker-client.js";
+
+// Set once the client exists. In worker_token mode every control-plane call
+// that has a worker_* RPC goes through this; in legacy service_role mode it
+// stays null and the pre-boundary calls below are used instead. Both paths are
+// kept only until every production worker has a token (plan Task 7 slice C) -
+// the legacy half goes away with the service-role key.
+let controlPlane = null;
+
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -166,15 +175,52 @@ async function fetchWithRetry(url, init, label, attempts = 5) {
 
 function serviceClient() {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error(`Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment`);
-  return createClient(url, key, {
+  if (!url) throw new Error(`Missing SUPABASE_URL in environment`);
+
+  const clientOptions = {
     auth: { persistSession: false },
     realtime: { enabled: false },
     global: {
       fetch: (fetchUrl, fetchInit) => fetchWithRetry(fetchUrl, fetchInit, "supabase_client", 5),
     },
-  });
+  };
+
+  // worker_token mode: the worker presents a pre-minted, cluster-scoped JWT
+  // instead of the service-role key. PostgREST reads its `role` claim and
+  // switches into guildcloud_site_worker, which holds EXECUTE on the worker_*
+  // RPCs and nothing else - no table privileges, no bypassrls. The anon key is
+  // the transport key here; the worker token is the authorization.
+  if (config.controlPlaneAuthMode === "worker_token") {
+    const token = process.env.SUPABASE_WORKER_TOKEN;
+    if (!token) throw new Error(`Missing SUPABASE_WORKER_TOKEN in environment`);
+    assertWorkerToken(token, { expectedWorkerId: config.workerId });
+
+    const anonKey = process.env.SUPABASE_ANON_KEY ?? token;
+    clientOptions.global.headers = { Authorization: `Bearer ${token}` };
+    const client = createClient(url, anonKey, clientOptions);
+    controlPlane = new WorkerControlPlane(client);
+    return client;
+  }
+
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) throw new Error(`Missing SUPABASE_SERVICE_ROLE_KEY in environment`);
+  return createClient(url, key, clientOptions);
+}
+
+// Non-secret operational facts, for `node index.js --health`. Everything here is
+// safe to print into a deploy log: no token, no key, no customer data.
+function healthReport(supabase) {
+  const token = process.env.SUPABASE_WORKER_TOKEN;
+  return {
+    workerId: config.workerId,
+    clusterId: config.clusterId,
+    siteId: config.siteId,
+    controlPlaneAuthMode: config.controlPlaneAuthMode,
+    workerTokenSecondsRemaining:
+      config.controlPlaneAuthMode === "worker_token" && token ? workerTokenLifetime(token) : null,
+    releasePath: __dirname,
+    controlPlane: supabase ? "configured" : "unconfigured",
+  };
 }
 
 const vaultSecretCache = new Map();
@@ -1650,9 +1696,17 @@ async function processOneStage(supabase, operation) {
 async function claimPendingOperations(supabase) {
   if (config.placementClaimMode === "rpc") {
     for (let i = 0; i < 10; i += 1) {
-      const { data: placedId, error } = await supabase.rpc("place_next_pending_operation", {
-        p_worker_cluster_id: config.clusterId,
-      });
+      // In worker_token mode the cluster is not sent at all: the database reads
+      // it from worker_identities. The legacy call asserts its own cluster,
+      // which is precisely what a compromised or misconfigured worker could lie
+      // about before this boundary existed.
+      const { data: placedId, error } = controlPlane
+        ? await controlPlane
+            .claimNextOperation()
+            .then((data) => ({ data, error: null }), (e) => ({ data: null, error: e }))
+        : await supabase.rpc("place_next_pending_operation", {
+            p_worker_cluster_id: config.clusterId,
+          });
       if (error) {
         console.log(JSON.stringify({ ok: false, where: "place_next_pending_operation", error: error.message }));
         break;
@@ -1703,10 +1757,8 @@ async function publishSnapshot(supabase, token) {
     measurePrivateNetworkingHealthy(supabase),
   ]);
 
-  const { error } = await supabase.rpc("publish_cluster_snapshot", {
-    p_cluster_id: config.clusterId,
-    p_snapshot: {
-      cluster_id: snapshot.clusterId,
+  const snapshotPayload = {
+    cluster_id: snapshot.clusterId,
       nodes: snapshot.nodes.map((n) => ({
         node: n.node,
         online: n.online,
@@ -1728,18 +1780,32 @@ async function publishSnapshot(supabase, token) {
       // No monitoring system is wired up yet - see the comment on
       // measureBackupHealthy above for why this stays false rather than true.
       monitoring_healthy: false,
-    },
-  });
+  };
+
+  // worker_publish_snapshot() derives the cluster from this worker's identity;
+  // the legacy RPC takes it as an argument the caller chooses.
+  const { error } = controlPlane
+    ? await controlPlane.publishSnapshot(snapshotPayload).then(() => ({ error: null }), (e) => ({ error: e }))
+    : await supabase.rpc("publish_cluster_snapshot", {
+        p_cluster_id: config.clusterId,
+        p_snapshot: snapshotPayload,
+      });
   if (error) console.log(JSON.stringify({ ok: false, where: "publish_cluster_snapshot", error: error.message }));
 }
 
+// worker_heartbeat() takes no cluster argument at all: the database resolves it
+// from this worker's identity. The legacy call has to name its own cluster,
+// which is exactly the assertion the boundary removes.
 function startHeartbeat(supabase) {
   const tick = () => {
-    supabase
-      .rpc("touch_worker_heartbeat", { p_cluster_id: config.clusterId, p_worker_id: config.workerId })
-      .then(({ error }) => {
-        if (error) console.log(JSON.stringify({ ok: false, where: "touch_worker_heartbeat", error: error.message }));
-      });
+    const beat = controlPlane
+      ? controlPlane.heartbeat().then(() => ({ error: null }), (error) => ({ error }))
+      : supabase
+          .rpc("touch_worker_heartbeat", { p_cluster_id: config.clusterId, p_worker_id: config.workerId })
+          .then(({ error }) => ({ error }));
+    beat.then(({ error }) => {
+      if (error) console.log(JSON.stringify({ ok: false, where: "touch_worker_heartbeat", error: error.message }));
+    });
   };
   tick();
   return setInterval(tick, HEARTBEAT_INTERVAL_MS);
@@ -1858,6 +1924,19 @@ async function run() {
 // secret's name (config.describe() already omits values; see config.js).
 if (process.argv.includes("--print-config")) {
   console.log(JSON.stringify(config.describe(), null, 2));
+} else if (process.argv.includes("--health")) {
+  // Used by deploy-pull.sh to decide whether a new release is healthy inside
+  // the activation window, and by on-call to answer "which worker is this, on
+  // which cluster, and is its credential about to expire" without SSH-reading
+  // an env file. Exits non-zero when the worker cannot even construct a client,
+  // so a broken release fails the health gate instead of reporting success.
+  try {
+    const supabase = serviceClient();
+    console.log(JSON.stringify(healthReport(supabase), null, 2));
+  } catch (error) {
+    console.error(JSON.stringify({ healthy: false, error: String(error?.message ?? error) }, null, 2));
+    process.exitCode = 1;
+  }
 } else {
   run();
 }
