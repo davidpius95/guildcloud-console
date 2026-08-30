@@ -16,6 +16,17 @@
 // deploying a change that requires the revocation, and revoking to make the
 // deployment work, is a deadlock with a customer-facing outage in the middle.
 
+// Which variable each key actually came from. Reported at boot, never the value.
+//
+// This exists because the legacy fallback below hides the thing we most need to
+// know. A function that works today tells you nothing about whether it survives
+// revoking the legacy JWT secret: if SUPABASE_SECRET_KEYS is absent it silently
+// keeps using SUPABASE_SERVICE_ROLE_KEY and works perfectly -- right up to the
+// moment that key is revoked, and then org invitations and device enrollment
+// fail together. Boot-time logging is what makes that distinction observable
+// before the irreversible step rather than after it.
+const keySources: Record<string, string> = {};
+
 function fromDictionary(variable: string): string | null {
   const raw = Deno.env.get(variable);
   if (!raw) return null;
@@ -41,14 +52,32 @@ function fromDictionary(variable: string): string | null {
 
 /** Bypasses RLS. Never expose to a browser. */
 export function secretApiKey(): string {
-  const key = fromDictionary("SUPABASE_SECRET_KEYS") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const fromKeys = fromDictionary("SUPABASE_SECRET_KEYS");
+  const key = fromKeys ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!key) throw new Error("no secret API key: set SUPABASE_SECRET_KEYS or SUPABASE_SERVICE_ROLE_KEY");
+  keySources.secret = fromKeys ? "SUPABASE_SECRET_KEYS" : "SUPABASE_SERVICE_ROLE_KEY (legacy)";
   return key;
 }
 
 /** Safe alongside RLS; used only to verify a caller's own JWT. */
 export function publishableApiKey(): string {
-  const key = fromDictionary("SUPABASE_PUBLISHABLE_KEYS") ?? Deno.env.get("SUPABASE_ANON_KEY");
+  const fromKeys = fromDictionary("SUPABASE_PUBLISHABLE_KEYS");
+  const key = fromKeys ?? Deno.env.get("SUPABASE_ANON_KEY");
   if (!key) throw new Error("no publishable API key: set SUPABASE_PUBLISHABLE_KEYS or SUPABASE_ANON_KEY");
+  keySources.publishable = fromKeys ? "SUPABASE_PUBLISHABLE_KEYS" : "SUPABASE_ANON_KEY (legacy)";
   return key;
+}
+
+// Runs at module load, which happens on every cold boot -- including a boot
+// caused by an unauthenticated request that verify_jwt rejects before the
+// handler runs. That is deliberate: it makes the answer observable without a
+// user session, and without invoking any customer-facing side effect.
+//
+// Names only. A value must never reach a log line.
+try {
+  secretApiKey();
+  publishableApiKey();
+  console.log(JSON.stringify({ where: "api_keys_boot", ...keySources }));
+} catch (e) {
+  console.error(JSON.stringify({ where: "api_keys_boot", error: String(e) }));
 }
