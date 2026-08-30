@@ -162,6 +162,14 @@ export class WorkerControlPlane {
 
   // --- housekeeping listings ------------------------------------------------
 
+  // The operations this cluster has been given and has not finished. This
+  // replaces a plain `.from("operations")` read that returned nothing once the
+  // worker lost table privileges, silently stopping instance creation in
+  // production -- see 20260830090000.
+  listClusterOperations(limit = 10) {
+    return this.#rpc("worker_list_cluster_operations", { p_limit: limit });
+  }
+
   listPendingDeletions() {
     return this.#rpc("worker_list_pending_deletions");
   }

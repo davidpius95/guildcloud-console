@@ -13,6 +13,7 @@
 // for the self-deploy mechanism.
 
 import { createClient } from "@supabase/supabase-js";
+import { sealTableAccess } from "./seal-table-access.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -247,7 +248,7 @@ function serviceClient() {
     clientOptions.global.headers = { Authorization: `Bearer ${token}` };
     const client = createClient(url, apiKey, clientOptions);
     controlPlane = new WorkerControlPlane(client);
-    return client;
+    return sealTableAccess(client);
   }
 
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -2116,13 +2117,33 @@ async function claimPendingOperations(supabase) {
     }
   }
 
-  const { data: ops } = await supabase
+  // On the boundary path this MUST be an RPC. The worker role holds no table
+  // privileges, so the legacy read below is denied outright -- and because it
+  // only destructured `data`, the denial became an empty list and the worker
+  // decided it had nothing to do. Instance creation stopped dead in production
+  // for nine hours without a single log line. See 20260830090000.
+  if (controlPlane) {
+    try {
+      return await controlPlane.listClusterOperations(10);
+    } catch (e) {
+      // Never swallow this again. A worker that cannot see its own work is
+      // broken, and silence is what made the outage invisible.
+      console.log(JSON.stringify({ ok: false, where: "worker_list_cluster_operations", error: String(e) }));
+      return [];
+    }
+  }
+
+  const { data: ops, error: listError } = await supabase
     .from("operations")
     .select("id, organization_id, instance_id, cluster_id, site_id, kind, stages, assigned_node, storage_id")
     .eq("cluster_id", config.clusterId)
     .in("state", ["pending", "running"])
     .order("updated_at", { ascending: true })
     .limit(10);
+  if (listError) {
+    console.log(JSON.stringify({ ok: false, where: "claimPendingOperations", error: listError.message }));
+    return [];
+  }
   return ops ?? [];
 }
 

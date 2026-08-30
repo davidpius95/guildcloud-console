@@ -6,7 +6,7 @@
 -- it is calling the same functions with the same privileges.
 
 begin;
-select plan(56);
+select plan(62);
 
 insert into public.worker_identities (worker_id, cluster_id, description) values
   ('worker-guild-a', 'guild-a', 'Guild-A site worker'),
@@ -511,6 +511,72 @@ select is(
   (select updated_at from probe_stamp),
   'a no-op update does not re-stamp updated_at'
 );
+
+-- ---------------------------------------------------------------------------
+-- worker_list_cluster_operations: the listing that replaced a table read
+--
+-- Instance creation broke in production on 2026-08-29 because the worker listed
+-- its operations with `.from("operations")`, which this role may not do. The
+-- denial was swallowed and became "no work to do". The listing is an RPC now,
+-- and it must be scoped the same way everything else here is: by the caller's
+-- identity, never by anything the caller supplies.
+-- ---------------------------------------------------------------------------
+
+set local role guildcloud_site_worker;
+set local "request.jwt.claims" = '{"role":"guildcloud_site_worker","worker_id":"worker-guild-a"}';
+
+select is(
+  jsonb_array_length(public.worker_list_cluster_operations()),
+  1,
+  'a worker sees the operations on its own cluster'
+);
+
+select is(
+  (public.worker_list_cluster_operations() -> 0 ->> 'id')::uuid,
+  '60000000-0000-4000-8000-00000000000a'::uuid,
+  'and the one it sees is its own cluster''s operation'
+);
+
+select ok(
+  not exists (
+    select 1
+    from jsonb_array_elements(public.worker_list_cluster_operations()) as row
+    where (row ->> 'cluster_id') <> 'guild-a'
+  ),
+  'a Guild-A worker never sees a Guild-B operation'
+);
+
+-- The listing carries what the worker needs to execute the operation. Without
+-- assigned_node and storage_id it would have to read the table again, which is
+-- the thing being removed.
+select ok(
+  (public.worker_list_cluster_operations() -> 0) ?& array['id','kind','instance_id','assigned_node','storage_id','stages'],
+  'the listing carries everything the worker needs to execute without a table read'
+);
+
+reset role;
+set local role guildcloud_site_worker;
+set local "request.jwt.claims" = '{"role":"guildcloud_site_worker","worker_id":"worker-revoked"}';
+
+select throws_ok(
+  $$select public.worker_list_cluster_operations()$$,
+  '28000',
+  null,
+  'a revoked worker cannot list any operations'
+);
+
+reset role;
+set local role guildcloud_site_worker;
+set local "request.jwt.claims" = '{"role":"guildcloud_site_worker","worker_id":"worker-guild-b"}';
+
+select throws_ok(
+  $$select public.worker_list_cluster_operations(0)$$,
+  '22023',
+  null,
+  'an out-of-range limit is rejected rather than silently clamped'
+);
+
+reset role;
 
 select * from finish();
 rollback;
