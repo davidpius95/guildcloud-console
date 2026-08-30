@@ -444,6 +444,39 @@ npm run dev                  # http://localhost:3100
 `deploy.yml` skips cleanly while `VERCEL_TOKEN` is unset, so it will not fill
 the Actions tab with red before you get there.
 
+### 6.2.1 Protect the default branch — do this before anything reaches production
+
+Production is deployed from `main`. Nothing stops a red commit reaching `main`
+unless you say so, and CI passing on a pull request means nothing if the branch
+will accept a push that skipped it.
+
+A branch ruleset requiring a pull request and green checks closes that without
+any deploy credential, which is why it is the first thing to set up rather than
+the last:
+
+```bash
+gh api -X POST repos/<owner>/<repo>/rulesets --input ruleset.json
+```
+
+with rules `pull_request` and `required_status_checks` for the CI job names
+(`application`, `database`, `public-accessibility`), targeting
+`~DEFAULT_BRANCH`. Add `deletion` and `non_fast_forward` too — a force-push over
+`main` rewrites the history everything else here depends on.
+
+Leave `bypass_actors` empty unless you have a reason not to: with it empty the
+rule applies to the repository owner as well, which is the point. Verify by
+trying a direct push and confirming it is refused:
+
+```
+remote: - Changes must be made through a pull request.
+remote: - 3 of 3 required status checks are expected.
+```
+
+With this in place, Vercel's own Git integration deploying `main` is safe: only
+CI-passing commits can be there. The gated `deploy.yml` pipeline then becomes an
+enhancement — it deploys the exact tested SHA and health-checks the result —
+rather than the only thing standing between a failing test and production.
+
 ### 6.3 Vercel
 
 Link the project, set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
