@@ -997,6 +997,18 @@ function shellQuote(s) {
 // proxmox_api_call records whether this operation claimed a pooled VM; every
 // later stage keys off that one fact rather than re-deriving it.
 async function warmPoolDetail(supabase, operation) {
+  // The boundary already hands back every stage row for the operation, so this
+  // reads from there rather than the table -- which the worker role may not
+  // touch. Left unguarded this was the next silent failure in line: it would
+  // have returned undefined, every later stage would have concluded the create
+  // did not come from the warm pool, and a claimed VM would have been
+  // provisioned over as if it were cold.
+  if (controlPlane) {
+    const stages = (await controlPlane.getOperation(operation.id)).stages ?? [];
+    const detail = stages.find((s) => s.stage === "proxmox_api_call")?.detail;
+    return detail?.from_warm_pool === true ? detail : null;
+  }
+
   const { data } = await supabase
     .from("operation_stages")
     .select("detail")
@@ -1265,11 +1277,15 @@ async function processOneStage(supabase, operation) {
     // other kind it comes off the instance's own stored placement, so
     // lifecycle work always follows the instance to wherever it actually
     // lives, independent of whatever placement_settings.mode is active now.
-    const { data: instanceForTarget } = await supabase
-      .from("instances")
-      .select("proxmox_node, storage_id")
-      .eq("id", operation.instance_id)
-      .maybeSingle();
+    // Via the guarded helper, not a raw table read. This was
+    // `.from("instances")` with the same `const { data }` shape as the listing
+    // bug: on the boundary path it silently returned undefined, so lifecycle
+    // operations fell back to whatever the operation carried instead of the
+    // instance's own stored placement. The seal caught it the moment the worker
+    // could reach this line again.
+    const instanceForTarget = operation.instance_id
+      ? await getInstance(supabase, operation.instance_id, "proxmox_node, storage_id")
+      : null;
     const target = executionTarget(operation, instanceForTarget ?? {});
     const node = target.node;
 

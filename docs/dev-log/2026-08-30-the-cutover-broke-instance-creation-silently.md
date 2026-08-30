@@ -117,12 +117,56 @@ Coverage added: 5 behavioural tests for the seal, 6 pgTAP assertions on the new
 RPC (own-cluster only, revoked worker rejected, bad limit rejected, payload
 complete enough to execute without a table read).
 
+## Two more bugs, found by fixing the first
+
+Restoring the listing let the worker reach code it had not executed since the
+cutover. Two latent faults surfaced within minutes of the fix deploying, both
+invisible until then.
+
+**`worker_get_operation` returned stage names instead of stage rows.** The
+aggregation aliased `operation_stages` as `stage`, which is also a column on
+that table; Postgres resolves the ambiguity to the column, so `to_jsonb(stage)`
+serialised the name. The RPC returned `["template_cloud_init", ...]`, so
+`processOneStage` built its map on `s.stage` of a string, matched nothing, and
+returned `no_pending_stage` -- which the caller treats as unrecoverable and
+throws. The Guild-B worker crash-looped on the first operation it had been able
+to see in fifteen hours, exiting non-zero every cycle and taking every other
+operation on that cluster with it. Fixed in `20260830100000` by renaming the
+alias. Checked the other five `to_jsonb(alias)` sites in the schema: none of
+those tables has a column matching its alias, so this was the only one.
+
+**An unguarded `.from("instances")` at the top of every stage.** Same shape as
+the original bug -- `const { data: instanceForTarget }`, error discarded. On the
+boundary path it silently returned undefined, so lifecycle operations fell back
+to whatever the operation carried rather than the instance's own stored
+placement. It now goes through the guarded `getInstance()` helper.
+
+The second one is worth dwelling on: **the seal found it, in production, exactly
+as designed.** Instead of another silent empty result, the operation failed with
+`Table access "instances" on the worker_token path` recorded as its failure
+reason, naming the table. That is the difference between a bug you find and a
+bug that costs fifteen hours.
+
+A subsequent audit of every `.from()` call site found one more of the same kind
+-- `warmPoolDetail` reading `operation_stages` unguarded, which would have made
+every later stage conclude a create did not come from the warm pool and
+provision over a claimed VM. Fixed before it could fire.
+
 ## Still outstanding
 
-**The two stranded instances** (`ui-create-08292228` and `site`) are untouched.
-Clearing `cluster_id` makes them visible to placement again; failing them and
-recreating is the other option. Either is a write against production data and
-needs a decision, not a default.
+**The two stranded instances are now `failed`, not stranded.** No requeue was
+needed and none was done: the new listing selects `cluster_id = mine and state
+in (pending, running)`, which already matched them, so clearing `cluster_id`
+would only have discarded a valid placement. The worker picked them up on its
+own once the listing was fixed, advanced them, and failed them honestly on the
+unguarded-read bug above. They now need re-creating from the console rather than
+requeuing -- a customer-visible `failed` with a reason is a better resting state
+than `provisioning` forever, but it is still not a created instance.
+
+**One bad operation can halt a whole cluster.** `no_pending_stage` throws out of
+the run loop rather than failing just that operation, so a single malformed
+operation stops every other one on the cluster. That is what turned this bug into
+a crash loop. Worth making per-operation rather than fatal.
 
 **Placed-but-unstarted operations have no reconciliation path.** This fix stops
 new ones being created, but the structural gap remains: nothing sweeps an
