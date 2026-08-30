@@ -615,6 +615,7 @@ errors that look like a network fault. Use `pve_call` with an explicit
 
 | Date | What | Doc |
 |---|---|---|
+| 2026-08-30 | Closed hardening **Task 1** (and Task 2 with it) by adding `npm run test:schema:full` — a disposable Postgres 17 that rebuilds the control plane from an empty database using only committed migrations, then asserts 94 pgTAP contracts: exact EXECUTE grants on the RLS helpers and every customer-callable RPC, and cross-org isolation proven under `SET LOCAL ROLE authenticated` with real JWT claims. It immediately caught a gap in the day-old baseline: two SECURITY DEFINER trigger functions were left executable by anon/authenticated, unlike production | `docs/2026-08-29-guildcloud-platform-hardening-and-launch.md` Task 1 |
 | 2026-08-30 | **`main` had no branch protection at all** — no rules, no rulesets — so the CI gate from #26 was protecting nothing and Vercel's Git integration deployed whatever landed. Added a ruleset on `main`: PR required, `application`/`database`/`public-accessibility` must pass, no deletion, no force-push, no bypass actors (owner included). Verified by a direct push being refused. Production now only ever receives CI-passing commits, with no deploy token involved | `docs/REPLICATION.md` §6.2.1 |
 | 2026-08-29 | **The repository could not rebuild its own database.** Replaying every migration into an empty Postgres failed 29 times out of 42, because Phase 1 built the first control-plane objects straight against the hosted project and migration history began mid-schema. Recovered the missing foundation from live into a baseline plus two repair migrations; a from-zero rebuild now reaches full parity with production (23/23 tables, 63/63 functions). Wrote `docs/REPLICATION.md` and `.env.example`, and corrected a README that still described the deleted `lib/mock-data.ts` as backing most pages | `docs/REPLICATION.md`, `docs/dev-log/2026-08-29-repo-could-not-rebuild-its-own-database.md` |
 | 2026-08-29 | Found the delete button had **never** worked: a one-argument `request_instance_deletion` overload set instances to `deleting` and queued nothing. 52 delete requests since 08-10 produced zero delete operations. Dropped it; cleaned up four instances stranded that way | `docs/dev-log/2026-08-29-deploy-drift-leaked-token-and-a-delete-that-never-deleted.md` |
@@ -680,8 +681,14 @@ older infrastructure backlog, still open and still real.
 3. **Add audit events to the five request RPCs** (plan Task 4) — customer
    lifecycle intent is currently unaudited. The cluster-ownership gap noted
    earlier is closed: `worker_finish_operation` now performs that check.
-4. **Task 1 — restore a reproducible baseline schema**, before Tasks 9 and 10
-   add more migrations to a schema the repo can't rebuild.
+4. ~~**Task 1 — restore a reproducible baseline schema**~~ — **done 2026-08-30.**
+   The repo rebuilds its own database from empty (50 migrations, verified to
+   23/23 tables and 63/63 functions against production), and
+   `npm run test:schema:full` keeps it that way in CI. Tasks 9 and 10 are
+   unblocked. **Repository-reproducible vs production-only:** everything in
+   `public` is now repository-reproducible. What remains production-only is
+   *state*, not schema — Vault secrets, the `infrastructure_clusters` rows for
+   real hardware, auth users, and the migration ledger itself.
 5. **Bounded-lease reconciliation** for operations stranded in `running`
    (plan Task 5) — reachable today, since snapshots/restore are enabled.
 6. **Forgot-password and MFA** (plan Task 8) — neither route exists.

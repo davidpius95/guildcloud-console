@@ -45,6 +45,11 @@ jobs:
       # than something to reverse-engineer from an npm error.
       - run: node --version && npm --version
       - run: npm ci
+      # First, because it is the broadest: it rebuilds the whole schema from an
+      # empty database using only what is committed. If the repository can no
+      # longer build its own control plane, the narrower fixture suites below
+      # would still pass -- they seed their own tables -- and hide it.
+      - run: npm run test:schema:full
       - run: npm run test:db
       - run: npm run test:intents
       - run: npm run test:worker-boundary
