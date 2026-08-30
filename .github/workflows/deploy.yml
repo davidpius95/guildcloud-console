@@ -31,6 +31,31 @@ name: Deploy to production
 #
 # Until VERCEL_TOKEN exists this workflow ends at the guard below without
 # failing, so it does not fill the Actions tab with red while it waits.
+#
+# ── Status, 2026-08-30 ─────────────────────────────────────────────────────────
+#
+# This workflow is currently OPTIONAL, not the thing protecting production.
+#
+# The hole it was written to close -- untested code reaching production -- is now
+# closed by a branch ruleset on `main` instead: pull request required, and
+# `application`, `database` and `public-accessibility` must all pass before
+# anything can land. Since Vercel's Git integration deploys `main`, and nothing
+# red can reach `main`, production only ever receives commits CI has passed. That
+# needs no deploy token, so it was possible to do immediately.
+#
+# What this workflow would still add over that:
+#   * it deploys the exact SHA CI tested, rather than whatever `main` points at
+#     when Vercel picks the build up
+#   * it verifies the deployment actually responds before reporting success
+#
+# Both are worth having, neither is urgent. VERCEL_ORG_ID and VERCEL_PROJECT_ID
+# are already set (read back from the live project, so known-correct); only
+# VERCEL_TOKEN is missing, and until it exists this workflow skips at the guard
+# below.
+#
+# Step 2 (vercel.json) stays unmerged until one run of this workflow has actually
+# deployed -- merging it while the token is missing would turn off the only thing
+# currently deploying production.
 
 on:
   workflow_run:
