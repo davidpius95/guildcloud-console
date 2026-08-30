@@ -324,6 +324,38 @@ both ways, `exit=0` healthy and `exit=1` with the credential unavailable.
 **Still open on this task:** the G-22 historical reusable Tailscale auth key is
 unrevoked (infrastructure work, unrelated to the boundary).
 
+### Edge Functions, and a third case of deploy drift (2026-08-30)
+
+Revoking the legacy JWT secret was blocked: `send-invite-email` and
+`enroll-device` both authenticated with the legacy `anon`/`service_role` JWTs,
+which that secret signs. Both now resolve from `SUPABASE_SECRET_KEYS` /
+`SUPABASE_PUBLISHABLE_KEYS` with a legacy fallback, and both are deployed.
+
+The fallback creates a trap worth naming: a function that works today proves
+nothing, because if the new dictionaries were absent it would keep using the
+legacy key and work perfectly until the moment of revocation. So the resolved
+*source* is logged at module load -- names only, never a value -- and module load
+runs on every cold boot, including one caused by an unauthenticated request that
+`verify_jwt` rejects before the handler. Confirmed on both:
+
+```
+{"where":"api_keys_boot","secret":"SUPABASE_SECRET_KEYS",
+ "publishable":"SUPABASE_PUBLISHABLE_KEYS"}
+```
+
+**A third deploy drift, found the same way as the others.** The repository has
+carried a tombstone for the `site-worker-guild-a` Edge Function since Task 7, and
+that checkbox is ticked. **Production was still running the full old
+implementation** -- service-role client, direct writes to `operations`,
+`operation_stages`, `instances` and `capacity_reservations`, and Proxmox clone
+calls. This is the duplicate poller whose racing against the real worker caused a
+state-corruption bug; its `pg_cron` schedule was unscheduled, so nothing invoked
+it, but it was live and callable by anyone holding the legacy service-role key.
+The tombstone is now deployed and returns 410.
+
+That is the third time in two days that the repository and production disagreed
+about worker code, each found by looking rather than by an alert.
+
 **Needs dashboard access, in this order:** deactivate the legacy `service_role`
 key (it cannot be *rotated* -- this project has migrated to JWT signing keys);
 then revoke the legacy JWT secret and disable the legacy `anon` key; then delete
