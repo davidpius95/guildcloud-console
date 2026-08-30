@@ -6,7 +6,7 @@
 -- it is calling the same functions with the same privileges.
 
 begin;
-select plan(62);
+select plan(65);
 
 insert into public.worker_identities (worker_id, cluster_id, description) values
   ('worker-guild-a', 'guild-a', 'Guild-A site worker'),
@@ -574,6 +574,41 @@ select throws_ok(
   '22023',
   null,
   'an out-of-range limit is rejected rather than silently clamped'
+);
+
+reset role;
+
+-- ---------------------------------------------------------------------------
+-- worker_get_operation must return stage ROWS, not stage NAMES
+--
+-- The aggregation aliased operation_stages as `stage`, which is also a column
+-- on that table. Postgres resolves the ambiguity to the column, so
+-- to_jsonb(stage) serialised the stage name and the RPC returned
+-- ["template_cloud_init", ...] instead of row objects. processOneStage built
+-- its Map on `s.stage` of a string, found no runnable stage, and the worker
+-- exited non-zero -- crash-looping and taking every other operation on the
+-- cluster down with it. Latent from the day the boundary shipped; unreachable
+-- until the worker could list its operations again.
+-- ---------------------------------------------------------------------------
+
+set local role guildcloud_site_worker;
+set local "request.jwt.claims" = '{"role":"guildcloud_site_worker","worker_id":"worker-guild-a"}';
+
+select is(
+  jsonb_typeof(public.worker_get_operation('60000000-0000-4000-8000-00000000000a') -> 'stages' -> 0),
+  'object',
+  'stages are row objects, not the bare stage names an aliasing bug produced'
+);
+
+select is(
+  public.worker_get_operation('60000000-0000-4000-8000-00000000000a') -> 'stages' -> 0 ->> 'stage',
+  'proxmox_api_call',
+  'and each row still carries the stage name the worker matches on'
+);
+
+select ok(
+  (public.worker_get_operation('60000000-0000-4000-8000-00000000000a') -> 'stages' -> 0) ?& array['id','stage','status'],
+  'each stage row carries what processOneStage needs to pick the next one'
 );
 
 reset role;

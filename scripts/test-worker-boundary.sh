@@ -55,7 +55,8 @@ for migration in \
   "$repo_root/supabase/migrations/20260829130000_add_worker_housekeeping_rpcs.sql" \
   "$repo_root/supabase/migrations/20260829150000_revoke_anon_definer_functions.sql" \
   "$repo_root/supabase/migrations/20260829190000_add_instances_updated_at.sql" \
-  "$repo_root/supabase/migrations/20260830090000_add_worker_list_cluster_operations.sql"
+  "$repo_root/supabase/migrations/20260830090000_add_worker_list_cluster_operations.sql" \
+  "$repo_root/supabase/migrations/20260830100000_fix_worker_get_operation_stage_alias.sql"
 do
   [[ -f "$migration" ]] && "${psql_cmd[@]}" < "$migration" >/dev/null
 done
