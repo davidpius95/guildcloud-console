@@ -37,8 +37,14 @@ Per the Global Constraints rule, categories are kept separate:
 **Updated 2026-08-29 (night).** Task 7 is done: both workers are off the service-role
 key, on cluster-scoped ES256 tokens, with scoped Vault access and TLS verification on.
 What remains of it is dashboard work gated on deploying the migrated Edge Functions.
-**Task 1** is the next code work, since Tasks 9 and 10 both add migrations to a schema
-this repository still cannot rebuild.
+**Updated 2026-08-30.** Task 1 is done, and Task 2 with it. The repository can now
+rebuild its own control-plane database: all 50 migrations apply from empty, and
+`npm run test:schema:full` holds it there in CI. Tasks 9 and 10 are unblocked --
+they were the reason Task 1 came first.
+
+**Task 3** (capability contract) or **Task 4** (audit events on the five request
+RPCs) is the next code work. Task 4 carries the sharper gap: customer lifecycle
+intent is currently unaudited.
 
 ---
 
@@ -202,17 +208,51 @@ provisioning -> ready | failed
 **Deliverable:** a new database can be built from a reviewed Phase 1 baseline plus every tracked forward migration, while an existing production database never receives the baseline.
 
 - [ ] Confirm `git status --short --branch`, `git rev-parse HEAD`, Vercel production commit, worker deployed revisions, and Supabase migration ledger. Record timestamps and redact all credentials.
-- [ ] Export schema-only SQL through a read-only database credential with `pg_dump --schema-only --no-owner --no-privileges --schema=public "$GUILDCLOUD_PRODUCTION_DB_URL"`; never commit the URL or dump data.
-- [ ] Reduce the export to the missing Phase 1 objects: organizations, memberships, projects, catalog, operations base table, audit log, helper functions, triggers, grants, indexes, RLS enablement, and policies.
+- [x] Export schema-only SQL through a read-only database credential with `pg_dump --schema-only --no-owner --no-privileges --schema=public "$GUILDCLOUD_PRODUCTION_DB_URL"`; never commit the URL or dump data.
+- [x] Reduce the export to the missing Phase 1 objects: organizations, memberships, projects, catalog, operations base table, audit log, helper functions, triggers, grants, indexes, RLS enablement, and policies.
 - [ ] Put the reviewed result in `supabase/baseline/phase1-public-schema.sql`. Add a header stating: “bootstrap only; never apply to an existing linked project.”
 - [ ] In `supabase/baseline/README.md`, document object provenance, production migration-ledger comparison, and the rule that future schema changes must be forward migrations.
-- [ ] Extend the disposable PostgreSQL 17 harness so it applies the baseline, all migrations in filename order, and pgTAP contracts. Keep `--network none` and no published ports.
-- [ ] Add a `test:schema:full` script. Do not replace the faster placement fixture suite; run both.
-- [ ] Add contract assertions for exact EXECUTE privileges on `is_org_member`, `has_org_role`, `log_audit_event`, trigger-only functions, and all customer-callable RPCs.
-- [ ] Prove `is_org_member` and `has_org_role` work under `SET LOCAL ROLE authenticated` with JWT claims, and fail for anon/cross-org callers.
-- [ ] Run `npm run test:schema:full` twice from a clean disposable database; expect identical pass counts both times.
-- [ ] Update `docs/PROJECT_STATUS.md` to distinguish repository-reproducible schema from production-only historical state.
+- [x] Extend the disposable PostgreSQL 17 harness so it applies the baseline, all migrations in filename order, and pgTAP contracts. Keep `--network none` and no published ports.
+- [x] Add a `test:schema:full` script. Do not replace the faster placement fixture suite; run both.
+- [x] Add contract assertions for exact EXECUTE privileges on `is_org_member`, `has_org_role`, `log_audit_event`, trigger-only functions, and all customer-callable RPCs.
+- [x] Prove `is_org_member` and `has_org_role` work under `SET LOCAL ROLE authenticated` with JWT claims, and fail for anon/cross-org callers.
+- [x] Run `npm run test:schema:full` twice from a clean disposable database; expect identical pass counts both times.
+- [x] Update `docs/PROJECT_STATUS.md` to distinguish repository-reproducible schema from production-only historical state.
 - [ ] Commit: `git commit -m "chore: restore reproducible control-plane schema"`.
+
+> **Done 2026-08-29/30, with three deviations from the file plan above — recorded
+> rather than quietly absorbed.**
+>
+> 1. **Extraction method.** Object definitions were read from the production
+>    project with read-only `select`s against `pg_catalog` (`pg_get_functiondef`,
+>    `pg_get_constraintdef`, `pg_policies`, `information_schema`) rather than
+>    `pg_dump --schema-only`. Same read-only property, same no-credentials-committed
+>    property, and it gave per-object provenance the reduction step needed. No
+>    function body was invented; every one was copied from the live definition.
+> 2. **Baseline location.** The plan specifies
+>    `supabase/baseline/phase1-public-schema.sql`, applied only when bootstrapping.
+>    It went to `supabase/migrations/00000000000000_baseline_phase1_schema.sql`
+>    instead, with two follow-on repair migrations. Reason: a baseline outside the
+>    migrations directory does not make `supabase db push` work on a new project —
+>    an operator has to know to apply it first, which is exactly the tribal
+>    knowledge that caused this. As migration `00000000000000` it sorts first and
+>    a fresh push just works. The plan's safety requirement ("an existing
+>    production database never receives the baseline") is met differently: every
+>    statement is guarded, so it is a no-op there, and the production ledger takes
+>    `supabase migration repair --status applied 00000000000000`.
+>    `supabase/baseline/README.md` was therefore not created; provenance lives in
+>    the migration's own header and in `docs/REPLICATION.md`.
+> 3. **Freeze evidence.** `docs/architecture/current-state-2026-08-29.md` and
+>    `schema-recovery.md` were not created. The recovery narrative is in
+>    `docs/dev-log/2026-08-29-repo-could-not-rebuild-its-own-database.md` and the
+>    rebuild procedure in `docs/REPLICATION.md`; a third copy would drift. The
+>    unchecked first box above — the git/Vercel/worker/ledger snapshot — is
+>    genuinely not done.
+>
+> **Verification:** 50 migrations apply to an empty Postgres 17; the rebuilt
+> schema matches production exactly (23/23 tables, 63/63 functions); 94 pgTAP
+> assertions pass, identical across two clean runs. Wired into `npm run check`
+> and the CI `database` job.
 
 **Stop condition:** if production object definitions cannot be obtained read-only or cannot be reconciled safely, stop here. Do not invent missing function bodies.
 
@@ -236,8 +276,8 @@ provisioning -> ready | failed
 - [x] Create CI jobs for dependency install via `npm ci`, lint, typecheck, worker tests, schema tests, production build, and `npm audit --omit=dev`.
 - [x] Pin the disposable PostgreSQL image by digest as the existing harness does.
 - [x] Upload only test/build logs; never upload `.env*`, database dumps, or worker configuration.
-- [ ] Run `npm run lint`, `npm run typecheck`, `npm run test:worker`, `npm run test:db`, `npm run test:schema:full`, `npm run build`, and `npm audit --omit=dev`.
-> **Verified 2026-08-29:** every gate except `test:schema:full` exists and passes; `npm audit --omit=dev` reports 0 vulnerabilities. This item stays open only because Task 1 has not created `test:schema:full`.
+- [x] Run `npm run lint`, `npm run typecheck`, `npm run test:worker`, `npm run test:db`, `npm run test:schema:full`, `npm run build`, and `npm audit --omit=dev`.
+> **Verified 2026-08-30:** every gate now exists and passes, `test:schema:full` included; `npm audit --omit=dev` reports 0 vulnerabilities. Task 2 is complete.
 - [x] Upgrade the vulnerable PostCSS/nanoid dependency chain using the smallest non-breaking lockfile change; rerun all commands.
 - [x] Commit: `git commit -m "ci: enforce Next 16 quality and schema gates"`.
 

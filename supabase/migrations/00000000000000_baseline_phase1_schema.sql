@@ -604,6 +604,12 @@ revoke execute on function public.mark_org_instances_ssh_dirty(uuid) from public
 revoke execute on function public.begin_instance_operation(uuid, text) from public, anon, authenticated;
 revoke execute on function public.end_instance_operation(uuid) from public, anon, authenticated;
 revoke execute on function public.get_invite_by_token(text) from public;
+-- Trigger functions. These are SECURITY DEFINER and fire off a trigger; a direct
+-- call from a client role would run privileged code with attacker-chosen input,
+-- so PUBLIC keeps no EXECUTE and no client role is granted any. Matches the live
+-- project, where all three are unreachable from anon and authenticated.
+revoke execute on function public.handle_new_organization() from public, anon, authenticated;
+revoke execute on function public.link_pending_invites() from public, anon, authenticated;
 
 grant execute on function public.is_org_member(uuid) to authenticated, service_role;
 grant execute on function public.has_org_role(uuid, text[]) to authenticated, service_role;
