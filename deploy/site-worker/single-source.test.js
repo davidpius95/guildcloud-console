@@ -24,32 +24,63 @@ test("the Guild-A launcher contains no second worker implementation", async (t) 
   assert.doesNotMatch(launcher, /createClient|SUPABASE_SERVICE_ROLE_KEY|function processOneStage/);
 });
 
-test("every control-plane table access is guarded by the RPC boundary", async () => {
-  // The database role has no table privileges, so an unguarded .from() would
-  // fail at runtime in worker_token mode -- on whatever production cluster ran
-  // it first. Catch it here instead.
+test("the worker_token client is sealed, so a table access cannot fail silently", async () => {
+  // This replaces a text-scan that could not fail.
   //
-  // Guarded means: reachable only when `controlPlane` is null (legacy
-  // service-role path), or gated on data the boundary listing already supplied.
+  // The old version looked 18 lines above each `.from("...")` for the word
+  // "controlPlane" and called the call site guarded if it found one. It
+  // reported all 42 call sites as guarded -- including claimPendingOperations,
+  // which read `operations` unconditionally. When both workers moved to
+  // worker_token the read was denied, the code destructured only `data`, and
+  // an empty list became "no work to do". Instance creation was dead in
+  // production for nine hours and this test stayed green the whole time.
+  //
+  // A heuristic that passes on every input proves nothing. The invariant is now
+  // enforced at runtime by sealTableAccess() (with its own behavioural tests),
+  // and what is checked here is that the seal is actually installed on the
+  // client the worker_token path returns -- which is the one thing a source
+  // scan can establish honestly.
   const source = await readFile(new URL("./index.js", import.meta.url), "utf8");
-  const lines = source.split("\n");
-  const unguarded = [];
 
-  lines.forEach((line, index) => {
-    const match = line.match(/\.from\("([a-z_]+)"\)/);
-    if (!match) return;
-    const context = lines.slice(Math.max(0, index - 18), index + 1).join("\n");
-    const guarded =
-      context.includes("controlPlane") ||
-      context.includes("inst.operation_id") ||
-      context.includes("inst.public_keys");
-    if (!guarded) unguarded.push(`${index + 1}: ${match[1]}`);
-  });
+  assert.match(
+    source,
+    /import \{ sealTableAccess \} from "\.\/seal-table-access\.js"/,
+    "index.js must import the seal",
+  );
 
-  assert.deepEqual(
-    unguarded,
-    [],
-    `these table accesses would run against a role with no table privileges:\n${unguarded.join("\n")}`,
+  const workerTokenBranch = source.slice(
+    source.indexOf("controlPlane = new WorkerControlPlane(client)"),
+  );
+  assert.match(
+    workerTokenBranch.slice(0, 200),
+    /return sealTableAccess\(client\)/,
+    "the worker_token path must return the sealed client, not the raw one",
+  );
+
+  // The legacy path must NOT be sealed: it has no boundary RPCs to use and
+  // every table access there is legitimate.
+  const legacyBranch = source.slice(source.indexOf("SUPABASE_SERVICE_ROLE_KEY in environment"));
+  assert.doesNotMatch(
+    legacyBranch.slice(0, 300),
+    /sealTableAccess/,
+    "the service_role path must keep working table access",
+  );
+});
+
+test("the operation listing goes through the boundary, not a table read", async () => {
+  // The specific regression: claimPendingOperations listed operations with
+  // `.from("operations")`, which the worker role may not do. It must use the
+  // RPC, and it must not swallow the error if that call fails.
+  const source = await readFile(new URL("./index.js", import.meta.url), "utf8");
+  const start = source.indexOf("async function claimPendingOperations");
+  assert.ok(start > 0, "claimPendingOperations must exist");
+  const body = source.slice(start, source.indexOf("\nasync function", start + 10));
+
+  assert.match(body, /controlPlane\.listClusterOperations\(/, "must list via the boundary RPC");
+  assert.doesNotMatch(
+    body,
+    /const \{ data: ops \} =/,
+    "must not destructure only `data` -- that is what hid the permission denial",
   );
 });
 
