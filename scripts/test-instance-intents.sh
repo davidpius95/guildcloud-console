@@ -35,7 +35,8 @@ psql_cmd=(docker exec -i "$container_name" psql -X -v ON_ERROR_STOP=1 -h 127.0.0
 
 for migration in \
   "$repo_root/supabase/migrations/20260829100000_repair_rls_helper_grants.sql" \
-  "$repo_root/supabase/migrations/20260829110000_add_atomic_instance_intents.sql"
+  "$repo_root/supabase/migrations/20260829110000_add_atomic_instance_intents.sql" \
+  "$repo_root/supabase/migrations/20260901120000_allow_recovery_from_degraded.sql"
 do
   [[ -f "$migration" ]] && "${psql_cmd[@]}" < "$migration" >/dev/null
 done
@@ -97,5 +98,5 @@ if [[ "$active_count" != "1" ]]; then
   exit 1
 fi
 
-echo 'PASS: 43 instance-intent pgTAP assertions passed'
+echo 'PASS: 47 instance-intent pgTAP assertions passed'
 echo 'PASS: concurrent lifecycle requests serialize to one active operation'
