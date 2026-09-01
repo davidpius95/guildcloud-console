@@ -240,6 +240,42 @@ Also still open: failed creates leave orphan VMs behind (`Hjj` 105,
 when a later stage fails; and there is still no alerting on either the `ESTALE`
 or the full-volume condition.
 
+## Failed creates no longer abandon their clone (2026-09-02)
+
+Detail: `docs/dev-log/2026-09-02-failed-creates-no-longer-abandon-their-clone.md`.
+
+The clone happens early in `instance.create`; if a later stage failed, the guest
+was left behind holding CPU, memory and disk with nothing pointing at it but a
+`failed` row. There was no compensating action at all. `processOneStage` now
+destroys the clone, deletes its snippet and clears `proxmox_vmid` before
+finalizing a failed create -- scoped to creates only, since an instance that
+never reached `ready` holds no customer data, which is not true of resize or
+restore.
+
+**Clearing `proxmox_vmid` is the load-bearing part.** Proxmox reuses vmids, so a
+failed row still naming a destroyed guest is a live hazard: a later delete
+resolves `node + vmid` and would destroy whatever now holds that id. That needed
+`20260902090000`, which makes `worker_update_instance_runtime` honour an
+explicit null (it patched with `coalesce(new, old)`, so nothing could ever be
+cleared -- while the legacy path it replaced always set nulls).
+
+Live on both clusters as `ddf47d5`. **Unit-tested, not production-proven:** every
+failure that used to produce these orphans is now fixed, so there is no natural
+failure left to trigger the rollback.
+
+**Cleanup status.** `yut` (102) deleted through the console. `Hjj` (105) and
+`Hjj-restored` (106) belong to organization `GuildTech`, not the signed-in
+`GuildCloud HQ`, so RLS correctly hides them -- tenant isolation working as
+designed. They were left in place rather than reached around with a direct
+Proxmox delete. That exposes a real product gap: **an operator has no supported
+way to clean up a tenant's abandoned infrastructure** -- the only routes today
+are "ask the customer" or "bypass RLS".
+
+Separately, `iiiuuu` (119) and `coolify` (121) sit in the guildcloud pool on podF
+with **no instance row at all** -- true orphans predating this work, which the
+control plane knows nothing about. Stopped, so they cost disk not CPU. Left for
+someone to identify before deleting.
+
 ## Lifecycle operations: create, resize, snapshot and restore all work (2026-09-01)
 
 **Verified end to end on production, on both clusters.** Detail:
