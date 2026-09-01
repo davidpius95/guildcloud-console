@@ -446,3 +446,70 @@ test("a task Proxmox reports as failed is still terminal", async () => {
   );
   assert.equal(clock, 0, "a genuinely failed task must not be retried");
 });
+
+// A failed create used to abandon its clone. podF still carries guests from
+// 2026-08-27 for that reason, holding CPU, memory and disk with nothing but a
+// `failed` row pointing at them.
+test("rolling back a failed create stops and purges the clone", async () => {
+  const { destroyGuest } = await import("./lifecycle.js");
+  const calls = [];
+  const observed = await destroyGuest({
+    pve: async (_token, method, path, body) => {
+      calls.push({ method, path, body });
+      if (method === "GET") return [{ vmid: 105 }, { vmid: 102 }];
+      return "UPID:podF:0020";
+    },
+    waitForTask: async () => calls.push({ method: "WAIT" }),
+    token: "redacted-token",
+    node: "podF",
+    vmid: 102,
+    sleep: async () => undefined,
+  });
+
+  assert.deepEqual(observed, { destroyed: true, guest_was_present: true });
+  assert.deepEqual(
+    calls.find((c) => c.method === "DELETE"),
+    {
+      method: "DELETE",
+      path: "nodes/podF/qemu/102",
+      body: { purge: 1, "destroy-unreferenced-disks": 1 },
+    },
+  );
+  // Stopped before destroy, and the destroy task awaited.
+  assert.deepEqual(calls.map((c) => c.method), ["GET", "POST", "DELETE", "WAIT"]);
+});
+
+test("rolling back is idempotent when the clone is already gone", async () => {
+  const { destroyGuest } = await import("./lifecycle.js");
+  const calls = [];
+  const observed = await destroyGuest({
+    // Proxmox answers a DELETE for a missing vmid with 403, not 404, so
+    // presence is asked rather than inferred from an error.
+    pve: async (_token, method) => {
+      calls.push(method);
+      if (method === "GET") return [{ vmid: 999 }];
+      assert.fail("must not touch a guest that is not there");
+    },
+    waitForTask: async () => assert.fail("no destroy task should run"),
+    token: "redacted-token",
+    node: "podF",
+    vmid: 102,
+    sleep: async () => undefined,
+  });
+
+  assert.deepEqual(observed, { destroyed: false, guest_was_present: false });
+  assert.deepEqual(calls, ["GET"]);
+});
+
+test("rolling back refuses to run without a node or vmid to target", async () => {
+  const { destroyGuest } = await import("./lifecycle.js");
+  const never = async () => assert.fail("Proxmox must not be reached");
+  await assert.rejects(
+    destroyGuest({ pve: never, waitForTask: never, token: "t", node: "", vmid: 102 }),
+    /node is required/,
+  );
+  await assert.rejects(
+    destroyGuest({ pve: never, waitForTask: never, token: "t", node: "podF", vmid: null }),
+    /vmid is required/,
+  );
+});

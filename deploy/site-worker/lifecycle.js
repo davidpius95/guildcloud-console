@@ -212,6 +212,44 @@ export async function restartInstanceAfterConfigChange({
   );
 }
 
+// Destroy a guest, tolerating one that is already gone. Used to roll back the
+// clone a failed create left behind, and idempotent on purpose: Proxmox answers
+// a DELETE for a missing vmid with 403 (the ACL check on /vms/N runs before the
+// existence check), which is indistinguishable by message from a real rights
+// problem -- so presence is asked, not inferred from an error.
+export async function destroyGuest({
+  pve,
+  waitForTask,
+  token,
+  node,
+  vmid,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  if (!node) throw new Error("node is required to destroy a guest");
+  if (!vmid) throw new Error("vmid is required to destroy a guest");
+
+  const guests = await pve(token, "GET", `nodes/${node}/qemu`);
+  const present = Array.isArray(guests)
+    && guests.some((guest) => Number(guest?.vmid) === Number(vmid));
+  if (!present) return { destroyed: false, guest_was_present: false };
+
+  try {
+    await pve(token, "POST", `nodes/${node}/qemu/${vmid}/status/stop`);
+    await sleep(2000);
+  } catch {
+    // already stopped, or never started
+  }
+
+  const upid = await pve(token, "DELETE", `nodes/${node}/qemu/${vmid}`, {
+    purge: 1,
+    "destroy-unreferenced-disks": 1,
+  });
+  if (typeof upid === "string" && upid.startsWith("UPID:")) {
+    await waitForTask(token, node, upid);
+  }
+  return { destroyed: true, guest_was_present: true };
+}
+
 export async function resizeInstanceResources({ pve, waitForTask, token, node, vmid, target }) {
   const expected = validateTarget(target);
   const configPath = `nodes/${node}/qemu/${vmid}/config`;

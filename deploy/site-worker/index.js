@@ -32,6 +32,7 @@ import {
 import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
 import {
   createSnapshot,
+  destroyGuest,
   ensureBootDiskSize,
   resizeInstanceResources,
   restartInstanceAfterConfigChange,
@@ -1310,6 +1311,50 @@ async function markStage(supabase, stage, patch) {
   if (error) console.log(JSON.stringify({ ok: false, where: "markStage", stage: stage.stage, error: error.message }));
 }
 
+// A failed create used to leave its clone running forever. The clone happens
+// early; if any later stage fails -- a snippet write, a tailnet join, the
+// verification -- the operation was marked failed and the VM was simply
+// abandoned, holding CPU, memory and disk on the node with nothing pointing at
+// it but a `failed` row the customer had to notice and delete by hand. podF is
+// still carrying guests from 2026-08-27 for exactly this reason.
+//
+// Rolling the clone back is safe precisely for creates: an instance that never
+// reached `ready` was never reachable, so it holds no customer data. Resize and
+// restore are deliberately excluded -- those VMs are live and have data.
+//
+// Clearing proxmox_vmid afterwards is not cosmetic. Proxmox reuses vmids, so a
+// failed row still naming a destroyed guest is a live hazard: a later delete
+// would target whatever now holds that id on that node and destroy an unrelated
+// customer's server.
+async function rollBackFailedCreate(supabase, operation) {
+  const inst = await getInstance(
+    supabase,
+    operation.instance_id,
+    "id, proxmox_vmid, proxmox_node",
+  );
+  const vmid = inst?.proxmox_vmid;
+  if (!vmid) return { rolled_back: false, reason: "no guest was cloned" };
+
+  const node = inst.proxmox_node ?? operation.assigned_node;
+  if (!node) return { rolled_back: false, reason: "no node recorded" };
+
+  const token = await proxmoxToken(supabase);
+  const { guest_was_present: present } = await destroyGuest({
+    pve,
+    waitForTask,
+    token,
+    node,
+    vmid,
+    sleep,
+  });
+
+  deleteSnippet(`guildcloud-${vmid}.yaml`);
+  // Only once the guest is actually gone, so a rollback that fails part way
+  // leaves the vmid recorded and the guest still findable.
+  await updateInstanceRuntime(supabase, inst.id, { proxmox_vmid: null });
+  return { rolled_back: true, vmid, node, guest_was_present: present };
+}
+
 async function processOneStage(supabase, operation) {
   assertOperationOwnership(operation, config.clusterId);
 
@@ -2148,6 +2193,32 @@ async function processOneStage(supabase, operation) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
+
+    // Compensating action, before the operation is finalized: a create that
+    // failed must not leave its clone behind. Never allowed to mask the real
+    // failure -- if the rollback itself fails it is logged and the original
+    // error is still what gets recorded.
+    if (operation.kind === "instance.create" && operation.instance_id) {
+      try {
+        const rollback = await rollBackFailedCreate(supabase, operation);
+        console.log(JSON.stringify({
+          ok: true,
+          where: "failed_create_rolled_back",
+          operation_id: operation.id,
+          instance_id: operation.instance_id,
+          ...rollback,
+        }));
+      } catch (rollbackError) {
+        console.log(JSON.stringify({
+          ok: false,
+          where: "failed_create_rollback",
+          operation_id: operation.id,
+          instance_id: operation.instance_id,
+          error: String(rollbackError),
+        }));
+      }
+    }
+
     const lifecycleKinds = new Set(["instance.snapshot", "instance.resize", "instance.restore_replace"]);
     if (controlPlane) {
       try {
