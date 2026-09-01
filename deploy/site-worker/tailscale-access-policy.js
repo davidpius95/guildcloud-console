@@ -8,6 +8,16 @@ function shortId(id) {
   return id.slice(0, 8);
 }
 
+// Deleting a device that is already gone is the state we wanted, not a failure.
+// This is reachable in normal use: a restore rolls the guest back to a snapshot
+// and it rejoins the tailnet under a new node key, stranding the device id
+// recorded at create time. Treating that 404 as fatal left instances in
+// `delete_failed` with their VM already destroyed.
+export function isDeviceAlreadyAbsent(error) {
+  const message = String(error?.message ?? error ?? "");
+  return message.includes("404") || message.includes("no manageable device");
+}
+
 export function memberTag(membershipId) {
   return `${MEMBER_PREFIX}${shortId(membershipId)}`;
 }

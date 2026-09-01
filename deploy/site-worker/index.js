@@ -23,7 +23,12 @@ import { fileURLToPath } from "node:url";
 import { loadWorkerConfig } from "./config.js";
 import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTemplate } from "./routing.js";
 import { collectClusterSnapshot } from "./health-snapshot.js";
-import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale-access-policy.js";
+import {
+  instanceTag,
+  isDeviceAlreadyAbsent,
+  memberTag,
+  reconcileScopedAccessPolicy,
+} from "./tailscale-access-policy.js";
 import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
 import {
   createSnapshot,
@@ -705,7 +710,24 @@ async function processPendingInstanceDeletions(supabase) {
         deleteSnippet(`guildcloud-${inst.proxmox_vmid}.yaml`);
       }
       if (inst.tailscale_device_id) {
-        await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`);
+        try {
+          await ts(tsToken, "DELETE", `device/${inst.tailscale_device_id}`);
+        } catch (e) {
+          // A device that is already gone is the state we wanted. This is
+          // reachable in normal use: a restore rolls the guest back to a
+          // snapshot and it rejoins the tailnet under a new node key, stranding
+          // the id recorded at create time. Treating that 404 as fatal put the
+          // instance in `delete_failed` with its VM already destroyed -- the
+          // Proxmox delete immediately above has tolerated "not found" for the
+          // same reason all along.
+          if (!isDeviceAlreadyAbsent(e)) throw e;
+          console.log(JSON.stringify({
+            ok: true,
+            where: "tailscale_device_already_absent",
+            instance_id: inst.id,
+            device_id: inst.tailscale_device_id,
+          }));
+        }
       }
       await finishOperation(supabase, deletionOperation.id, "succeeded", { infrastructure_absent: true });
       console.log(JSON.stringify({ ok: true, where: "instance_deleted_clean_slate", instance_id: inst.id }));
