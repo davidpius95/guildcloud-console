@@ -271,10 +271,13 @@ Proxmox delete. That exposes a real product gap: **an operator has no supported
 way to clean up a tenant's abandoned infrastructure** -- the only routes today
 are "ask the customer" or "bypass RLS".
 
-Separately, `iiiuuu` (119) and `coolify` (121) sit in the guildcloud pool on podF
-with **no instance row at all** -- true orphans predating this work, which the
-control plane knows nothing about. Stopped, so they cost disk not CPU. Left for
-someone to identify before deleting.
+Separately, `iiiuuu` (119) and `coolify` (121) -- true orphans on podF with no
+instance row at all, predating this work -- were **deleted 2026-09-02** after
+confirming neither had snapshots, PBS backups, or any control-plane reference,
+and that each used the shared vendor snippet rather than a per-instance one. The
+similarly-named, **running** `coolify` (123) on podA is a different VM and was
+left untouched. No backups existed, so the deletion was irreversible; the configs
+are recorded in the dev-log entry. ~32 GiB reclaimed.
 
 ## Lifecycle operations: create, resize, snapshot and restore all work (2026-09-01)
 
