@@ -1,5 +1,5 @@
 begin;
-select plan(43);
+select plan(47);
 
 select has_function('public', 'request_instance_create', array['uuid','uuid','uuid','text','text','text','text','boolean','text']);
 select has_function('public', 'request_instance_snapshot', array['uuid','text','text']);
@@ -132,6 +132,42 @@ select lives_ok(
 );
 reset role;
 select is((select state from public.instances where id = '40000000-0000-4000-8000-000000000001'), 'degraded', 'failed restore leaves the instance degraded');
+
+-- Recovery from degraded. Every request RPC used to demand 'ready' exactly, so
+-- a resize whose restart failed left the customer unable to resize, snapshot or
+-- restore -- deletion was the only way out of a half-applied change.
+set local role authenticated;
+set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000001';
+select lives_ok(
+  $$select public.request_instance_resize(
+      '40000000-0000-4000-8000-000000000001', 'std-2', 'degraded-recovery-resize')$$,
+  'a degraded instance can be resized again rather than only deleted'
+);
+select is((select state from public.instances where id = '40000000-0000-4000-8000-000000000001'), 'resizing', 'recovering a degraded instance locks its state like any other resize');
+reset role;
+set local role service_role;
+select lives_ok(
+  $$select public.finish_instance_operation(
+      (select id from public.operations where idempotency_key = 'degraded-recovery-resize'),
+      'failed', '{}'::jsonb, 'still locked')$$,
+  'a recovery attempt that fails again is recorded, not stuck'
+);
+reset role;
+
+-- The guard was widened to 'degraded', not removed: an instance with work
+-- genuinely in flight is still refused.
+update public.instances set state = 'deleting' where id = '40000000-0000-4000-8000-000000000001';
+set local role authenticated;
+set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000001';
+select throws_ok(
+  $$select public.request_instance_resize(
+      '40000000-0000-4000-8000-000000000001', 'std-2', 'deleting-resize')$$,
+  '55000',
+  'instance is busy',
+  'an instance that is deleting is still refused'
+);
+reset role;
+
 update public.instances set state = 'ready' where id = '40000000-0000-4000-8000-000000000001';
 
 set local role authenticated;

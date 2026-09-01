@@ -77,6 +77,122 @@ export async function rollbackSnapshot({ pve, waitForTask, token, node, vmid, sn
   return { proxmox_task_id: upid, snapshot };
 }
 
+// The boot disk a clone inherits is the template's, not the plan's. Every
+// instance created before 2026-09-01 shipped with the template's 16 GiB no
+// matter which plan was bought, because create applied cores and memory from
+// the catalogue and never touched the disk -- only resize did. Growing before
+// first boot matters: cloud-init's growpart/resizefs runs then, so the guest
+// filesystem picks the new size up on its own. Never shrinks.
+export async function ensureBootDiskSize({ pve, waitForTask, token, node, vmid, diskGb }) {
+  const target = Number(diskGb);
+  if (!Number.isFinite(target) || target <= 0) throw new Error("target disk_gb must be positive");
+  const before = await pve(token, "GET", `nodes/${node}/qemu/${vmid}/config`);
+  const { disk, diskGb: current } = resolveBootDisk(before);
+  if (current >= target) return { disk, disk_gb: current, grown: false };
+
+  // Whole GiB only: Proxmox rejects fractional deltas, and rounding up can
+  // only overshoot the plan, never leave the customer short.
+  const growth = Math.ceil(target - current);
+  const upid = requireTaskId(
+    await pve(token, "PUT", `nodes/${node}/qemu/${vmid}/resize`, { disk, size: `+${growth}G` }),
+    "boot disk resize",
+  );
+  await waitForTask(token, node, upid);
+
+  const after = await pve(token, "GET", `nodes/${node}/qemu/${vmid}/config`);
+  const observed = parseDiskGiB(after[disk]);
+  if (!(Number(observed) >= target)) {
+    throw new Error(
+      `boot disk ${disk} did not reach ${target}G after resize (observed ${observed}G)`,
+    );
+  }
+  return { disk, disk_gb: observed, grown: true };
+}
+
+// Proxmox holds /var/lock/qemu-server/lock-<vmid>.conf for the duration of a
+// config or disk operation, and a 64 GiB grow on Guild-A's ceph-vm storage holds
+// it for far longer than Guild-B's local-lvm does. The original restart was four
+// attempts three seconds apart, so on Guild-A it exhausted its budget while the
+// lock was still held and failed the whole resize -- leaving the instance
+// `degraded` with the config already applied. Cluster speed decided whether a
+// resize worked.
+//
+// So: wait for the lock to clear rather than racing it, retry transient lock
+// errors on a budget sized for the slow cluster, pick reboot vs start from the
+// VM's actual state instead of guessing, and confirm the VM is running before
+// reporting success -- a restart that leaves it off is the failure this is here
+// to prevent.
+const TRANSIENT_RESTART_ERROR = /can't lock file|got timeout|lock-\d+\.conf|VM is locked|still locked/i;
+
+export function isTransientRestartError(error) {
+  return TRANSIENT_RESTART_ERROR.test(String(error?.message ?? error ?? ""));
+}
+
+export async function restartInstanceAfterConfigChange({
+  pve,
+  waitForTask,
+  token,
+  node,
+  vmid,
+  budgetMs = 300000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now = () => Date.now(),
+}) {
+  const statusPath = `nodes/${node}/qemu/${vmid}/status/current`;
+  const deadline = now() + budgetMs;
+  let delayMs = 2000;
+  let lastError = null;
+  const backoff = async () => {
+    await sleep(delayMs);
+    delayMs = Math.min(delayMs * 2, 15000);
+  };
+
+  while (now() < deadline) {
+    const status = await pve(token, "GET", statusPath);
+
+    // A held lock is the expected state right after the disk grow, not an
+    // error. Waiting it out is the whole fix.
+    if (status?.lock) {
+      lastError = new Error(`VM ${vmid} is locked by Proxmox (${status.lock})`);
+      await backoff();
+      continue;
+    }
+
+    const action = status?.status === "running" ? "reboot" : "start";
+    try {
+      const upid = await pve(token, "POST", `nodes/${node}/qemu/${vmid}/status/${action}`);
+      await waitForTask(token, node, upid);
+      // Confirm rather than assume: a completed task is not proof the VM came
+      // back up, and a resize that reports success over a powered-off VM is
+      // exactly the silent failure this stage used to produce.
+      while (now() < deadline) {
+        const settled = await pve(token, "GET", statusPath);
+        if (settled?.status === "running") return { restarted: true, action };
+        if (!settled?.lock && settled?.status === "stopped") {
+          const startUpid = await pve(token, "POST", `nodes/${node}/qemu/${vmid}/status/start`);
+          await waitForTask(token, node, startUpid);
+        }
+        await backoff();
+      }
+      throw new Error(`VM ${vmid} did not reach a running state after ${action}`);
+    } catch (error) {
+      if (String(error?.message ?? error).includes("already running")) {
+        return { restarted: true, action: "already-running" };
+      }
+      // Anything that is not the lock is a real fault: fail fast rather than
+      // burning the whole budget on it.
+      if (!isTransientRestartError(error)) throw error;
+      lastError = error;
+      await backoff();
+    }
+  }
+
+  throw new Error(
+    `Failed to restart VM ${vmid} after config update within ${Math.round(budgetMs / 1000)}s: ` +
+      `${lastError?.message ?? "Proxmox stayed locked"}`,
+  );
+}
+
 export async function resizeInstanceResources({ pve, waitForTask, token, node, vmid, target }) {
   const expected = validateTarget(target);
   const configPath = `nodes/${node}/qemu/${vmid}/config`;

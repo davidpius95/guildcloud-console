@@ -181,3 +181,203 @@ test("resize never reports success after a partial disk failure", async () => {
     /disk resize failed/,
   );
 });
+
+test("create grows the cloned boot disk from the template size to the plan size", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  const events = [];
+  let size = "16G";
+  const pve = async (_token, method, path, body) => {
+    events.push({ method, path, body });
+    if (method === "GET") {
+      return { boot: "order=scsi0", scsi0: `ceph-vm:vm-102-disk-0,discard=on,size=${size},ssd=1` };
+    }
+    size = "40G";
+    return "UPID:nodeA:0009";
+  };
+  const waitForTask = async () => events.push({ method: "WAIT" });
+
+  const observed = await ensureBootDiskSize({
+    pve,
+    waitForTask,
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    diskGb: 40,
+  });
+
+  assert.deepEqual(observed, { disk: "scsi0", disk_gb: 40, grown: true });
+  assert.deepEqual(
+    events.filter((event) => event.method === "PUT").map((event) => event.body),
+    [{ disk: "scsi0", size: "+24G" }],
+  );
+  // The grow must precede the caller's start, and be confirmed by a re-read.
+  assert.deepEqual(events.map((event) => event.method), ["GET", "PUT", "WAIT", "GET"]);
+});
+
+test("create never shrinks a boot disk that already exceeds the plan", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  const events = [];
+  const pve = async (_token, method, path, body) => {
+    events.push({ method, path, body });
+    return { boot: "order=scsi0", scsi0: "ceph-vm:vm-102-disk-0,size=160G" };
+  };
+
+  const observed = await ensureBootDiskSize({
+    pve,
+    waitForTask: async () => assert.fail("no resize task should run"),
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    diskGb: 40,
+  });
+
+  assert.deepEqual(observed, { disk: "scsi0", disk_gb: 160, grown: false });
+  assert.deepEqual(events.map((event) => event.method), ["GET"]);
+});
+
+test("create fails loudly when the boot disk does not reach the plan size", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  await assert.rejects(
+    ensureBootDiskSize({
+      // Proxmox reports success but the disk never actually grows.
+      pve: async (_token, method) =>
+        method === "GET"
+          ? { boot: "order=scsi0", scsi0: "ceph-vm:vm-102-disk-0,size=16G" }
+          : "UPID:nodeA:0010",
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      diskGb: 80,
+    }),
+    /boot disk scsi0 did not reach 80G after resize \(observed 16G\)/,
+  );
+});
+
+test("create rejects a plan with no usable disk size rather than silently skipping", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  await assert.rejects(
+    ensureBootDiskSize({
+      pve: async () => assert.fail("Proxmox must not be reached"),
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      diskGb: undefined,
+    }),
+    /target disk_gb must be positive/,
+  );
+});
+
+// The Guild-A failure reproduced: the disk grow still holds the qemu-server
+// lock when the restart is attempted. The old four-attempts-in-12s loop failed
+// the resize here; this must wait the lock out instead.
+test("restart waits out a held Proxmox lock instead of failing the resize", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  const events = [];
+  let clock = 0;
+  let locked = 3;
+  const pve = async (_token, method, path) => {
+    events.push({ method, path });
+    if (method === "GET") {
+      if (locked > 0) {
+        locked -= 1;
+        return { status: "running", lock: "disk" };
+      }
+      return { status: "running" };
+    }
+    return "UPID:nodeA:0011";
+  };
+
+  const observed = await restartInstanceAfterConfigChange({
+    pve,
+    waitForTask: async () => events.push({ method: "WAIT" }),
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    sleep: async (ms) => { clock += ms; },
+    now: () => clock,
+  });
+
+  assert.deepEqual(observed, { restarted: true, action: "reboot" });
+  assert.equal(events.filter((event) => event.method === "POST").length, 1);
+  // It backs off rather than hammering Proxmox while the lock is held.
+  assert.ok(clock >= 2000 + 4000 + 8000);
+});
+
+test("restart starts a stopped VM rather than rebooting it", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  const paths = [];
+  let started = false;
+  const pve = async (_token, method, path) => {
+    if (method === "GET") return { status: started ? "running" : "stopped" };
+    paths.push(path);
+    started = true;
+    return "UPID:nodeA:0012";
+  };
+
+  const observed = await restartInstanceAfterConfigChange({
+    pve,
+    waitForTask: async () => undefined,
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    sleep: async () => undefined,
+    now: () => 0,
+  });
+
+  assert.deepEqual(observed, { restarted: true, action: "start" });
+  assert.deepEqual(paths, ["nodes/nodeA/qemu/102/status/start"]);
+});
+
+test("restart does not report success while the VM is still powered off", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  let clock = 0;
+  await assert.rejects(
+    restartInstanceAfterConfigChange({
+      // Proxmox accepts the task and the VM never comes back up.
+      pve: async (_token, method) => (method === "GET" ? { status: "stopped" } : "UPID:nodeA:0013"),
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      budgetMs: 30000,
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    }),
+    /did not reach a running state|did not restart|Failed to restart/,
+  );
+});
+
+test("restart gives up on a real fault instead of burning the whole budget", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  let clock = 0;
+  await assert.rejects(
+    restartInstanceAfterConfigChange({
+      pve: async (_token, method) => {
+        if (method === "GET") return { status: "running" };
+        throw new Error("500 no such VM");
+      },
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    }),
+    /no such VM/,
+  );
+  assert.equal(clock, 0, "a non-lock fault must not be retried");
+});
+
+test("lock timeouts are transient, other Proxmox errors are not", async () => {
+  const { isTransientRestartError } = await import("./lifecycle.js");
+  assert.equal(
+    isTransientRestartError(
+      new Error("can't lock file '/var/lock/qemu-server/lock-102.conf' - got timeout"),
+    ),
+    true,
+  );
+  assert.equal(isTransientRestartError(new Error("VM is locked (disk)")), true);
+  assert.equal(isTransientRestartError(new Error("500 no such VM")), false);
+});
