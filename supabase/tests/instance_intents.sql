@@ -1,5 +1,5 @@
 begin;
-select plan(47);
+select plan(58);
 
 select has_function('public', 'request_instance_create', array['uuid','uuid','uuid','text','text','text','text','boolean','text']);
 select has_function('public', 'request_instance_snapshot', array['uuid','text','text']);
@@ -236,6 +236,84 @@ select is(
   (select count(*) from public.instances where id = '40000000-0000-4000-8000-000000000001'),
   0::bigint,
   'successful infrastructure deletion removes the instance row'
+);
+
+-- ---------------------------------------------------------------------------
+-- Operator cleanup across the tenant boundary
+-- ---------------------------------------------------------------------------
+-- Beta's instance stands in for abandoned infrastructure its owner is not
+-- cleaning up. Alpha's owner is not a member of Beta.
+reset role;
+update public.instances set state = 'failed' where id = '40000000-0000-4000-8000-000000000002';
+
+set local role authenticated;
+set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000001';
+select is(
+  (select public.is_platform_operator()), false,
+  'an ordinary user is not a platform operator'
+);
+select is(
+  (select count(*) from public.operator_list_abandoned_instances()), 0::bigint,
+  'a non-operator sees nothing in the abandoned listing, not even their own org'
+);
+select throws_ok(
+  $$select public.request_instance_delete(
+      '40000000-0000-4000-8000-000000000002', 'non-operator-delete')$$,
+  '42501',
+  'not authorized',
+  'a non-operator cannot delete another organization''s instance'
+);
+
+reset role;
+insert into public.platform_operators (user_id, note)
+values ('20000000-0000-4000-8000-000000000009', 'test operator');
+
+set local role authenticated;
+set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000009';
+select is(
+  (select public.is_platform_operator()), true,
+  'a user listed in platform_operators is recognised as one'
+);
+select is(
+  (select count(*) from public.operator_list_abandoned_instances()), 1::bigint,
+  'an operator sees abandoned infrastructure across the tenant boundary'
+);
+select lives_ok(
+  $$select public.request_instance_delete(
+      '40000000-0000-4000-8000-000000000002', 'operator-cleanup-1')$$,
+  'an operator can request deletion of another organization''s instance'
+);
+select is(
+  (select state from public.instances where id = '40000000-0000-4000-8000-000000000002'),
+  'deleting',
+  'the operator request moves the instance into the normal delete pipeline'
+);
+
+-- The tenant must be able to see that platform staff acted on their resource.
+reset role;
+select is(
+  (select count(*) from public.audit_log
+   where action = 'instance.delete.operator'
+     and organization_id = '10000000-0000-4000-8000-000000000002'),
+  1::bigint,
+  'the operator delete is recorded in the tenant''s own audit log'
+);
+select is(
+  (select actor_id from public.audit_log where action = 'instance.delete.operator'),
+  '20000000-0000-4000-8000-000000000009'::uuid,
+  'the audit event names the operator who acted'
+);
+
+-- Authority must not be grantable by the app itself.
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.platform_operators'::regclass),
+  true,
+  'platform_operators has row level security enabled'
+);
+select is(
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'platform_operators'),
+  0::bigint,
+  'and carries no policy, so no client can read or widen it'
 );
 
 select ok(has_function_privilege('authenticated', 'public.is_org_member(uuid)', 'EXECUTE'), 'authenticated can execute the RLS membership helper');

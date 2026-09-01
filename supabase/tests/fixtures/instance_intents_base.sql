@@ -185,6 +185,17 @@ revoke execute on function public.has_org_role(uuid, text[]) from public, anon;
 grant execute on function public.is_org_member(uuid) to authenticated;
 grant execute on function public.has_org_role(uuid, text[]) to authenticated;
 
+-- The image already ships auth.users and an auth.uid() that reads
+-- request.jwt.claim.sub -- the same claim this fixture sets -- so the real
+-- functions are used rather than shadowed. These rows exist only to satisfy the
+-- foreign key from platform_operators.
+insert into auth.users (id, email) values
+  ('20000000-0000-4000-8000-000000000001', 'owner-alpha@example.test'),
+  ('20000000-0000-4000-8000-000000000002', 'owner-beta@example.test'),
+  ('20000000-0000-4000-8000-000000000003', 'dev-alpha@example.test'),
+  ('20000000-0000-4000-8000-000000000009', 'operator@example.test')
+on conflict (id) do nothing;
+
 insert into public.organizations (id, name, owner_id, slug) values
   ('10000000-0000-4000-8000-000000000001', 'Alpha', '20000000-0000-4000-8000-000000000001', 'alpha'),
   ('10000000-0000-4000-8000-000000000002', 'Beta', '20000000-0000-4000-8000-000000000002', 'beta');
