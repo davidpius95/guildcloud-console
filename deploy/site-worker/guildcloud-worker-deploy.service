@@ -4,6 +4,10 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Belt and braces with the sourcing inside deploy-pull.sh: the health gate needs
+# NODE_EXTRA_CA_CERTS to reach Proxmox over verified TLS. Optional (leading "-")
+# so a host that keeps its env elsewhere still starts.
+EnvironmentFile=-/etc/guildcloud/worker.env
 # Clusters without a read-only SSH deploy key pull the public repository over
 # anonymous HTTPS instead. Guild-A leaves this unset and uses its deploy key.
 # Set per host, e.g.:

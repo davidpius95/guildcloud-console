@@ -122,7 +122,8 @@ export async function ensureBootDiskSize({ pve, waitForTask, token, node, vmid, 
 // VM's actual state instead of guessing, and confirm the VM is running before
 // reporting success -- a restart that leaves it off is the failure this is here
 // to prevent.
-const TRANSIENT_RESTART_ERROR = /can't lock file|got timeout|lock-\d+\.conf|VM is locked|still locked/i;
+const TRANSIENT_RESTART_ERROR =
+  /can't lock file|got timeout|lock-\d+\.conf|VM is locked|still locked|did not finish within/i;
 
 export function isTransientRestartError(error) {
   return TRANSIENT_RESTART_ERROR.test(String(error?.message ?? error ?? ""));
@@ -159,18 +160,36 @@ export async function restartInstanceAfterConfigChange({
     }
 
     const action = status?.status === "running" ? "reboot" : "start";
+    const priorUptime = Number(status?.uptime ?? 0);
     try {
       const upid = await pve(token, "POST", `nodes/${node}/qemu/${vmid}/status/${action}`);
-      await waitForTask(token, node, upid);
-      // Confirm rather than assume: a completed task is not proof the VM came
-      // back up, and a resize that reports success over a powered-off VM is
-      // exactly the silent failure this stage used to produce.
+      try {
+        // Give the task the budget we actually have. waitForTask defaults to
+        // 120s and on Guild-A's ceph-vm a qmreboot routinely outruns that.
+        await waitForTask(token, node, upid, Math.max(30000, deadline - now()));
+      } catch (taskError) {
+        // A task that outran its own wait is not proof of failure -- the reboot
+        // is usually still in flight. Only a task Proxmox *reports* as failed is
+        // terminal, and that does not look like "did not finish within".
+        if (!isTransientRestartError(taskError)) throw taskError;
+      }
+      // Confirm rather than assume: a finished task is not proof the VM came
+      // back up, and a resize reporting success over a powered-off VM is the
+      // silent failure this stage used to produce. For a reboot the uptime must
+      // also have reset, or "still running" would pass for a reboot that never
+      // actually happened.
       while (now() < deadline) {
         const settled = await pve(token, "GET", statusPath);
-        if (settled?.status === "running") return { restarted: true, action };
+        const settledUptime = Number(settled?.uptime ?? 0);
+        const cameBack = action === "start" || !priorUptime || settledUptime < priorUptime;
+        if (settled?.status === "running" && cameBack) return { restarted: true, action };
         if (!settled?.lock && settled?.status === "stopped") {
           const startUpid = await pve(token, "POST", `nodes/${node}/qemu/${vmid}/status/start`);
-          await waitForTask(token, node, startUpid);
+          try {
+            await waitForTask(token, node, startUpid, Math.max(30000, deadline - now()));
+          } catch (startError) {
+            if (!isTransientRestartError(startError)) throw startError;
+          }
         }
         await backoff();
       }
