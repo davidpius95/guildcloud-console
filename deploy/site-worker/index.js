@@ -25,7 +25,12 @@ import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTem
 import { collectClusterSnapshot } from "./health-snapshot.js";
 import { instanceTag, memberTag, reconcileScopedAccessPolicy } from "./tailscale-access-policy.js";
 import { GUEST_SSH_VERIFICATION_SCRIPT, parseGuestSshVerification } from "./automated-verification.js";
-import { createSnapshot, resizeInstanceResources, rollbackSnapshot } from "./lifecycle.js";
+import {
+  createSnapshot,
+  ensureBootDiskSize,
+  resizeInstanceResources,
+  rollbackSnapshot,
+} from "./lifecycle.js";
 import { WorkerControlPlane, assertWorkerToken, workerTokenLifetime } from "./worker-client.js";
 import { healthFailures } from "./health-failures.js";
 
@@ -1179,7 +1184,7 @@ async function maintainWarmPool(supabase, token) {
     ];
     writeSnippet(`guildcloud-${newid}.yaml`, vendorLines.join("\n") + "\n");
 
-    const plan = await getPlan(supabase, config.warmPool.planId, "vcpu, memory_gb");
+    const plan = await getPlan(supabase, config.warmPool.planId, "vcpu, memory_gb, disk_gb");
     await pve(token, "PUT", `nodes/${warmPoolNode}/qemu/${newid}/config`, {
       cores: plan.vcpu,
       memory: plan.memory_gb * 1024,
@@ -1188,6 +1193,17 @@ async function maintainWarmPool(supabase, token) {
       nameserver: "8.8.8.8 1.1.1.1",
       ciupgrade: 0,
       cicustom: `vendor=${config.snippetsStorageId}:snippets/guildcloud-${newid}.yaml`,
+    });
+    // A pooled VM is claimed only for its own plan, so it must be built at that
+    // plan's disk size -- the claim path never boots it a second time, so this
+    // is the only chance for cloud-init to grow the filesystem.
+    await ensureBootDiskSize({
+      pve,
+      waitForTask,
+      token,
+      node: warmPoolNode,
+      vmid: newid,
+      diskGb: plan.disk_gb,
     });
     await pve(token, "POST", `nodes/${warmPoolNode}/qemu/${newid}/status/start`);
 
@@ -1564,7 +1580,7 @@ async function processOneStage(supabase, operation) {
           },
         });
       } else {
-        const plan = await getPlan(supabase, inst.catalog_plan_id, "vcpu, memory_gb");
+        const plan = await getPlan(supabase, inst.catalog_plan_id, "vcpu, memory_gb, disk_gb");
         const orgKeys = await listInstanceSshKeys(supabase, inst);
         const sshkeysRaw = (orgKeys ?? []).map((k) => k.public_key).join("\n");
         const sshkeys = sshkeysRaw ? encodeURIComponent(sshkeysRaw) : "";
@@ -1687,6 +1703,15 @@ async function processOneStage(supabase, operation) {
           ciupgrade: 0,
           cicustom: cicustomParts.join(","),
         });
+        // Before the first start, so cloud-init grows the filesystem to match.
+        const bootDisk = await ensureBootDiskSize({
+          pve,
+          waitForTask,
+          token,
+          node,
+          vmid: inst.proxmox_vmid,
+          diskGb: plan.disk_gb,
+        });
         try {
           const startUpid = await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/status/start`);
           await waitForTask(token, node, startUpid);
@@ -1696,7 +1721,12 @@ async function processOneStage(supabase, operation) {
         await markStage(supabase, next, {
           status: "done",
           finished_at: new Date().toISOString(),
-          detail: { ts_via_cloud_init: true, hostname, ts_snippet_filename: snippetFilename },
+          detail: {
+            ts_via_cloud_init: true,
+            hostname,
+            ts_snippet_filename: snippetFilename,
+            boot_disk_gb: bootDisk.disk_gb,
+          },
         });
       }
     } else if (next.stage === "network_access_attach") {

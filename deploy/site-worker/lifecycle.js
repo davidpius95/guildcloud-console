@@ -77,6 +77,38 @@ export async function rollbackSnapshot({ pve, waitForTask, token, node, vmid, sn
   return { proxmox_task_id: upid, snapshot };
 }
 
+// The boot disk a clone inherits is the template's, not the plan's. Every
+// instance created before 2026-09-01 shipped with the template's 16 GiB no
+// matter which plan was bought, because create applied cores and memory from
+// the catalogue and never touched the disk -- only resize did. Growing before
+// first boot matters: cloud-init's growpart/resizefs runs then, so the guest
+// filesystem picks the new size up on its own. Never shrinks.
+export async function ensureBootDiskSize({ pve, waitForTask, token, node, vmid, diskGb }) {
+  const target = Number(diskGb);
+  if (!Number.isFinite(target) || target <= 0) throw new Error("target disk_gb must be positive");
+  const before = await pve(token, "GET", `nodes/${node}/qemu/${vmid}/config`);
+  const { disk, diskGb: current } = resolveBootDisk(before);
+  if (current >= target) return { disk, disk_gb: current, grown: false };
+
+  // Whole GiB only: Proxmox rejects fractional deltas, and rounding up can
+  // only overshoot the plan, never leave the customer short.
+  const growth = Math.ceil(target - current);
+  const upid = requireTaskId(
+    await pve(token, "PUT", `nodes/${node}/qemu/${vmid}/resize`, { disk, size: `+${growth}G` }),
+    "boot disk resize",
+  );
+  await waitForTask(token, node, upid);
+
+  const after = await pve(token, "GET", `nodes/${node}/qemu/${vmid}/config`);
+  const observed = parseDiskGiB(after[disk]);
+  if (!(Number(observed) >= target)) {
+    throw new Error(
+      `boot disk ${disk} did not reach ${target}G after resize (observed ${observed}G)`,
+    );
+  }
+  return { disk, disk_gb: observed, grown: true };
+}
+
 export async function resizeInstanceResources({ pve, waitForTask, token, node, vmid, target }) {
   const expected = validateTarget(target);
   const configPath = `nodes/${node}/qemu/${vmid}/config`;

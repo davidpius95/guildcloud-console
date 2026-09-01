@@ -181,3 +181,90 @@ test("resize never reports success after a partial disk failure", async () => {
     /disk resize failed/,
   );
 });
+
+test("create grows the cloned boot disk from the template size to the plan size", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  const events = [];
+  let size = "16G";
+  const pve = async (_token, method, path, body) => {
+    events.push({ method, path, body });
+    if (method === "GET") {
+      return { boot: "order=scsi0", scsi0: `ceph-vm:vm-102-disk-0,discard=on,size=${size},ssd=1` };
+    }
+    size = "40G";
+    return "UPID:nodeA:0009";
+  };
+  const waitForTask = async () => events.push({ method: "WAIT" });
+
+  const observed = await ensureBootDiskSize({
+    pve,
+    waitForTask,
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    diskGb: 40,
+  });
+
+  assert.deepEqual(observed, { disk: "scsi0", disk_gb: 40, grown: true });
+  assert.deepEqual(
+    events.filter((event) => event.method === "PUT").map((event) => event.body),
+    [{ disk: "scsi0", size: "+24G" }],
+  );
+  // The grow must precede the caller's start, and be confirmed by a re-read.
+  assert.deepEqual(events.map((event) => event.method), ["GET", "PUT", "WAIT", "GET"]);
+});
+
+test("create never shrinks a boot disk that already exceeds the plan", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  const events = [];
+  const pve = async (_token, method, path, body) => {
+    events.push({ method, path, body });
+    return { boot: "order=scsi0", scsi0: "ceph-vm:vm-102-disk-0,size=160G" };
+  };
+
+  const observed = await ensureBootDiskSize({
+    pve,
+    waitForTask: async () => assert.fail("no resize task should run"),
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    diskGb: 40,
+  });
+
+  assert.deepEqual(observed, { disk: "scsi0", disk_gb: 160, grown: false });
+  assert.deepEqual(events.map((event) => event.method), ["GET"]);
+});
+
+test("create fails loudly when the boot disk does not reach the plan size", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  await assert.rejects(
+    ensureBootDiskSize({
+      // Proxmox reports success but the disk never actually grows.
+      pve: async (_token, method) =>
+        method === "GET"
+          ? { boot: "order=scsi0", scsi0: "ceph-vm:vm-102-disk-0,size=16G" }
+          : "UPID:nodeA:0010",
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      diskGb: 80,
+    }),
+    /boot disk scsi0 did not reach 80G after resize \(observed 16G\)/,
+  );
+});
+
+test("create rejects a plan with no usable disk size rather than silently skipping", async () => {
+  const { ensureBootDiskSize } = await import("./lifecycle.js");
+  await assert.rejects(
+    ensureBootDiskSize({
+      pve: async () => assert.fail("Proxmox must not be reached"),
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      diskGb: undefined,
+    }),
+    /target disk_gb must be positive/,
+  );
+});
