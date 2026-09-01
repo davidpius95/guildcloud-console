@@ -685,7 +685,32 @@ async function processPendingInstanceDeletions(supabase) {
     try {
       if (inst.proxmox_vmid) {
         const node = inst.proxmox_node;
-        if (node) {
+        // Ask whether the guest is still there before trying to destroy it.
+        // Proxmox answers a DELETE for a vmid that no longer exists with
+        // `403 Permission check failed (/vms/N, VM.Allocate)`, not a 404 --
+        // the ACL check on /vms/N runs before the existence check. That 403 is
+        // indistinguishable by message from a genuine rights problem, so it
+        // cannot be added to the tolerated-error list without hiding real
+        // failures. Asking first is unambiguous, and makes a retried teardown
+        // idempotent: a delete that destroyed the VM and then failed on a later
+        // step used to be unable to complete on a second attempt.
+        const stillPresent = node
+          ? await pve(token, "GET", `nodes/${node}/qemu`)
+              .then((guests) =>
+                Array.isArray(guests) &&
+                guests.some((guest) => Number(guest?.vmid) === Number(inst.proxmox_vmid)),
+              )
+              .catch(() => true)
+          : false;
+        if (node && !stillPresent) {
+          console.log(JSON.stringify({
+            ok: true,
+            where: "proxmox_guest_already_absent",
+            instance_id: inst.id,
+            vmid: inst.proxmox_vmid,
+          }));
+        }
+        if (node && stillPresent) {
           try {
             await pve(token, "POST", `nodes/${node}/qemu/${inst.proxmox_vmid}/status/stop`);
             await sleep(2000);
