@@ -263,13 +263,25 @@ Live on both clusters as `ddf47d5`. **Unit-tested, not production-proven:** ever
 failure that used to produce these orphans is now fixed, so there is no natural
 failure left to trigger the rollback.
 
-**Cleanup status.** `yut` (102) deleted through the console. `Hjj` (105) and
-`Hjj-restored` (106) belong to organization `GuildTech`, not the signed-in
-`GuildCloud HQ`, so RLS correctly hides them -- tenant isolation working as
-designed. They were left in place rather than reached around with a direct
-Proxmox delete. That exposes a real product gap: **an operator has no supported
-way to clean up a tenant's abandoned infrastructure** -- the only routes today
-are "ask the customer" or "bypass RLS".
+**Cleanup status: podF is clear.** `yut` (102) deleted through the console.
+`Hjj` (105) and `Hjj-restored` (106) belonged to organization `GuildTech` -- a
+**different account** (`guildtechnology0@gmail.com`), which also owns the running
+`Trsy` (110) -- so RLS correctly hid them from the console. After confirming with
+the operator that they control that account, both were removed 2026-09-02 by an
+operator-level cleanup: guests destroyed via the Proxmox API *and* their
+control-plane rows deleted in one transaction (2 instances, 2 operations, 2
+capacity reservations), scoped by id, org, state and vmid so it could not widen
+to `Trsy`. Removing the rows is not optional -- guests alone would have left
+`failed` rows naming vmids 105/106, the stale-vmid hazard the rollback above
+exists to prevent. Both had PBS backups (4 each, newest 2026-09-01), so that one
+is recoverable by restore. `Trsy` verified still running afterwards. ~32 GiB
+reclaimed.
+
+**The product gap stands and is the thing to fix:** an operator has no supported
+way to clean up a tenant's abandoned infrastructure. The only routes are "ask the
+customer" or "go around RLS with service-role access" -- and the second is only
+safe if you also remember to delete the rows, which is exactly the two-step
+nobody remembers under pressure.
 
 Separately, `iiiuuu` (119) and `coolify` (121) -- true orphans on podF with no
 instance row at all, predating this work -- were **deleted 2026-09-02** after
