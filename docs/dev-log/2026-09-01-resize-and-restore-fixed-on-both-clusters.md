@@ -118,6 +118,46 @@ and restored, with the post-snapshot marker file confirmed gone afterwards.
 Both test instances (`rs-test-a`, `rs-test-b`) were deleted through the real UI
 teardown flow afterwards.
 
+## Fault 5 and 6, found on cleanup: teardown was not idempotent
+
+Deleting the guild-a test instance afterwards failed twice, on two different
+steps, and both are reachable in ordinary use.
+
+**Tailnet device already gone.**
+
+```
+Tailscale DELETE device/7912245261457233 -> 404: {"message":"no manageable device matching this ID found"}
+```
+
+A restore rolls the guest back to a snapshot and it rejoins the tailnet under a
+new node key, stranding the device id recorded at create time. So the sequence
+`create -> snapshot -> restore -> delete` reliably strands the instance in
+`delete_failed` -- with its VM already destroyed by the time the tailnet step
+runs. Any customer who restores and later deletes hits it. A device that is
+already gone is the state the teardown wanted, so 404 / "no manageable device"
+is now tolerated and logged; 401 and 500 still fail loudly.
+
+**Proxmox guest already gone.**
+
+```
+Proxmox DELETE nodes/nodeA/qemu/102 -> 403: Permission check failed (/vms/102, VM.Allocate)
+```
+
+Retrying the now-unstranded delete failed on the next step, because the first
+attempt had already destroyed the VM. Proxmox answers a DELETE for a missing
+vmid with **403, not 404** -- the ACL check on `/vms/N` runs before the existence
+check -- and that 403 is indistinguishable by message from a real rights problem,
+so it could not simply be added to the tolerated list beside "does not exist".
+The teardown now *asks* whether the guest is still present (a plain read of the
+node's guest list) and skips stop/delete when it is not. If that read itself
+fails it assumes present, so a transient API error still takes the normal delete
+path rather than silently skipping a destroy.
+
+Together these make a partially-completed teardown finish on retry instead of
+stranding the instance forever. Verified live: the stranded instance was deleted
+through the console once the fix deployed, and both the `instances` row and the
+guest are gone.
+
 ## Still open
 
 1. **Nothing verifies post-boot that the guest filesystem matches the plan.**

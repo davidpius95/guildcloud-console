@@ -269,6 +269,15 @@ Three defects fixed (live on both clusters as of `97ab7d7`):
    was the only exit. `20260901120000_allow_recovery_from_degraded.sql` admits
    `degraded`; provisioning/resizing/deleting are still refused.
 
+**Teardown is now idempotent too.** Cleaning up afterwards exposed two more
+failures, both reachable in ordinary use: a restore rotates the guest's tailnet
+node key, so `create -> snapshot -> restore -> delete` hit a Tailscale 404 and
+stranded the instance in `delete_failed` with its VM already destroyed; and
+retrying then hit `403 Permission check failed` because Proxmox answers a DELETE
+for a missing vmid with 403 rather than 404. The teardown now tolerates an
+already-absent device and checks whether the guest exists before destroying it,
+so a partially-completed delete finishes on retry. Verified live.
+
 **Also found and fixed: Guild-B could not deploy at all.** It had been frozen on
 a 2026-08-29 release, rolling back every attempt with `reason=health`, because
 the deploy gate runs `--health` with no environment and TLS verification needs
