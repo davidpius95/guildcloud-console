@@ -277,11 +277,39 @@ exists to prevent. Both had PBS backups (4 each, newest 2026-09-01), so that one
 is recoverable by restore. `Trsy` verified still running afterwards. ~32 GiB
 reclaimed.
 
-**The product gap stands and is the thing to fix:** an operator has no supported
-way to clean up a tenant's abandoned infrastructure. The only routes are "ask the
-customer" or "go around RLS with service-role access" -- and the second is only
-safe if you also remember to delete the rows, which is exactly the two-step
-nobody remembers under pressure.
+**That gap is now closed (2026-09-02).** Decision record:
+`docs/decisions/2026-09-02-operator-cleanup-path.md`.
+
+Platform staff get **the ability to request a delete, not the ability to
+perform one**. Only the site worker can reach Proxmox, so an operator who can
+request a delete inherits the whole hardened teardown -- guest destroyed,
+tailnet device released, rows removed, capacity released -- through the same
+code path a customer's own delete uses. There is no second teardown
+implementation to keep in step, so every fix made to that path this week applies
+here automatically.
+
+- `platform_operators`: RLS enabled, **no policy at all**. Rows are added out of
+  band, never through the app, so the app cannot widen its own authority.
+- `request_instance_delete` accepts an operator alongside the org's own
+  Owner/Admin; same queue, stages, worker and state guards otherwise.
+- Operator deletes are recorded in the **tenant's own** audit log.
+  `log_audit_event`'s membership check was widened rather than bypassed, so it
+  remains the single insert path into `audit_log`.
+- `operator_list_abandoned_instances()` is narrow on purpose: `failed`,
+  `degraded`, `delete_failed` only.
+- `scripts/operator-cleanup.mjs` signs in as the operator. **No service-role key
+  appears in it** -- that key is the posture this replaces.
+
+Live on production and **closed by default**: `platform_operators` is empty, so
+nothing changes until someone is deliberately added. Verified in production --
+RLS on, zero policies, `anon` refused, and the listing returns nothing without an
+operator identity.
+
+**Still not covered:** true orphans -- guests present on a node with no instance
+row at all, as `iiiuuu` (119) and `coolify` (121) were. The control plane has no
+handle on those, so they need a worker-side reconciliation sweep that will not
+reap templates, the worker's own LXC, or warm-pool VMs. Deliberately not bundled
+into the above.
 
 Separately, `iiiuuu` (119) and `coolify` (121) -- true orphans on podF with no
 instance row at all, predating this work -- were **deleted 2026-09-02** after
