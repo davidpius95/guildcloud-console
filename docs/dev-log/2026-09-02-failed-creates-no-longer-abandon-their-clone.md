@@ -81,11 +81,42 @@ This is worth noting as a product gap in its own right: **an operator has no
 supported way to clean up a tenant's abandoned infrastructure.** Today the only
 routes are "ask the customer" or "bypass RLS".
 
-## Also on podF, unrelated to failed creates
+## Also on podF, unrelated to failed creates -- now removed
 
-`iiiuuu` (119) and `coolify` (121) sit in the `guildcloud-guild-b` pool with **no
-instance row at all** -- true orphans, not abandoned clones. They predate this
+`iiiuuu` (119) and `coolify` (121) sat in the `guildcloud-guild-b` pool with **no
+instance row at all** -- true orphans, not abandoned clones. They predated this
 work (called "two legacy guests" in the 2026-08-29 entry) and nothing in the
-control plane knows about them. They are stopped, so they cost disk rather than
-CPU. Left alone deliberately; someone should confirm what they were before
-deleting them.
+control plane knew about them.
+
+**Deleted 2026-09-02**, on the operator's instruction, after checking what they
+were rather than trusting the name:
+
+| | `iiiuuu` (119) | `coolify` (121) |
+| --- | --- | --- |
+| State | stopped | stopped |
+| Disk | `local-lvm:vm-119-disk-0`, 16G | `local-lvm:vm-121-disk-0`, 16G |
+| Snapshots | none | none |
+| PBS backups | none | none |
+| `instances` / `warm_pool_vms` / `operations` rows | none | none |
+| `cicustom` | shared `local:snippets/tailscale-vendor.yaml` | same |
+
+Both carried the same operator SSH key and a `ctime` matching the podF template
+seeding, so they read as manual test VMs from that session.
+
+Two things were worth checking before pressing delete. The `cicustom` on each
+points at the **shared** `tailscale-vendor.yaml`, not a per-instance
+`guildcloud-N.yaml`, so there was no snippet to clean up and nothing to remove
+that another guest still references -- the mistake that made VMs permanently
+unstartable on 2026-08-29. And `coolify` is an ambiguous name: a *different*,
+**running** `coolify` (123) lives on podA with six days of uptime. Only podF/121
+was destroyed; 123 was re-read afterwards and is untouched.
+
+There were no backups of either, so this was irreversible -- the disks are gone,
+not archived. Their configs are recorded above, which is the only thing that
+survives. Destroy tasks returned `exitstatus: OK`; podF's guest list and
+`local-lvm` content were both re-read afterwards and carry no `vm-119-*` or
+`vm-121-*` volumes. About 32 GiB reclaimed.
+
+podF now holds only `Hjj` (105) and `Hjj-restored` (106) -- the GuildTech
+abandoned clones this account cannot reach -- plus the live `yrt` (107) and
+`Trsy` (110), and the node template.
