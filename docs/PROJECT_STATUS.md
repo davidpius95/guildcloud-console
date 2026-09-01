@@ -195,6 +195,110 @@ G-21) — that one serves a different, self-hosted instance on Guild-A/B
 infrastructure via the Cloudflare Tunnel + Caddy ingress, not Vercel. See
 `docs/dev-log/2026-08-27-custom-domain-and-ingress-route-fix.md`.
 
+## Instance creation: broken 2026-08-29, fixed and verified 2026-09-01
+
+**Working now.** Two full creates through the production console reached
+`ready` in 69s and 63s, on guild-b/podB (VM 108) and guild-b/podC (VM 109),
+each with a real Tailscale device, private hostname and project IP, then torn
+down through the real UI delete flow. Full detail:
+`docs/dev-log/2026-09-01-snippet-share-broke-instance-creation.md`.
+
+It had been failing every create since the 2026-08-29 16:01 snippet cleanup, via
+two stacked faults on the shared `guild-snippets` NFS export. Neither alerted.
+
+1. **Snippet directory unwritable — fixed.** The cleanup deleted and recreated
+   `/srv/guild-snippets/snippets`, which came back `755 root:root`. The site
+   workers are unprivileged LXC containers whose root maps to host uid 100000,
+   so `no_root_squash` never applies to them and they fell to the "other" bits:
+   Guild-A got `EACCES`. The recreation also changed the inode, and Guild-B
+   bind-mounts that subdirectory directly (`mp0`), so it got `ESTALE` instead.
+   Fixed with `chmod 1777` on the directory (matching its already-`777` parent,
+   plus the sticky bit) and a reboot of the Guild-B worker container.
+
+2. **`guild-pbs` root filesystem was 100% full — fixed non-destructively.**
+   Grew scsi0 from 200G to 300G on nodeC's `local-lvm`, then `growpart` +
+   online `resize2fs`. Now `296G / 193G used / 98G free`. No backup deleted.
+
+**Correction to an earlier entry in this file:** it previously said no prune job
+existed and that "retention was a comment, not a mechanism". That was wrong.
+Retention is enforced PVE-side (`guild-a-standard-daily`, `prune-backups
+keep-daily 7`) and PBS garbage collection runs daily with `last-run-state: OK`.
+The datastore holds ~180 GiB on disk against ~6.8 TiB logical (~39x dedup) — the
+space is real backup data, and PBS `keep-daily N` counts the N most recent days
+*that have backups*, not calendar days, so a prune job would have freed almost
+nothing. The disk was undersized, not unmanaged.
+
+**Open:** the snippets share still shares a filesystem with the PBS datastore, so
+a full backup volume is still an instance-creation outage. Moving it was
+attempted and rolled back — changing the underlying filesystem invalidates every
+NFS file handle at once, and recovery needs `umount -f -l` on all 11 nodes across
+both clusters, i.e. host shell access and a maintenance window. The dev-log entry
+carries the exact procedure.
+
+Also still open: failed creates leave orphan VMs behind (`Hjj` 105,
+`Hjj-restored` 106 on podF, from 2026-08-27) — the clone is never rolled back
+when a later stage fails; and there is still no alerting on either the `ESTALE`
+or the full-volume condition.
+
+## Lifecycle operations: restore works, resize is not safe to expose (2026-09-01)
+
+Tested through the production console against real instances, verified on
+Proxmox. Detail: `docs/dev-log/2026-09-01-resize-and-restore-tested.md`.
+
+**Restore works, and correctly rolls the disk back.** Proved at the data level:
+a marker file written *after* the snapshot was gone after the restore, the VM
+rebooted, and the private IP and hostname survived. Snapshot works too (26s, real
+Proxmox snapshot). Restore is correctly disabled until a snapshot exists, names
+the actual snapshot id, warns that current disk state is discarded, and requires
+typing the instance name.
+
+**Two defects, both customer-facing:**
+
+1. **Created instances get the template's 16 GiB disk, not the plan's — FIXED
+   in the working tree 2026-09-01, NOT YET DEPLOYED.**
+   `catalog_plans` advertises 40/80/160/320 GB for std-1/2/4/8; every instance is
+   created with 16 GiB regardless. Only `resizeInstanceResources` applies the
+   plan disk size (`deploy/site-worker/lifecycle.js:80-118`) — `instance.create`
+   has no equivalent step. Confirmed across `e2e-lifecycle` (std-1, 16G),
+   `e2e-01sep-c` (std-2, 16 GiB) and `Trsy` (std-1, 16 GiB); `yrt` has its full
+   160 GiB only because it was resized after creation. **Customers are billed for
+   up to 320 GB and given 16 GB, fleet-wide.** This is the more serious finding.
+   Fixed by `ensureBootDiskSize()` in `deploy/site-worker/lifecycle.js`, called
+   from the cold-clone path before first boot (so cloud-init grows the
+   filesystem) and from the warm-pool build; four new tests, full gate green. See
+   `docs/dev-log/2026-09-01-create-applies-the-plan-disk-size.md`. **Two things
+   remain:** it is not on `main`, and the workers self-deploy from `main`, so
+   production still creates 16 GiB instances until it lands; and the existing
+   fleet is still undersized, with remediation blocked behind defect 2 below
+   because resize is the tool you would use and resize currently strands
+   instances.
+
+2. **A failed resize strands the instance permanently.** Resize applied the
+   config (1->2 vCPU, 2->4 GB, 16->80 GB) then failed rebooting VM 102 with
+   `can't lock file '/var/lock/qemu-server/lock-102.conf' - got timeout`. The
+   reboot retry budget is 4 attempts x 3s ~= 12s
+   (`deploy/site-worker/index.js:1493-1513`), far too short while a 64 GiB grow on
+   guild-a's slow `ceph-vm` still holds the qemu-server lock. The instance went
+   `degraded`, and because `request_instance_resize` and
+   `request_instance_snapshot` both require `state = 'ready'` exactly
+   (`supabase/migrations/20260829110000_add_atomic_instance_intents.sql:224`, `:162`),
+   every retry returns `instance is busy`. Live: resize and snapshot both
+   rejected, restore unavailable (no snapshot possible), **delete the only action
+   left**. Nothing reconciles it — it sat `degraded` 18 minutes. Config, billing
+   and the running VM disagreed three ways throughout.
+
+3. **An unhandled throw kills the whole worker cycle.** The guild-a worker
+   exited 1 with `Operation <id> has no runnable stage and was not finalized`
+   (`index.js:2350`), dropping every other operation in that cycle rather than
+   failing just the one. It recovered on the next timer tick, but on a cluster
+   with real load that is an outage window. Per-operation errors should be caught
+   inside the cycle loop.
+
+**Recommendation:** fix the create disk size and audit existing instances; do not
+leave resize reachable until the reboot is retried against the real lock with a
+budget matched to slow storage, and until `degraded` has a recovery path other
+than deletion.
+
 ## Current initiative: platform hardening and launch (started 2026-08-29)
 
 Plan: `docs/2026-08-29-guildcloud-platform-hardening-and-launch.md` (12 tasks).
