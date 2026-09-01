@@ -114,6 +114,21 @@ fi
 # healthy release: in worker_token mode `--health` fails when the token is
 # missing, malformed, expired, or issued for a different worker, all of which
 # would otherwise surface as a silently idle cluster.
+# --health exercises the real Proxmox API, and since TLS verification was
+# enabled that needs NODE_EXTRA_CA_CERTS from the worker env file. This deploy
+# service has no EnvironmentFile of its own -- only guildcloud-worker.service
+# does -- so without sourcing it here the gate fails on `fetch failed` for a
+# release that is perfectly healthy under systemd, and rolls it straight back.
+# That is what silently froze Guild-B on a 2026-08-29 release: every subsequent
+# deploy staged, failed its own health check, and reverted, with the worker
+# still running and reporting fine.
+WORKER_ENV=${WORKER_ENV:-/etc/guildcloud/worker.env}
+if [ -f "$WORKER_ENV" ]; then
+  set -a
+  . "$WORKER_ENV"
+  set +a
+fi
+
 health_deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SECONDS ))
 health_ok=0
 while [ "$(date +%s)" -lt "$health_deadline" ]; do
