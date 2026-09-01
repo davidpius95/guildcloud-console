@@ -69,17 +69,54 @@ production-proven. Worth revisiting the next time a create genuinely fails.
 
 `yut` (102) was deleted through the console; podF's guest list confirms it gone.
 
-`Hjj` (105) and `Hjj-restored` (106) **could not be removed from this account**.
-They belong to organization `GuildTech`, not the signed-in `GuildCloud HQ`, so
-RLS correctly 404s their console pages -- which is the tenant isolation working
-as designed. Removing them needs a GuildTech member, or a deliberate operator
-action. They were left in place rather than reached around with a direct Proxmox
-delete, because destroying another tenant's guests is not something to do
-sideways.
+`Hjj` (105) and `Hjj-restored` (106) could not be removed through the console:
+they belong to organization `GuildTech`, not the signed-in `GuildCloud HQ`, so
+RLS correctly 404s their pages -- tenant isolation working as designed.
 
-This is worth noting as a product gap in its own right: **an operator has no
-supported way to clean up a tenant's abandoned infrastructure.** Today the only
-routes are "ask the customer" or "bypass RLS".
+That org is owned by a **different account**, `guildtechnology0@gmail.com`, and
+it also owns `Trsy` (110), which is running. Both facts were established and put
+to the operator before anything was touched, rather than treating "a different
+org" as a detail. The operator confirmed they control that account and asked for
+an operator-level cleanup, which is what follows.
+
+**Removed 2026-09-02.** Checked first, same as the legacy pair:
+
+| | `Hjj` (105) | `Hjj-restored` (106) |
+| --- | --- | --- |
+| State | stopped, `failed` | stopped, `failed` |
+| Disk | `local-lvm:vm-105-disk-0`, 16G | `local-lvm:vm-106-disk-0`, 16G |
+| Proxmox snapshots | none | none |
+| PBS backups | **4, newest 2026-09-01** | **4, newest 2026-09-01** |
+| `cicustom` | none | none |
+| Tailnet device | none recorded | none recorded |
+
+Two differences from the 119/121 pair are worth keeping straight. These **do**
+have PBS backups, so the deletion is recoverable by restore rather than final.
+And neither carried a `cicustom` at all -- consistent with both having failed at
+`template_cloud_init`, before a snippet was ever attached -- so again there was
+nothing to clean up there.
+
+Because the console path was unavailable, the guests were destroyed through the
+Proxmox API and the control-plane rows removed directly. **The second half is
+not optional.** Destroying the guests alone would have left two `failed` rows
+naming vmids 105 and 106 on podF -- precisely the stale-vmid hazard the
+compensating action above exists to prevent, and one that gets worse as soon as
+podF reissues those ids. The delete was scoped by instance id *and*
+organization *and* state *and* vmid, so it could not widen to `Trsy`, and it
+removed the dependent `operations` and `capacity_reservations` rows in the same
+transaction: 2 instances, 2 operations, 2 capacity reservations.
+
+Verified afterwards: both destroy tasks returned `exitstatus: OK`; podF's guest
+list and `local-lvm` content carry no `vm-105-*` or `vm-106-*` volumes; `Trsy`
+(110) is still running with five days of uptime and its tailnet device intact.
+About 32 GiB reclaimed, on top of the 32 GiB from the legacy pair.
+
+The product gap this exposed stands regardless, and is the thing worth fixing:
+**an operator has no supported way to clean up a tenant's abandoned
+infrastructure.** Today the only routes are "ask the customer" or "go around RLS
+with service-role access", and the second is only safe if you also remember to
+delete the rows -- which is exactly the kind of two-step nobody remembers under
+pressure.
 
 ## Also on podF, unrelated to failed creates -- now removed
 
