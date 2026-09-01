@@ -381,3 +381,68 @@ test("lock timeouts are transient, other Proxmox errors are not", async () => {
   assert.equal(isTransientRestartError(new Error("VM is locked (disk)")), true);
   assert.equal(isTransientRestartError(new Error("500 no such VM")), false);
 });
+
+// Guild-A again: with the lock waited out, the next thing to break was the
+// qmreboot task outrunning waitForTask's 120s default on slow ceph storage.
+// A task that outran its own wait is not a failed task.
+test("restart survives a reboot task that outruns its own wait", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  let clock = 0;
+  let polls = 0;
+  const observed = await restartInstanceAfterConfigChange({
+    pve: async (_token, method) => {
+      if (method !== "GET") return "UPID:nodeA:0014";
+      polls += 1;
+      // Uptime resets on the second poll: the reboot did happen, late.
+      return polls <= 1 ? { status: "running", uptime: 900 } : { status: "running", uptime: 5 };
+    },
+    waitForTask: async () => {
+      throw new Error("Proxmox task UPID:nodeA:0014 did not finish within 120000ms");
+    },
+    token: "redacted-token",
+    node: "nodeA",
+    vmid: 102,
+    sleep: async (ms) => { clock += ms; },
+    now: () => clock,
+  });
+  assert.deepEqual(observed, { restarted: true, action: "reboot" });
+});
+
+test("restart refuses a reboot that never actually restarted the VM", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  let clock = 0;
+  await assert.rejects(
+    restartInstanceAfterConfigChange({
+      // Running throughout with a climbing uptime: the VM never went down, so
+      // the new cores and memory are not in effect and this is not a success.
+      pve: async (_token, method) =>
+        method === "GET" ? { status: "running", uptime: 900 + clock / 1000 } : "UPID:nodeA:0015",
+      waitForTask: async () => undefined,
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      budgetMs: 60000,
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    }),
+    /did not reach a running state/,
+  );
+});
+
+test("a task Proxmox reports as failed is still terminal", async () => {
+  const { restartInstanceAfterConfigChange } = await import("./lifecycle.js");
+  let clock = 0;
+  await assert.rejects(
+    restartInstanceAfterConfigChange({
+      pve: async (_token, method) => (method === "GET" ? { status: "running", uptime: 10 } : "UPID:nodeA:0016"),
+      waitForTask: async () => { throw new Error("Proxmox task failed: volume not found"); },
+      token: "redacted-token",
+      node: "nodeA",
+      vmid: 102,
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    }),
+    /volume not found/,
+  );
+  assert.equal(clock, 0, "a genuinely failed task must not be retried");
+});
