@@ -6,7 +6,7 @@
 -- it is calling the same functions with the same privileges.
 
 begin;
-select plan(65);
+select plan(72);
 
 insert into public.worker_identities (worker_id, cluster_id, description) values
   ('worker-guild-a', 'guild-a', 'Guild-A site worker'),
@@ -316,6 +316,53 @@ select throws_ok(
   $msg$column 'state' is not worker-writable$msg$,
   'a worker cannot set instance state outside the operation lifecycle'
 );
+
+-- Rolling back a failed create has to *clear* proxmox_vmid, not just set it.
+-- Proxmox reuses vmids, so a failed instance still naming a destroyed guest
+-- would make a later delete destroy whatever now holds that id on that node.
+select lives_ok(
+  $$ select public.worker_update_instance_runtime(
+       '40000000-0000-4000-8000-000000000001', '{"proxmox_vmid": 4242}'::jsonb) $$,
+  'a worker can record the guest it cloned'
+);
+reset role;
+select is(
+  (select proxmox_vmid from public.instances where id = '40000000-0000-4000-8000-000000000001'),
+  4242,
+  'the recorded vmid is what the worker set'
+);
+set local role guildcloud_site_worker;
+select lives_ok(
+  $$ select public.worker_update_instance_runtime(
+       '40000000-0000-4000-8000-000000000001', '{"proxmox_vmid": null}'::jsonb) $$,
+  'a worker can clear the vmid once the guest is destroyed'
+);
+reset role;
+select is(
+  (select proxmox_vmid from public.instances where id = '40000000-0000-4000-8000-000000000001'),
+  null,
+  'an explicit null in the patch clears the column rather than being ignored'
+);
+set local role guildcloud_site_worker;
+-- A key that is absent must still be left alone, or every patch would wipe
+-- every column it did not mention.
+select lives_ok(
+  $$ select public.worker_update_instance_runtime(
+       '40000000-0000-4000-8000-000000000001', '{"proxmox_vmid": 77}'::jsonb) $$,
+  'the vmid can be set again'
+);
+select lives_ok(
+  $$ select public.worker_update_instance_runtime(
+       '40000000-0000-4000-8000-000000000001', '{"private_hostname": "h.example"}'::jsonb) $$,
+  'an unrelated column can be patched on its own'
+);
+reset role;
+select is(
+  (select proxmox_vmid from public.instances where id = '40000000-0000-4000-8000-000000000001'),
+  77,
+  'a column absent from the patch is left alone'
+);
+set local role guildcloud_site_worker;
 
 -- ---------------------------------------------------------------------------
 -- Slice B: scoped listings
