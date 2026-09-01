@@ -240,64 +240,49 @@ Also still open: failed creates leave orphan VMs behind (`Hjj` 105,
 when a later stage fails; and there is still no alerting on either the `ESTALE`
 or the full-volume condition.
 
-## Lifecycle operations: restore works, resize is not safe to expose (2026-09-01)
+## Lifecycle operations: create, resize, snapshot and restore all work (2026-09-01)
 
-Tested through the production console against real instances, verified on
-Proxmox. Detail: `docs/dev-log/2026-09-01-resize-and-restore-tested.md`.
+**Verified end to end on production, on both clusters.** Detail:
+`docs/dev-log/2026-09-01-resize-and-restore-fixed-on-both-clusters.md`.
 
-**Restore works, and correctly rolls the disk back.** Proved at the data level:
-a marker file written *after* the snapshot was gone after the restore, the VM
-rebooted, and the private IP and hostname survived. Snapshot works too (26s, real
-Proxmox snapshot). Restore is correctly disabled until a snapshot exists, names
-the actual snapshot id, warns that current disk state is discarded, and requires
-typing the instance name.
+| | Guild-A (nodeA, ceph-vm) | Guild-B (podB, local-lvm) |
+| --- | --- | --- |
+| Create disk = plan size | 40G | 40G |
+| Resize std-1 -> std-2 | succeeded, 144s | succeeded, 54s |
+| VM actually restarted | yes (uptime reset) | yes (uptime reset) |
+| Restore | succeeded, 192s | succeeded, 100s |
+| Post-snapshot marker gone | yes | yes |
+| Recovery from `degraded` | accepted (was `instance is busy`) | n/a |
 
-**Two defects, both customer-facing:**
+Three defects fixed (live on both clusters as of `97ab7d7`):
 
-1. **Created instances get the template's 16 GiB disk, not the plan's — FIXED
-   in the working tree 2026-09-01, NOT YET DEPLOYED.**
-   `catalog_plans` advertises 40/80/160/320 GB for std-1/2/4/8; every instance is
-   created with 16 GiB regardless. Only `resizeInstanceResources` applies the
-   plan disk size (`deploy/site-worker/lifecycle.js:80-118`) — `instance.create`
-   has no equivalent step. Confirmed across `e2e-lifecycle` (std-1, 16G),
-   `e2e-01sep-c` (std-2, 16 GiB) and `Trsy` (std-1, 16 GiB); `yrt` has its full
-   160 GiB only because it was resized after creation. **Customers are billed for
-   up to 320 GB and given 16 GB, fleet-wide.** This is the more serious finding.
-   Fixed by `ensureBootDiskSize()` in `deploy/site-worker/lifecycle.js`, called
-   from the cold-clone path before first boot (so cloud-init grows the
-   filesystem) and from the warm-pool build; four new tests, full gate green. See
-   `docs/dev-log/2026-09-01-create-applies-the-plan-disk-size.md`. **Two things
-   remain:** it is not on `main`, and the workers self-deploy from `main`, so
-   production still creates 16 GiB instances until it lands; and the existing
-   fleet is still undersized, with remediation blocked behind defect 2 below
-   because resize is the tool you would use and resize currently strands
-   instances.
+1. **Restart raced the qemu-server lock.** Four attempts 3s apart against a lock
+   Guild-A holds for minutes during a disk grow. Now waits the lock out with
+   backoff on a 5-minute budget, failing fast on anything that is not a lock.
+2. **The reboot task outran `waitForTask`'s 120s default**, leaving the instance
+   `degraded` *and powered off*. The restart now gets the real budget, treats
+   "did not finish within" as transient (a reported task failure is still
+   terminal), requires the uptime to have reset before calling a reboot
+   successful, and starts a VM found stopped.
+3. **`degraded` was a one-way door.** All three request RPCs demanded
+   `state = 'ready'` exactly, so retry/snapshot/restore were refused and deletion
+   was the only exit. `20260901120000_allow_recovery_from_degraded.sql` admits
+   `degraded`; provisioning/resizing/deleting are still refused.
 
-2. **A failed resize strands the instance permanently.** Resize applied the
-   config (1->2 vCPU, 2->4 GB, 16->80 GB) then failed rebooting VM 102 with
-   `can't lock file '/var/lock/qemu-server/lock-102.conf' - got timeout`. The
-   reboot retry budget is 4 attempts x 3s ~= 12s
-   (`deploy/site-worker/index.js:1493-1513`), far too short while a 64 GiB grow on
-   guild-a's slow `ceph-vm` still holds the qemu-server lock. The instance went
-   `degraded`, and because `request_instance_resize` and
-   `request_instance_snapshot` both require `state = 'ready'` exactly
-   (`supabase/migrations/20260829110000_add_atomic_instance_intents.sql:224`, `:162`),
-   every retry returns `instance is busy`. Live: resize and snapshot both
-   rejected, restore unavailable (no snapshot possible), **delete the only action
-   left**. Nothing reconciles it — it sat `degraded` 18 minutes. Config, billing
-   and the running VM disagreed three ways throughout.
+**Also found and fixed: Guild-B could not deploy at all.** It had been frozen on
+a 2026-08-29 release, rolling back every attempt with `reason=health`, because
+the deploy gate runs `--health` with no environment and TLS verification needs
+`NODE_EXTRA_CA_CERTS` from the worker env file. The worker kept running and
+reporting healthy throughout, which is why nothing surfaced it. **Guild-B was
+therefore running month-old worker code — anything merged between 2026-08-29 and
+2026-09-01 only ever ran on Guild-A.** `deploy-pull.sh` now sources the env; the
+running copy does not self-update and was patched by hand once.
 
-3. **An unhandled throw kills the whole worker cycle.** The guild-a worker
-   exited 1 with `Operation <id> has no runnable stage and was not finalized`
-   (`index.js:2350`), dropping every other operation in that cycle rather than
-   failing just the one. It recovered on the next timer tick, but on a cluster
-   with real load that is an outage window. Per-operation errors should be caught
-   inside the cycle loop.
-
-**Recommendation:** fix the create disk size and audit existing instances; do not
-leave resize reachable until the reboot is retried against the real lock with a
-budget matched to slow storage, and until `degraded` has a recovery path other
-than deletion.
+**Still open:** nothing verifies post-boot that the guest filesystem matches the
+plan; the existing fleet is still undersized (remediation by resize is now safe
+but not done); an unhandled throw still kills a whole worker cycle; Guild-A's
+ceph-vm write latency is the underlying constraint behind both timeouts; and
+there is no alerting on a worker that cannot deploy.
 
 ## Current initiative: platform hardening and launch (started 2026-08-29)
 

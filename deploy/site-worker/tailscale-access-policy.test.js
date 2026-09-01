@@ -67,3 +67,21 @@ test("reconciliation removes legacy broad grants and preserves unrelated policy"
     { action: "accept", src: [memberTag(developer.id)], dst: [instanceTag(vmA.id)], users: ["autogroup:nonroot"] },
   );
 });
+
+test("teardown treats an already-absent tailnet device as done, not as a failure", async () => {
+  const { isDeviceAlreadyAbsent } = await import("./tailscale-access-policy.js");
+  // The real message that stranded rs-test-b in delete_failed after a restore
+  // rotated its node key, with the VM already destroyed.
+  assert.equal(
+    isDeviceAlreadyAbsent(
+      new Error('Tailscale DELETE device/7912245261457233 -> 404: {"message":"no manageable device matching this ID found"}'),
+    ),
+    true,
+  );
+  // Anything else must still fail the teardown loudly.
+  assert.equal(
+    isDeviceAlreadyAbsent(new Error("Tailscale DELETE device/1 -> 401: unauthorized")),
+    false,
+  );
+  assert.equal(isDeviceAlreadyAbsent(new Error("Tailscale DELETE device/1 -> 500: server error")), false);
+});
