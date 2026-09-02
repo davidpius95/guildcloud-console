@@ -37,7 +37,8 @@ for migration in \
   "$repo_root/supabase/migrations/20260829100000_repair_rls_helper_grants.sql" \
   "$repo_root/supabase/migrations/20260829110000_add_atomic_instance_intents.sql" \
   "$repo_root/supabase/migrations/20260901120000_allow_recovery_from_degraded.sql" \
-  "$repo_root/supabase/migrations/20260902100000_add_platform_operator_cleanup.sql"
+  "$repo_root/supabase/migrations/20260902100000_add_platform_operator_cleanup.sql" \
+  "$repo_root/supabase/migrations/20260902110000_add_orphan_guest_reconciliation.sql"
 do
   [[ -f "$migration" ]] && "${psql_cmd[@]}" < "$migration" >/dev/null
 done
@@ -99,5 +100,5 @@ if [[ "$active_count" != "1" ]]; then
   exit 1
 fi
 
-echo 'PASS: 58 instance-intent pgTAP assertions passed'
+echo 'PASS: 69 instance-intent pgTAP assertions passed'
 echo 'PASS: concurrent lifecycle requests serialize to one active operation'

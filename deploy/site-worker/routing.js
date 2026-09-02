@@ -103,3 +103,37 @@ export function buildCloneParams(template, { newid, name, pool, targetNode }) {
   }
   return params;
 }
+
+// Which guests in a cluster's PVE pool the control plane cannot account for.
+//
+// The boundary is pool membership, not tags. Guild-B's nodes carry plenty of
+// non-GuildCloud workloads, and at least one of them (`wazuh`, vmid 130) carries
+// the `guildcloud` tag while belonging to no pool -- matching on tags would have
+// proposed reaping it. Every GuildCloud clone is created into config.pvePoolId,
+// so the pool is the platform's own record of what it made.
+//
+// Three things are excluded beyond the known set, and each has bitten or would
+// have bitten something real:
+//   * templates -- the per-node ubuntu-2404-guildvm-template-* guests live in
+//     the pool and are what every instance is cloned from;
+//   * anything that is not a QEMU guest -- the worker's own LXC is a pool
+//     member, and reaping it would take the cluster's control loop with it;
+//   * warm-pool VMs, which are real guests with no instance row. They come in
+//     through knownVmids rather than being special-cased here.
+export function findOrphanGuests({ poolMembers, knownVmids }) {
+  const known = new Set((knownVmids ?? []).map(Number));
+  return (poolMembers ?? [])
+    .filter((member) => {
+      if (member?.template === 1 || member?.template === true) return false;
+      if (member?.type && member.type !== "qemu") return false;
+      const vmid = Number(member?.vmid);
+      if (!Number.isFinite(vmid)) return false;
+      return !known.has(vmid);
+    })
+    .map((member) => ({
+      vmid: Number(member.vmid),
+      node: member.node,
+      name: member.name ?? null,
+      status: member.status ?? null,
+    }));
+}
