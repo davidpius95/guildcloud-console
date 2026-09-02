@@ -1137,12 +1137,36 @@ async function reconcileOrphanGuests(supabase, token) {
   if (!controlPlane) return;
   if (!config.pvePoolId) return;
 
-  const [pool, knownVmids] = await Promise.all([
-    pve(token, "GET", `pools/${encodeURIComponent(config.pvePoolId)}`),
+  // Read membership from cluster/resources rather than /pools/{id}: the worker's
+  // Proxmox token has no Pool.Audit, and the pool endpoint 403s. This endpoint
+  // returns only what the token may see and carries the same `pool` field, so it
+  // needs no new Proxmox privilege -- and if the token could ever see less, the
+  // list shrinks rather than growing, which is the safe direction for something
+  // that proposes destruction.
+  const [resources, knownVmids] = await Promise.all([
+    pve(token, "GET", "cluster/resources", { type: "vm" }),
     controlPlane.listKnownVmids(),
   ]);
+  const poolMembers = (Array.isArray(resources) ? resources : [])
+    .filter((member) => member?.pool === config.pvePoolId);
+
+  // An empty pool is not a real state: the per-node templates and this worker's
+  // own container are always members. Seeing none means the read failed or was
+  // filtered, and reporting it would resolve every open finding as though the
+  // guests had gone away.
+  if (poolMembers.length === 0) {
+    console.log(JSON.stringify({
+      ok: false,
+      where: "orphan_sweep_skipped",
+      reason: "no pool members visible; refusing to treat this as an empty pool",
+      cluster_id: config.clusterId,
+      pool: config.pvePoolId,
+    }));
+    return;
+  }
+
   const orphans = findOrphanGuests({
-    poolMembers: pool?.members ?? [],
+    poolMembers,
     knownVmids: knownVmids ?? [],
   });
   await controlPlane.reportOrphanGuests(orphans);
