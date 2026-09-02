@@ -21,7 +21,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadWorkerConfig } from "./config.js";
-import { assertOperationOwnership, buildCloneParams, executionTarget, resolveTemplate } from "./routing.js";
+import {
+  assertOperationOwnership,
+  buildCloneParams,
+  executionTarget,
+  findOrphanGuests,
+  resolveTemplate,
+} from "./routing.js";
 import { collectClusterSnapshot } from "./health-snapshot.js";
 import {
   instanceTag,
@@ -1115,6 +1121,78 @@ async function claimWarmVm(supabase, inst, instanceId) {
 // Keeps the pool topped up, and promotes building -> warm once a pool VM has
 // actually joined the tailnet. Runs once per worker cycle, does at most one
 // build per cycle so a cold start cannot stampede the cluster.
+// Report guests in this cluster's PVE pool that the control plane cannot account
+// for, and destroy the ones an operator has approved.
+//
+// Detection and destruction are separate on purpose. `iiiuuu` (119) and
+// `coolify` (121) sat on podF for weeks because nothing looked; but a sweep that
+// both looks and deletes turns a single false positive into an unrecoverable
+// one, on a population that includes the platform's own templates and this very
+// container. So the worker proposes, an operator approves, and only then does
+// the worker act.
+//
+// Boundary and exclusions live in findOrphanGuests() in routing.js, where they
+// are unit-tested.
+async function reconcileOrphanGuests(supabase, token) {
+  if (!controlPlane) return;
+  if (!config.pvePoolId) return;
+
+  const [pool, knownVmids] = await Promise.all([
+    pve(token, "GET", `pools/${encodeURIComponent(config.pvePoolId)}`),
+    controlPlane.listKnownVmids(),
+  ]);
+  const orphans = findOrphanGuests({
+    poolMembers: pool?.members ?? [],
+    knownVmids: knownVmids ?? [],
+  });
+  await controlPlane.reportOrphanGuests(orphans);
+  if (orphans.length) {
+    console.log(JSON.stringify({
+      ok: true,
+      where: "orphan_guests_reported",
+      cluster_id: config.clusterId,
+      count: orphans.length,
+      vmids: orphans.map((o) => o.vmid),
+    }));
+  }
+
+  // Only findings an operator explicitly approved, and the control plane only
+  // ever returns this cluster's own.
+  const approved = await controlPlane.listApprovedReaps();
+  for (const finding of approved ?? []) {
+    try {
+      const result = await destroyGuest({
+        pve,
+        waitForTask,
+        token,
+        node: finding.node,
+        vmid: finding.vmid,
+        sleep,
+      });
+      await controlPlane.markOrphanReaped(finding.id);
+      console.log(JSON.stringify({
+        ok: true,
+        where: "orphan_guest_reaped",
+        finding_id: finding.id,
+        vmid: finding.vmid,
+        node: finding.node,
+        name: finding.name,
+        ...result,
+      }));
+    } catch (e) {
+      // One guest that will not die must not stop the others, and must not
+      // silently mark itself done.
+      console.log(JSON.stringify({
+        ok: false,
+        where: "orphan_guest_reap",
+        finding_id: finding.id,
+        vmid: finding.vmid,
+        error: String(e),
+      }));
+    }
+  }
+}
+
 async function maintainWarmPool(supabase, token) {
   if (!config.warmPoolEnabled) return;
   const warmPoolNode = config.warmPool.node;
@@ -2458,6 +2536,14 @@ async function run() {
     }
   } catch (e) {
     console.log(JSON.stringify({ ok: false, stage: "maintain_warm_pool", error: String(e) }));
+  }
+
+  // After the warm pool is refilled, so a VM created moments ago is already
+  // recorded and cannot be mistaken for something nobody owns.
+  try {
+    await reconcileOrphanGuests(supabase, await proxmoxToken(supabase));
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, stage: "reconcile_orphan_guests", error: String(e) }));
   }
 
   let idlePollLogged = false;

@@ -164,3 +164,73 @@ test("buildCloneParams omits target when a linked clone stays on the template's 
   assert.equal("target" in params, false);
   assert.equal("storage" in params, false);
 });
+
+test("the orphan sweep flags only pool guests the control plane cannot account for", async () => {
+  const { findOrphanGuests } = await import("./routing.js");
+  const orphans = findOrphanGuests({
+    poolMembers: [
+      { type: "qemu", vmid: 107, node: "podF", name: "yrt", status: "running", template: 0 },
+      { type: "qemu", vmid: 110, node: "podF", name: "Trsy", status: "running", template: 0 },
+      { type: "qemu", vmid: 119, node: "podF", name: "iiiuuu", status: "stopped", template: 0 },
+      { type: "qemu", vmid: 121, node: "podF", name: "coolify", status: "stopped", template: 0 },
+    ],
+    knownVmids: [107, 110],
+  });
+  assert.deepEqual(orphans, [
+    { vmid: 119, node: "podF", name: "iiiuuu", status: "stopped" },
+    { vmid: 121, node: "podF", name: "coolify", status: "stopped" },
+  ]);
+});
+
+test("the orphan sweep never proposes a template", async () => {
+  const { findOrphanGuests } = await import("./routing.js");
+  // Every instance is cloned from these; they are pool members and have no
+  // instance row, so nothing but the template flag keeps them safe.
+  assert.deepEqual(
+    findOrphanGuests({
+      poolMembers: [
+        { type: "qemu", vmid: 9166, node: "podF", name: "ubuntu-2404-guildvm-template-podF", template: 1 },
+        { type: "qemu", vmid: 9163, node: "podC", name: "ubuntu-2404-guildvm-template-podC", template: true },
+      ],
+      knownVmids: [],
+    }),
+    [],
+  );
+});
+
+test("the orphan sweep never proposes the worker's own container", async () => {
+  const { findOrphanGuests } = await import("./routing.js");
+  // lxc/500 is a pool member with no instance row. Reaping it would destroy the
+  // cluster's control loop, including whatever was doing the reaping.
+  assert.deepEqual(
+    findOrphanGuests({
+      poolMembers: [
+        { type: "lxc", vmid: 500, node: "podD", name: "guildcloud-site-worker-guild-b", template: 0 },
+      ],
+      knownVmids: [],
+    }),
+    [],
+  );
+});
+
+test("the orphan sweep treats warm-pool guests as accounted for", async () => {
+  const { findOrphanGuests } = await import("./routing.js");
+  // Warm-pool VMs are real guests with no instance row. They reach the sweep
+  // through knownVmids; without them every pass would propose reaping the pool.
+  assert.deepEqual(
+    findOrphanGuests({
+      poolMembers: [{ type: "qemu", vmid: 140, node: "podB", name: "pool-140", template: 0 }],
+      knownVmids: [140],
+    }),
+    [],
+  );
+});
+
+test("the orphan sweep ignores a pool member with no usable vmid", async () => {
+  const { findOrphanGuests } = await import("./routing.js");
+  assert.deepEqual(
+    findOrphanGuests({ poolMembers: [{ type: "qemu", node: "podF" }], knownVmids: [] }),
+    [],
+  );
+  assert.deepEqual(findOrphanGuests({}), []);
+});

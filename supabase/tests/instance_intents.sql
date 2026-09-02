@@ -1,5 +1,5 @@
 begin;
-select plan(58);
+select plan(69);
 
 select has_function('public', 'request_instance_create', array['uuid','uuid','uuid','text','text','text','text','boolean','text']);
 select has_function('public', 'request_instance_snapshot', array['uuid','text','text']);
@@ -314,6 +314,88 @@ select is(
   (select count(*) from pg_policies where schemaname = 'public' and tablename = 'platform_operators'),
   0::bigint,
   'and carries no policy, so no client can read or widen it'
+);
+
+-- ---------------------------------------------------------------------------
+-- Orphan findings: what an operator may and may not do with them
+-- ---------------------------------------------------------------------------
+reset role;
+insert into public.infrastructure_findings
+  (id, cluster_id, kind, proxmox_node, proxmox_vmid, guest_name, guest_status, observations)
+values
+  ('80000000-0000-4000-8000-00000000000a', 'guild-b', 'orphan_guest', 'podF', 119,
+   'iiiuuu', 'stopped', 3),
+  ('80000000-0000-4000-8000-00000000000b', 'guild-b', 'orphan_guest', 'podF', 121,
+   'coolify', 'stopped', 1);
+
+-- A non-operator must not even learn that these exist.
+set local role authenticated;
+set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000001';
+select is(
+  (select count(*) from public.operator_list_orphan_guests()), 0::bigint,
+  'a non-operator sees no orphan findings'
+);
+select throws_ok(
+  $$select public.operator_approve_orphan_reap('80000000-0000-4000-8000-00000000000a')$$,
+  '42501',
+  'not authorized',
+  'a non-operator cannot approve a guest for destruction'
+);
+
+set local role authenticated;
+set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000009';
+select is(
+  (select count(*) from public.operator_list_orphan_guests()), 2::bigint,
+  'an operator sees the open orphan findings'
+);
+
+-- The single-observation guard: a guest seen once may simply have been
+-- mid-provision when the sweep ran, and there is no undo for reaping it.
+select throws_ok(
+  $$select public.operator_approve_orphan_reap('80000000-0000-4000-8000-00000000000b')$$,
+  '22023',
+  'finding has been observed only once; wait for another sweep to confirm it persists',
+  'a guest seen in a single sweep cannot be approved yet'
+);
+select lives_ok(
+  $$select public.operator_approve_orphan_reap('80000000-0000-4000-8000-00000000000a')$$,
+  'a guest that has persisted across sweeps can be approved'
+);
+
+-- Dismissing is how a finding is closed without destroying anything, and it
+-- must say why -- a silent dismissal is indistinguishable from an oversight.
+select throws_ok(
+  $$select public.operator_dismiss_orphan_guest('80000000-0000-4000-8000-00000000000b', '  ')$$,
+  '22023',
+  'a note is required when dismissing a finding',
+  'dismissing a finding requires a reason'
+);
+select lives_ok(
+  $$select public.operator_dismiss_orphan_guest(
+      '80000000-0000-4000-8000-00000000000b', 'legacy build host, kept deliberately')$$,
+  'an operator can dismiss a finding with a reason'
+);
+select is(
+  (select count(*) from public.operator_list_orphan_guests()), 1::bigint,
+  'a dismissed finding leaves the operator listing'
+);
+
+reset role;
+select is(
+  (select approved_by from public.infrastructure_findings
+   where id = '80000000-0000-4000-8000-00000000000a'),
+  '20000000-0000-4000-8000-000000000009'::uuid,
+  'the approval records which operator authorised it'
+);
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.infrastructure_findings'::regclass),
+  true,
+  'infrastructure_findings has row level security enabled'
+);
+select is(
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'infrastructure_findings'),
+  0::bigint,
+  'and carries no policy, so findings are reachable only through the functions'
 );
 
 select ok(has_function_privilege('authenticated', 'public.is_org_member(uuid)', 'EXECUTE'), 'authenticated can execute the RLS membership helper');

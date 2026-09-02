@@ -12,6 +12,11 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'service_role') then
     create role service_role nologin bypassrls;
   end if;
+  -- Needed only so migrations that grant to it can be applied here; nothing in
+  -- this suite assumes the role, and the worker boundary has its own suite.
+  if not exists (select 1 from pg_roles where rolname = 'guildcloud_site_worker') then
+    create role guildcloud_site_worker nologin;
+  end if;
 end
 $$;
 
@@ -152,6 +157,37 @@ create table public.audit_log (
   metadata jsonb not null default '{}',
   created_at timestamptz not null default now()
 );
+
+-- The worker boundary has its own suite (cluster_worker_boundary.sql) with the
+-- real role, identities table and cluster resolution. These two exist only so
+-- that 20260902110000 -- which defines the worker and operator halves of orphan
+-- reconciliation in one migration -- can be applied here to test the operator
+-- half. Resolving to null makes every worker function in that migration refuse,
+-- which is correct: nothing in this suite acts as a worker.
+create table if not exists public.warm_pool_vms (
+  id uuid primary key default gen_random_uuid(),
+  cluster_id text not null,
+  site_id text not null,
+  catalog_image_id text not null,
+  catalog_plan_id text not null,
+  proxmox_vmid integer,
+  proxmox_node text,
+  tailscale_hostname text,
+  tailscale_device_id text,
+  private_ip text,
+  state text not null default 'building',
+  claimed_by_instance_id uuid references public.instances(id),
+  failure_reason text,
+  created_at timestamptz not null default now(),
+  warmed_at timestamptz,
+  claimed_at timestamptz
+);
+
+create or replace function public.current_worker_cluster()
+returns text
+language sql
+stable
+as $$ select null::text $$;
 
 create or replace function public.is_org_member(p_org_id uuid)
 returns boolean

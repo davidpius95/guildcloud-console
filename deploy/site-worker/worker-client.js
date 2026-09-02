@@ -305,6 +305,22 @@ export class WorkerControlPlane {
   // False means "valid worker, not the housekeeper". An unknown or revoked
   // worker raises rather than returning false, so this cannot be used to sidestep
   // a revocation.
+  listKnownVmids() {
+    return this.#rpc("worker_list_known_vmids", {});
+  }
+
+  reportOrphanGuests(guests) {
+    return this.#rpc("worker_report_orphan_guests", { p_guests: guests });
+  }
+
+  listApprovedReaps() {
+    return this.#rpc("worker_list_approved_reaps", {});
+  }
+
+  markOrphanReaped(findingId) {
+    return this.#rpc("worker_mark_orphan_reaped", { p_finding_id: findingId });
+  }
+
   holdsTailnetHousekeeping() {
     return this.#rpc("worker_holds_tailnet_housekeeping");
   }

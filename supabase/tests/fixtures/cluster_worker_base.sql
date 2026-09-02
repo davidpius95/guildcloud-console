@@ -129,24 +129,9 @@ create table public.access_grants (
   resource_id uuid
 );
 
-create table public.warm_pool_vms (
-  id uuid primary key default gen_random_uuid(),
-  cluster_id text not null,
-  site_id text not null,
-  catalog_image_id text not null,
-  catalog_plan_id text not null,
-  proxmox_vmid integer,
-  proxmox_node text,
-  tailscale_hostname text,
-  tailscale_device_id text,
-  private_ip text,
-  state text not null default 'building',
-  claimed_by_instance_id uuid references public.instances(id),
-  failure_reason text,
-  created_at timestamptz not null default now(),
-  warmed_at timestamptz,
-  claimed_at timestamptz
-);
+-- warm_pool_vms now lives in instance_intents_base.sql, which this fixture
+-- layers on: the orphan sweep's known-vmid query reads it, so it has to exist
+-- for the base suite too and defining it twice made the two collide.
 
 create table public.catalog_image_cluster_node_templates (
   catalog_image_id text not null,

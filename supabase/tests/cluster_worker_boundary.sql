@@ -6,7 +6,7 @@
 -- it is calling the same functions with the same privileges.
 
 begin;
-select plan(72);
+select plan(81);
 
 insert into public.worker_identities (worker_id, cluster_id, description) values
   ('worker-guild-a', 'guild-a', 'Guild-A site worker'),
@@ -363,6 +363,86 @@ select is(
   'a column absent from the patch is left alone'
 );
 set local role guildcloud_site_worker;
+
+-- ---------------------------------------------------------------------------
+-- Orphan reconciliation
+-- ---------------------------------------------------------------------------
+-- The sweep exists because nothing in the platform looked: two guests sat on
+-- podF for weeks with no instance row. What matters here is that a worker can
+-- only report and only for its own cluster, and that destruction needs a
+-- separate, human approval.
+
+-- guild-a's warm-pool VM is 900. A warm-pool VM has no instance row, so a sweep
+-- that consulted only `instances` would propose reaping the warm pool on every
+-- pass. The instance's vmid is read rather than hardcoded because the runtime
+-- patch assertions above deliberately rewrite it.
+reset role;
+select proxmox_vmid as guild_a_vmid from public.instances
+where id = '40000000-0000-4000-8000-000000000001' \gset
+set local role guildcloud_site_worker;
+select is(
+  (select public.worker_list_known_vmids() @> array[:guild_a_vmid, 900]),
+  true,
+  'the known set covers both instances and warm-pool guests'
+);
+select is(
+  (select 901 = any(public.worker_list_known_vmids())),
+  false,
+  'and does not leak the other cluster''s warm-pool guest'
+);
+
+select is(
+  (select public.worker_report_orphan_guests(
+     '[{"vmid": 119, "node": "nodeA", "name": "iiiuuu", "status": "stopped"},
+       {"vmid": 121, "node": "nodeA", "name": "coolify", "status": "stopped"}]'::jsonb)),
+  2,
+  'a worker can report the guests its sweep could not account for'
+);
+reset role;
+select is(
+  (select count(*) from public.infrastructure_findings
+   where cluster_id = 'guild-a' and resolved_at is null),
+  2::bigint,
+  'both findings are open'
+);
+set local role guildcloud_site_worker;
+
+-- A second sweep that still sees only one of them closes the other out, so a
+-- guest that has since been removed does not sit on an operator's list forever.
+select is(
+  (select public.worker_report_orphan_guests(
+     '[{"vmid": 119, "node": "nodeA", "name": "iiiuuu", "status": "stopped"}]'::jsonb)),
+  1,
+  'a later sweep reports what it still sees'
+);
+reset role;
+select is(
+  (select observations from public.infrastructure_findings where proxmox_vmid = 119),
+  2,
+  'a guest seen again has its observation count raised'
+);
+select is(
+  (select resolved_at is not null from public.infrastructure_findings where proxmox_vmid = 121),
+  true,
+  'a guest that has gone away is resolved rather than left open'
+);
+set local role guildcloud_site_worker;
+
+-- Destruction is not something a worker decides.
+select is(
+  (select public.worker_list_approved_reaps()),
+  '[]'::jsonb,
+  'nothing is available to reap until an operator approves it'
+);
+reset role;
+select id as unapproved_finding_id from public.infrastructure_findings where proxmox_vmid = 119 \gset
+set local role guildcloud_site_worker;
+select throws_ok(
+  format($$select public.worker_mark_orphan_reaped(%L)$$, :'unapproved_finding_id'),
+  '42501',
+  'finding is not approved for this cluster',
+  'a worker cannot mark an unapproved finding reaped'
+);
 
 -- ---------------------------------------------------------------------------
 -- Slice B: scoped listings

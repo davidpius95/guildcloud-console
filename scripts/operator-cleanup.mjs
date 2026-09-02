@@ -28,6 +28,12 @@
 //   Skip the prompt (for a non-interactive run you have already reasoned about):
 //     node scripts/operator-cleanup.mjs delete <instance-id> --yes
 //
+//   Guests the control plane cannot account for at all -- reported by each
+//   cluster's worker, which proposes but never reaps on its own:
+//     node scripts/operator-cleanup.mjs orphans
+//     node scripts/operator-cleanup.mjs orphans approve <finding-id>
+//     node scripts/operator-cleanup.mjs orphans dismiss <finding-id> "why"
+//
 // Environment:
 //   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY  (as the app uses)
 //   GUILDCLOUD_OPERATOR_EMAIL, GUILDCLOUD_OPERATOR_PASSWORD
@@ -160,8 +166,80 @@ async function main() {
     return;
   }
 
+  if (command === "orphans") {
+    const client = await signIn();
+    const [sub, ...subArgs] = positional;
+
+    if (!sub) {
+      const { data, error } = await client.rpc("operator_list_orphan_guests");
+      if (error) fail(`listing failed: ${error.message}`);
+      const rows = data ?? [];
+      if (rows.length === 0) {
+        console.log("No unaccounted-for guests. Every guest in each cluster's pool maps to something the control plane knows about.");
+        return;
+      }
+      console.log(`${rows.length} guest(s) the control plane cannot account for:\n`);
+      for (const row of rows) {
+        console.log(`  ${row.finding_id}`);
+        console.log(`    ${row.guest_name ?? "(unnamed)"}  vmid ${row.proxmox_vmid}  [${row.guest_status ?? "unknown"}]`);
+        console.log(`    ${row.cluster_id}/${row.proxmox_node}`);
+        console.log(`    seen in ${row.observations} sweep(s), first ${new Date(row.first_seen_at).toISOString()}`);
+        console.log(`    ${row.approved ? "APPROVED for reap - the worker will destroy it on its next cycle" : "not approved"}\n`);
+      }
+      console.log("These are guests, not instances: the control plane has no record of them,");
+      console.log("so nothing here can tell you what they were for. Identify one before approving it.");
+      return;
+    }
+
+    const findingId = subArgs[0];
+    if (!findingId) fail(`usage: operator-cleanup.mjs orphans ${sub} <finding-id>`);
+
+    if (sub === "dismiss") {
+      const note = subArgs.slice(1).join(" ");
+      if (!note) fail('a note is required: orphans dismiss <finding-id> "why this is expected"');
+      const { error } = await client.rpc("operator_dismiss_orphan_guest", {
+        p_finding_id: findingId,
+        p_note: note,
+      });
+      if (error) fail(`dismiss failed: ${error.message}`);
+      console.log("Dismissed. The sweep will not raise this guest again.");
+      return;
+    }
+
+    if (sub === "approve") {
+      const { data, error } = await client.rpc("operator_list_orphan_guests");
+      if (error) fail(`listing failed: ${error.message}`);
+      const target = (data ?? []).find((row) => row.finding_id === findingId);
+      if (!target) fail(`${findingId} is not an open finding. Run \`orphans\` first.`);
+
+      console.log("About to authorise destruction of a guest the control plane knows nothing about:\n");
+      console.log(`  ${target.guest_name ?? "(unnamed)"}  vmid ${target.proxmox_vmid}  [${target.guest_status ?? "unknown"}]`);
+      console.log(`  ${target.cluster_id}/${target.proxmox_node}`);
+      console.log(`  seen in ${target.observations} sweep(s)\n`);
+      console.log("There is no instance row, so there is no record of who owned it or what");
+      console.log("it did. If it holds anything you need, take a backup first -- this cannot");
+      console.log(`be undone. ${target.cluster_id}'s worker performs the destroy on its next cycle.\n`);
+
+      if (!(await confirm(`Approve reaping vmid ${target.proxmox_vmid} on ${target.proxmox_node}?`))) {
+        console.log("Not approved. Nothing will be destroyed.");
+        return;
+      }
+      const { error: approveError } = await client.rpc("operator_approve_orphan_reap", {
+        p_finding_id: findingId,
+      });
+      if (approveError) fail(`approve failed: ${approveError.message}`);
+      console.log("Approved. The worker destroys it on its next cycle; re-run `orphans` to confirm it clears.");
+      return;
+    }
+
+    fail(`unknown orphans subcommand: ${sub}`);
+  }
+
   console.error("usage: operator-cleanup.mjs list");
   console.error("       operator-cleanup.mjs delete <instance-id> [--yes]");
+  console.error("       operator-cleanup.mjs orphans");
+  console.error("       operator-cleanup.mjs orphans approve <finding-id> [--yes]");
+  console.error("       operator-cleanup.mjs orphans dismiss <finding-id> \"why\"");
   process.exit(1);
 }
 
