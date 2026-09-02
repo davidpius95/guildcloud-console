@@ -305,11 +305,35 @@ nothing changes until someone is deliberately added. Verified in production --
 RLS on, zero policies, `anon` refused, and the listing returns nothing without an
 operator identity.
 
-**Still not covered:** true orphans -- guests present on a node with no instance
-row at all, as `iiiuuu` (119) and `coolify` (121) were. The control plane has no
-handle on those, so they need a worker-side reconciliation sweep that will not
-reap templates, the worker's own LXC, or warm-pool VMs. Deliberately not bundled
-into the above.
+**True orphans are now swept too (2026-09-02).** Detail:
+`docs/dev-log/2026-09-02-orphan-reconciliation-sweep.md`. Each cluster's worker
+sweeps its own PVE pool, reports guests it cannot account for, and destroys only
+what an operator approved. Pool membership is the boundary rather than tags --
+`wazuh` (130) carries the `guildcloud` tag while belonging to no pool, so tags
+would have proposed reaping it. Templates, the worker's own LXC and warm-pool
+VMs are excluded, each for a reason that would otherwise have bitten.
+
+Verified end to end on production with a disposable probe: detected, observation
+count rising across sweeps, approved, destroyed by the worker, finding closed,
+and nothing else ever flagged.
+
+Getting there needed a Proxmox fix worth knowing: the worker holds `PVEAuditor`
+on `/`, which contains `Pool.Audit`, but **a more specific ACL path in Proxmox
+overrides rather than unions**, so the `GuildCloudSiteWorker` entry on
+`/pool/guildcloud-<cluster>` masked it entirely. `Pool.Audit` was added to that
+role on both clusters and to `docs/REPLICATION.md`.
+
+**The sweep's first working pass found a real orphan nobody had planted:**
+`pool-100` (vmid 100, guild-a/nodeD, **running**) -- an orphaned warm-pool VM
+with no `warm_pool_vms` row, holding 2 vCPU and 2 GB with nothing pointing at
+it. Left as an open finding on purpose: it is running, and the design is that a
+human decides. **It is the first thing the platform has found on its own rather
+than by someone noticing.**
+
+**Still open:** `platform_operators` is empty, so approving through the supported
+path needs an operator row added out of band; there is no console surface
+(deliberate); and orphaned tailnet devices, snippets and capacity reservations
+are the same class of problem and are not swept.
 
 Separately, `iiiuuu` (119) and `coolify` (121) -- true orphans on podF with no
 instance row at all, predating this work -- were **deleted 2026-09-02** after

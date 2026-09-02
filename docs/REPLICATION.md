@@ -265,9 +265,16 @@ This is the exact role production uses:
 ```bash
 pveum role add GuildCloudSiteWorker --privs \
 "Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,\
-SDN.Use,Sys.Audit,VM.Allocate,VM.Audit,VM.Clone,VM.Config.CPU,VM.Config.Cloudinit,\
+Pool.Audit,SDN.Use,Sys.Audit,VM.Allocate,VM.Audit,VM.Clone,VM.Config.CPU,VM.Config.Cloudinit,\
 VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,\
 VM.GuestAgent.Audit,VM.GuestAgent.Unrestricted,VM.PowerMgmt,VM.Snapshot,VM.Snapshot.Rollback"
+
+# Pool.Audit is easy to think redundant and is not. The worker also holds
+# PVEAuditor on `/`, which includes it -- but a more specific ACL path in
+# Proxmox *overrides* rather than unions, so the entry on
+# /pool/guildcloud-<cluster> masks the inherited auditor role entirely. Without
+# Pool.Audit in this role the orphan reconciliation sweep cannot read its own
+# pool's membership and fails with 403 every cycle.
 
 pveum user add siteworker-<cluster>@pve
 pveum user token add siteworker-<cluster>@pve site-worker --privsep 0
