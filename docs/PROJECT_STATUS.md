@@ -115,6 +115,8 @@ Customer browser
        cluster_id, drives the real Proxmox API + Tailscale API
   -> Proxmox VE (Guild-A: 5 nodes, nodeA-E; Guild-B: 6 nodes, podA-F)
        real customer VMs, cloned from tested templates
+       (podG exists and is on the tailnet, but is NOT in the Guild-B
+        cluster — see "podG" below)
   -> Tailscale (private access — no public IP on any instance)
 ```
 
@@ -228,12 +230,79 @@ space is real backup data, and PBS `keep-daily N` counts the N most recent days
 *that have backups*, not calendar days, so a prune job would have freed almost
 nothing. The disk was undersized, not unmanaged.
 
-**Open:** the snippets share still shares a filesystem with the PBS datastore, so
-a full backup volume is still an instance-creation outage. Moving it was
-attempted and rolled back — changing the underlying filesystem invalidates every
-NFS file handle at once, and recovery needs `umount -f -l` on all 11 nodes across
-both clusters, i.e. host shell access and a maintenance window. The dev-log entry
-carries the exact procedure.
+**~~Open~~ — closed 2026-09-03, after it recurred.** The snippets share sharing
+a filesystem with the PBS datastore took provisioning down again two days later,
+exactly as predicted here. Full detail:
+`docs/dev-log/2026-09-03-snippets-share-decoupled-from-the-backup-datastore.md`.
+
+## Instance creation: broke again 2026-09-03, decoupled and verified
+
+**Working now.** `verify-fix-probe` reached `ready` on guild-b/podC (VM 105)
+with a real Tailscale device (`100.93.146.105`, 7 ms ping), then deleted
+cleanly.
+
+Two customer creates had failed at `template_cloud_init` with `ENOSPC: no space
+left on device, close` — `guild-pbs` root was back to `296G / 289G / 0 free`,
+with the PBS chunk store at 285G of it. Nothing alerted, again.
+
+1. **Space reclaimed without deleting a single backup.** GC was healthy but
+   holding 94 GB behind its 24-hour `gc-atime-cutoff` grace. Lowering the cutoff
+   temporarily (safety check left on), re-running GC, then restoring the default
+   removed 25,974 unreferenced chunks: 100% → 70% full.
+
+2. **The snippets share now has its own filesystem — the 2026-09-01 maintenance,
+   completed.** `/srv/guild-snippets` is a dedicated 4 GB ext4 loopback volume
+   with `fsid=101` pinned on the export, `777` on the share root and `1777` on
+   `snippets/`, persisted in `/etc/fstab`. All 11 nodes were remounted and
+   write-probed, and both worker LXCs restarted to re-establish their bind
+   mounts. A full backup volume can no longer block instance creation.
+
+**The prune diagnosis was reached — and rejected — a second time.** No group
+holds more than 8 snapshots, so a PBS prune job remains close to a no-op. A
+14-day prune had been approved before this was established and was deliberately
+**not** carried out; no backups were deleted.
+
+**Console fixes shipped with it:** the shared-storage admission gate itself came
+from PR #78 (`20260903100000_admission_checks_snippets_storage.sql`) — an
+apparent "it exists only in the database" drift finding was just a stale working
+branch, so fetch before concluding that. Its refusal message did blame the wrong
+cause, though: it reports percentage full even when the binding constraint is
+the `>= 1 GiB free` floor, so a freshly-emptied volume read as `is 0.0% full`.
+`20260903120000_name_which_shared_storage_limit_was_hit.sql` splits that into two
+messages and changes nothing else. New
+`deploy/site-worker/failure-messages.js` stops raw errnos like `ENOSPC` reaching
+customers while keeping them on the stage for operators — **not live until
+`main` is pushed**, since `deploy-pull.sh` deploys from there.
+
+**Still open:** no alerting on either a full backup volume or `ESTALE` — this
+outage has now happened twice in three days and was found by looking both times.
+`guild-templates` is still on the PBS filesystem (read-mostly, so it breaks
+template *builds*, not clones).
+
+## podG: on the tailnet, deliberately not in the cluster (2026-09-03)
+
+A seventh Proxmox host, `podG` (`192.168.8.198`), joined the tailnet as `podg` /
+`100.79.95.124` with `tag:guildcloud-mgmt` and Tailscale SSH, matching podF.
+Reachable at `https://podg.tail345216.ts.net:8006`.
+
+It had been left half-configured: pointed at the **enterprise** Proxmox and Ceph
+repos with no subscription, so `apt update` returned `401 Unauthorized` and 145
+updates had never applied; and the Tailscale apt repo was present while the
+package had never been installed. Switched to `pve-no-subscription` +
+`ceph-no-subscription` (enterprise files `Enabled: false`, backup at
+`/root/sources.list.d.bak.2026-09-03`), upgraded 9.2.2 → **9.2.11**, kernel
+7.0.2-6 → **7.0.14-15**, rebooted. Wazuh agent installed to match podD/podF,
+enrolled as agent `038` against `192.168.8.117:1514`.
+
+**podG is standalone.** podA-podF form the quorate 6-node `Guild-B` cluster;
+podG is not a member and holds no guests. Version parity with the cluster is in
+place, so it can join whenever that call is made. Note the capitalised `G` is
+the house convention, not a typo — podD and podF are capitalised too, and
+Tailscale lowercases it for MagicDNS.
+
+**Still open:** the cluster-join decision; and `PermitRootLogin yes` +
+`PasswordAuthentication yes` with a shared root password, which matches podF so
+is fleet-wide rather than podG-specific.
 
 Also still open: failed creates leave orphan VMs behind (`Hjj` 105,
 `Hjj-restored` 106 on podF, from 2026-08-27) — the clone is never rolled back
