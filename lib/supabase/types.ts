@@ -738,6 +738,14 @@ export type Database = {
           message: string
         }[]
       }
+      describe_instance_enrollment_link: {
+        Args: { p_token: string }
+        Returns: {
+          instance_name: string
+          expires_at: string
+          instance_ready: boolean
+        }[]
+      }
       get_invite_by_token: {
         Args: { p_token: string }
         Returns: {
