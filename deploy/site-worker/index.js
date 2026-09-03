@@ -46,6 +46,7 @@ import {
 } from "./lifecycle.js";
 import { WorkerControlPlane, assertWorkerToken, workerTokenLifetime } from "./worker-client.js";
 import { healthFailures } from "./health-failures.js";
+import { describeFailure } from "./failure-messages.js";
 
 // Set once the client exists. In worker_token mode every control-plane call
 // that has a worker_* RPC goes through this; in legacy service_role mode it
@@ -2294,6 +2295,12 @@ async function processOneStage(supabase, operation) {
     return { status: "advanced" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Two audiences, two strings. The stage keeps the raw error because that is
+    // what an operator debugs from; the operation's failure_reason is what the
+    // customer reads in the console, so it gets the explained form. Writing the
+    // raw errno to both is how "ENOSPC: no space left on device, close" ended up
+    // being the entire explanation for two failed creates on 2026-09-03.
+    const customerMessage = describeFailure(err);
     await markStage(supabase, next, { status: "failed", finished_at: new Date().toISOString(), error: message });
 
     // Compensating action, before the operation is finalized: a create that
@@ -2324,7 +2331,7 @@ async function processOneStage(supabase, operation) {
     const lifecycleKinds = new Set(["instance.snapshot", "instance.resize", "instance.restore_replace"]);
     if (controlPlane) {
       try {
-        await controlPlane.finishOperation(operation.id, "failed", null, message);
+        await controlPlane.finishOperation(operation.id, "failed", null, customerMessage);
       } catch (finishError) {
         console.log(JSON.stringify({ ok: false, where: "finish_instance_operation", error: String(finishError) }));
       }
@@ -2333,12 +2340,12 @@ async function processOneStage(supabase, operation) {
         p_operation_id: operation.id,
         p_outcome: "failed",
         p_observed: null,
-        p_error: message,
+        p_error: customerMessage,
       });
       if (error) console.log(JSON.stringify({ ok: false, where: "finish_instance_operation", error: error.message }));
     } else {
       await supabase.from("capacity_reservations").update({ state: "released" }).eq("operation_id", operation.id);
-      await supabase.from("operations").update({ state: "failed", failure_reason: message, ended_at: new Date().toISOString() }).eq("id", operation.id);
+      await supabase.from("operations").update({ state: "failed", failure_reason: customerMessage, ended_at: new Date().toISOString() }).eq("id", operation.id);
       if (operation.instance_id) {
         await supabase.from("instances").update({ state: "failed" }).eq("id", operation.instance_id);
       }
