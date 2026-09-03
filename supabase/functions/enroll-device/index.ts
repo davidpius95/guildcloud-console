@@ -78,6 +78,28 @@ async function ts(token: string, method: string, path: string, body?: unknown) {
   return json;
 }
 
+// Revoking an auth key is best-effort and always logged. It is never
+// allowed to fail the caller's request: the point of every call site is to
+// take access away, and aborting halfway would leave the caller believing
+// nothing happened while the new state is already written. A key that
+// survives is a logged gap; a request that throws is a broken feature.
+//
+// keyId is null for links minted before 20260903080000 added the column.
+// Those keys are unreachable from here - the API indexes keys by id, not
+// by secret - and have to be revoked from the Tailscale admin console.
+async function revokeAuthKey(token: string, keyId: string | null, where: string) {
+  if (!keyId) {
+    console.log(JSON.stringify({ ok: false, where, reason: "no key id recorded for this link" }));
+    return;
+  }
+  try {
+    await ts(token, "DELETE", `tailnet/${TAILSCALE_TAILNET}/keys/${keyId}`);
+    console.log(JSON.stringify({ ok: true, where, key_id: keyId }));
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, where, key_id: keyId, error: String(e) }));
+  }
+}
+
 // A device gets a tag unique to its membership. It intentionally receives no
 // broad grant here: the site worker derives member->instance grants from the
 // access_grants table. This means joining the tailnet alone never grants a
@@ -172,14 +194,43 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ error: "membership not found in your organization" }), { status: 404 });
       }
 
-      if (target.tailscale_device_id) {
+      // Deauthorizing the device was never enough on its own. The member's
+      // enrollment keys are reusable and pre-authorized, so a removed
+      // teammate who kept their link could simply enroll a second device
+      // and be back on the tailnet - the UI's promise that removal revokes
+      // "network permission and server login together" was not true of the
+      // credential itself. Take the device, the keys, and the links.
+      const { data: links } = await supabase
+        .from("instance_enrollment_links")
+        .select("id, tailscale_key_id")
+        .eq("membership_id", targetMembershipId);
+
+      if (target.tailscale_device_id || (links && links.length > 0)) {
         const revokeToken = await tailscaleAccessToken(supabase);
-        try {
-          await ts(revokeToken, "DELETE", `device/${target.tailscale_device_id}`);
-        } catch (e) {
-          console.log(JSON.stringify({ ok: false, where: "revoke_device", membership_id: targetMembershipId, error: String(e) }));
+
+        if (target.tailscale_device_id) {
+          try {
+            await ts(revokeToken, "DELETE", `device/${target.tailscale_device_id}`);
+          } catch (e) {
+            console.log(JSON.stringify({ ok: false, where: "revoke_device", membership_id: targetMembershipId, error: String(e) }));
+          }
+        }
+
+        for (const link of links ?? []) {
+          await revokeAuthKey(revokeToken, (link.tailscale_key_id as string | null) ?? null, "revoke_removed_member_key");
         }
       }
+
+      // The rows go regardless of whether Tailscale co-operated, so the
+      // URLs stop serving a key even when revocation logged a failure.
+      const { error: linkCleanupError } = await supabase
+        .from("instance_enrollment_links")
+        .delete()
+        .eq("membership_id", targetMembershipId);
+      if (linkCleanupError) {
+        console.log(JSON.stringify({ ok: false, where: "delete_member_links", membership_id: targetMembershipId, error: linkCleanupError.message }));
+      }
+
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
@@ -239,7 +290,7 @@ Deno.serve(async (req) => {
 
     const { data: existingLink } = await supabase
       .from("instance_enrollment_links")
-      .select("token, expires_at")
+      .select("token, expires_at, tailscale_key_id")
       .eq("membership_id", membership.id)
       .eq("instance_id", instance.id)
       .maybeSingle();
@@ -283,10 +334,19 @@ Deno.serve(async (req) => {
       instance_id: instance.id,
       token: enrollmentToken,
       expires_at: expiresAt,
+      tailscale_key_id: key.id,
       created_by: userData.user.id,
       updated_at: new Date().toISOString(),
     }, { onConflict: "membership_id,instance_id" });
     if (linkError) throw new Error(`could not save instance enrollment link: ${linkError.message}`);
+
+    // Only now, with the replacement durably stored, retire the key this
+    // link is replacing - otherwise a failure between the two would leave
+    // the member with no working link at all. This is what makes
+    // "Generate a new link and retire this one" true.
+    if (existingLink?.tailscale_key_id) {
+      await revokeAuthKey(token, existingLink.tailscale_key_id as string, "revoke_superseded_key");
+    }
 
     return new Response(
       JSON.stringify({ command: `curl -fsSL ${consoleUrl}/api/enroll/${enrollmentToken} | sh`, reused: false }),

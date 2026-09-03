@@ -218,3 +218,30 @@ asserted rather than trusted.
 Twice while writing those tests an assertion matched the script's own
 explanatory comments instead of its code and passed for the wrong reason.
 Both now go through a `codeOnly()` helper that strips comment lines first.
+
+## Follow-up: audit of the legacy `tag:guildcloud-member`
+
+~19 auth keys created 2026-08-25, valid until 2026-11-23, still carry the
+pre-scoping broad tag. Read against the live tailnet policy:
+
+- `tag:guildcloud-member` is **absent from `tagOwners`** - only the scoped
+  `tag:guildcloud-member-<id8>` tags are defined.
+- It appears in **zero grants**. The only member grants are the two scoped
+  ones (`-677cf30e` -> `instance-d2eca121`, `-20006e96` -> `instance-0bd10c41`).
+- It appears in **zero SSH rules**.
+
+So a device holding that tag is granted nothing: no instance, no mgmt
+node, no SSH. `autogroup:member -> autogroup:self` does not rescue it
+either, since a tagged device carries no user identity. One device
+(`member-64a5ee3f`, last seen 2026-09-01) still wears the tag and can
+reach nothing.
+
+The exposure is therefore presence on the tailnet, not access to
+anything - real but low. What would make it dangerous is someone later
+re-adding a grant for that tag, which is why the keys are still worth
+deleting rather than left to expire in November.
+
+Not verified: whether Tailscale still honours those keys at registration
+now that the tag is missing from `tagOwners`. Confirming it would mean
+joining a device with one, which was not worth doing to answer a question
+that does not change the recommendation.
