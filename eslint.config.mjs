@@ -15,7 +15,14 @@ export default defineConfig([
     },
   },
   globalIgnores([
-    ".next/**",
+    // Depth-independent on purpose. A bare ".next/**" is anchored to this
+    // config's directory, so it ignores the root build output and nothing
+    // else - agent worktrees under .claude/worktrees/ each carry their own
+    // .next, and linting those made `npm run check` fail locally with tens
+    // of thousands of errors in generated chunks. CI never saw it (fresh
+    // clone, no worktrees), so the gate was only broken on real machines.
+    ".claude/**",
+    "**/.next/**",
     "out/**",
     "build/**",
     "coverage/**",

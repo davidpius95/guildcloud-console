@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { Card, Note } from "@/components/ui";
 import { CopyField } from "@/components/copy-field";
 import { createClient } from "@/lib/supabase/server";
@@ -24,23 +25,9 @@ export default async function ConnectDevicePage({
     .rpc("describe_instance_enrollment_link", { p_token: token })
     .maybeSingle();
 
-  if (!link) {
-    return (
-      <Card className="p-6">
-        <h1 className="text-lg font-semibold text-ink-900">Link no longer valid</h1>
-        <p className="mt-2 text-sm text-ink-500">
-          This connection link is invalid or has expired. Open the VM in the
-          console and use its Connect card to generate a new one.
-        </p>
-        <Link
-          href="/console"
-          className="mt-4 inline-block text-sm font-medium text-ink-700 underline"
-        >
-          Go to the console
-        </Link>
-      </Card>
-    );
-  }
+  // Renders not-found.tsx in this segment, which carries a real 404 rather
+  // than the 200-with-an-error-card this used to return.
+  if (!link) notFound();
 
   const command = `curl -fsSL ${await getSiteUrl()}/api/enroll/${token} | sh`;
   const expires = new Date(link.expires_at).toLocaleDateString(undefined, {
