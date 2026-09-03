@@ -98,3 +98,43 @@ token-gated lookup has to be callable by someone who isn't signed in, or
 it cannot do its job. `20260829143327_revoke_anon_definer_functions` drew
 the same line — it revoked `anon` from the definer functions that had no
 business being public and left the token-gated ones alone.
+
+## Follow-up, same day: two defects found while verifying
+
+Verifying the live feature against real production data (throwaway links,
+created and deleted, never a customer's token) turned up two things.
+
+**The invalid card returned HTTP 200.** A dead link rendered a correct
+page with a success status, which misinforms every non-human that follows
+it. The card moved to `not-found.tsx` in the segment and the page now
+calls `notFound()`. Next returns 404 for non-streamed responses, so this
+is worth re-checking rather than assuming: measured 404 in dev and in
+production. `accept-invite` still has the original 200 pattern and was
+left alone.
+
+**`CopyField` spilled out of its own container on a narrow screen.** The
+wrapper is `rounded-lg` but its children are not, and nothing clipped
+them, so the code block's background and the button's corners painted
+past the rounded edge; `self-start` also left the divider stopping
+mid-field beside a wrapped multi-line value. Fixed with `overflow-hidden`,
+`self-stretch`, and dropping the `gap-2` that only exposed the container's
+edge between the two halves. Pre-existing and shared - the same field
+appears in the Connect modal, the instance detail page, and the password
+reveal.
+
+Verified by measurement rather than by eye, at 320px, 375px and desktop:
+button overflow 0px, container/code/button heights equal, no horizontal
+page scroll. (An early reading did report horizontal scroll; it was taken
+mid-reflow right after the viewport changed, and re-measuring at the
+settled width showed a clean 0.)
+
+## Follow-up: the lint gate was broken on any machine with worktrees
+
+`npm run check` failed with ~36,000 problems in this checkout, none of
+them from the change. `globalIgnores([".next/**"])` is anchored to the
+config's own directory, so it ignored the root build output and nothing
+else - the three agent worktrees under `.claude/worktrees/` each carry
+their own `.next`, ~350MB of generated chunks, and lint walked all of it.
+CI never saw this (fresh clone, no worktrees), so the project's own
+pre-ship gate was green in CI and unusable locally. Ignores are now
+depth-independent (`**/.next/**`) and `.claude/**` is excluded outright.
