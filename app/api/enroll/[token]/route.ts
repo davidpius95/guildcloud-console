@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { enrollmentScript } from "@/lib/enrollment-scripts";
 
 // Public, token-gated route - hit by a bare `curl` from a customer's own
 // terminal, not a browser, so there's no session to authenticate with. The
@@ -36,21 +37,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
 
   const { key } = JSON.parse(data) as { key: string };
 
-  // The word "Tailscale" never appears anywhere in the console UI itself
-  // (per the master plan's binding constraint) - it's fine here, inside
-  // the script the user explicitly chose to run.
-  const script = `#!/bin/sh
-set -e
-if ! command -v tailscale >/dev/null 2>&1; then
-  echo "Installing Tailscale..."
-  curl -fsSL https://tailscale.com/install.sh | sh
-fi
-echo "Connecting this device..."
-sudo tailscale up --reset --force-reauth --authkey ${key} --accept-dns=true
-echo "Connected."
-`;
-
-  return new Response(script, {
+  // POSIX shell. Windows is served from /windows on this same token,
+  // because `irm` and `curl` send an identical Accept header and there is
+  // nothing to negotiate on.
+  return new Response(enrollmentScript("linux", key), {
     headers: { "Content-Type": "text/x-shellscript" },
   });
 }
