@@ -5,8 +5,21 @@ import { createClient } from "@supabase/supabase-js";
 // token is bound in the database to exactly one membership and one Ready VM
 // (redeem_instance_enrollment_token). This route never holds a service-role
 // key and never decides what a customer device may reach.
-export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
+//
+// The same URL is also pasteable into a browser address bar, because that
+// is what people do with a link regardless of what it was meant for. A
+// browser asks for text/html; curl asks for */*. On text/html this hands
+// the visitor off to /connect/<token>, a real page that explains the step
+// and hands back the command - it deliberately does NOT redeem the token.
+// Rendering the script in a tab would put a live credential into browser
+// history, the disk cache, and every extension that can read the page,
+// and on most browsers it would just download an unexplained file.
+export async function GET(req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+
+  if (req.headers.get("accept")?.includes("text/html")) {
+    return Response.redirect(new URL(`/connect/${encodeURIComponent(token)}`, req.url), 302);
+  }
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

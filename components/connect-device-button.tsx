@@ -62,6 +62,9 @@ export function ConnectDeviceButton({
     setError(null);
   }
 
+  // The command is `curl -fsSL <url> | sh`; the URL is the middle token.
+  const linkUrl = command?.split(" ").find((part) => part.startsWith("http")) ?? null;
+
   return (
     <>
       {unstyled ? (
@@ -95,6 +98,14 @@ export function ConnectDeviceButton({
         {command ? (
           <div className="space-y-3">
             <CopyField label="Command" value={command} />
+            {/* The same URL, on its own, for anyone who would rather open a
+                link than trust a piped shell command sight-unseen. Opening
+                it in a browser explains the step and hands back this exact
+                command - it never exposes the credential, which is why the
+                two are offered side by side rather than as alternatives. */}
+            {linkUrl ? (
+              <CopyField label="Or open this link in a browser" value={linkUrl} />
+            ) : null}
             <Note>
               This link stays valid for 90 days and can be run on your own
               devices. It grants access to this VM only; it does not grant
