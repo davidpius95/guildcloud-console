@@ -274,10 +274,52 @@ messages and changes nothing else. New
 customers while keeping them on the stage for operators — **not live until
 `main` is pushed**, since `deploy-pull.sh` deploys from there.
 
-**Still open:** no alerting on either a full backup volume or `ESTALE` — this
-outage has now happened twice in three days and was found by looking both times.
+**~~Still open~~ — alerting added 2026-09-03.** See below.
 `guild-templates` is still on the PBS filesystem (read-mostly, so it breaks
 template *builds*, not clones).
+
+## Alerting: it exists now, and the notification channel was dead (2026-09-03)
+
+Full detail:
+`docs/dev-log/2026-09-03-alerting-and-the-notification-channel-that-never-worked.md`.
+
+**Uptime Kuma could not send notifications at all, and never could.** All 30+
+existing monitors were decorative: the dashboard was green and no alert could
+ever leave the box. `api.telegram.org` has A and AAAA records, the Kuma
+container has a Tailscale IPv6 address but no IPv6 route out, and Node 20's
+Happy Eyeballs (`autoSelectFamily`) returns `ETIMEDOUT` after ~450ms instead of
+falling back to IPv4. curl falls back correctly, which is why every manual check
+of that box looked fine. Fixed with `precedence ::ffff:0:0/96 100` in
+`/etc/gai.conf` plus `NODE_OPTIONS=--no-network-family-autoselection` in a
+systemd drop-in. Note `--dns-result-order=ipv4first` does **not** fix this.
+
+**Every monitor was a liveness check.** Ping to 11 hosts, HTTP to every PVE UI —
+none could fire while the platform was unable to create a single instance. Three
+Kuma **push** monitors now assert readiness instead, wired to the existing
+Telegram notification:
+
+| id | monitor | fed by |
+| --- | --- | --- |
+| 46 | Guild-A can provision (snippet store) | `deploy/site-worker/provisioning-probe.js` (guild-a worker, 1 min) |
+| 47 | Guild-B can provision (snippet store) | same, guild-b worker |
+| 48 | guild-pbs datastore capacity | `deploy/guild-pbs/datastore-capacity-probe.sh` (10 min) |
+
+Push, so silence is itself a failure — a dead probe, worker or timer alerts on
+its own. The site probe **writes and fsyncs** rather than stat-ing (the
+2026-09-01 fault was `ESTALE` with plenty of free space) and compares against
+the admission gate's own `>= 1 GiB` / `>= 5%` constants, so "probe is red" and
+"customers are refused" cannot drift apart. It warns at 2 GiB, above the floor,
+so the page comes before the outage.
+
+Verified by forcing a real down/up/down cycle: every transition recorded
+`important=1` and zero send failures after the fix.
+
+**Still open:** the other 30+ monitors can now notify but none has been verified
+to actually fire; nothing yet alerts on the `can_provision_instance` verdict
+itself (which would also catch a dead worker heartbeat or exhausted vCPU); and
+there is still only one channel to one Telegram chat id, so a revoked bot puts
+the platform back to silent. The three new monitors live only in Kuma's SQLite
+DB and are not reproducible from this repo.
 
 ## podG: on the tailnet, deliberately not in the cluster (2026-09-03)
 

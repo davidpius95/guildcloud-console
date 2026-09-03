@@ -1,0 +1,10 @@
+[Unit]
+Description=Report guild-pbs backup datastore capacity to Uptime Kuma
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/guildcloud/probe.env
+ExecStart=/usr/local/bin/datastore-capacity-probe.sh
+SuccessExitStatus=0 1

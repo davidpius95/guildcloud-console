@@ -1,0 +1,18 @@
+[Unit]
+Description=Assert this site can still create instances, and report it to Uptime Kuma
+# Reads the same env as the worker on purpose: the probe must check the exact
+# SNIPPETS_DIR the worker writes to, or it can pass while the worker fails.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/guildcloud/worker.env
+EnvironmentFile=/etc/guildcloud/probe.env
+WorkingDirectory=/opt/guildcloud-worker/current
+# The `current` symlink, not a pinned release, so the probe follows
+# deploy-pull.sh's atomic swap like the worker does.
+ExecStart=/usr/bin/node /opt/guildcloud-worker/current/provisioning-probe.js
+# A failed probe is a normal outcome that has already been pushed to Kuma by
+# the time we get here; it must not spam the journal with unit failures.
+SuccessExitStatus=0 1
