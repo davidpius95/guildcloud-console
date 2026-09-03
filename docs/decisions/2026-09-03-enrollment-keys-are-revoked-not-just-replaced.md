@@ -50,3 +50,41 @@ explicitly rather than passing silently.
 This does not delete devices already enrolled with a revoked key -
 deleting an auth key never does. Those are handled by the existing device
 revocation path.
+
+## Addendum — recovering the ids that were never recorded
+
+The decision above only helps keys minted after it. Every older link had a
+null id and, since the Tailscale API offers no lookup by secret, looked
+permanently unrevokable.
+
+It isn't. The id is the third field of the key itself
+(`tskey-auth-<id>-<secret>`), and the secret is already in Vault under
+`instance_enrollment_key_<token>`. Verified end to end: both live links
+parsed to ids that match keys the API lists, with the right member tags.
+
+`operator_backfill_enrollment_key_ids(p_apply)` does the parse **inside
+Postgres**. A script holding the service-role key could have read every
+secret out over the wire and parsed a prefix client-side, but that would
+pull live tailnet credentials into a terminal, a shell history and
+possibly a log, to learn sixteen characters sitting next to them — the
+exact shape of the accident that started this work. The secret never
+leaves the database; only ids, which are not themselves credentials, are
+returned.
+
+`scripts/reconcile-enrollment-keys.mjs` drives it: dry run by default,
+`--apply` to write, signing in as a platform operator exactly as
+`operator-cleanup.mjs` does. No service-role key.
+
+It deliberately **revokes nothing**. It restores the ability to revoke.
+Recording an id is reversible and inert; a bulk revoke of every historical
+link would cut off every device still relying on one. Once the ids exist,
+the console's own "generate a new link" retires the old key, as it always
+claimed to.
+
+Links whose Vault secret is missing, or whose key doesn't parse, are
+reported individually as needing a human rather than folded into a total —
+"12 recovered" reads as done when three still need the Tailscale console.
+
+Note for whoever runs it: `platform_operators` is currently empty, so every
+`operator_*` RPC — including the existing cleanup script — refuses everyone
+until a row is added out of band.
