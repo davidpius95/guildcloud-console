@@ -138,3 +138,83 @@ their own `.next`, ~350MB of generated chunks, and lint walked all of it.
 CI never saw this (fresh clone, no worktrees), so the project's own
 pre-ship gate was green in CI and unusable locally. Ignores are now
 depth-independent (`**/.next/**`) and `.claude/**` is excluded outright.
+
+## Follow-up: the link was broken on macOS the whole time
+
+A customer reported the link "doesn't authenticate or connect the VM".
+The link itself was healthy - VM ready, token live, page rendering - and
+the shell route served a valid script. The script was the problem.
+
+`tailscale.com/install.sh` does not install anything on a Mac. Its
+`appstore` case is two lines:
+
+```
+appstore)
+        open "https://apps.apple.com/us/app/tailscale/id1475387142"
+        ;;
+```
+
+It opens a web page and exits 0. The old enrollment script took that
+success at face value, ran on to `sudo tailscale up`, hit command-not-
+found, and died on `set -e` having connected nothing. Any Mac without the
+client already installed got a link that could not work, and said so only
+as a shell error.
+
+A second macOS trap sits behind the first: the App Store build keeps its
+CLI inside the bundle (`/Applications/Tailscale.app/Contents/MacOS/Tailscale`)
+and the standalone build only creates `/usr/local/bin/tailscale` if the
+user opts into CLI integration, so `command -v tailscale` finds nothing
+even when the client is installed and running.
+
+The script now resolves a CLI by probing those documented locations
+instead of trusting PATH, refuses to pretend on macOS (it prints the
+install link and exits non-zero), and drops `sudo` on Darwin, where the
+client runs in the user's own session and elevating talks to the wrong
+daemon. Both branches were exercised on a real Mac: with PATH intact it
+resolves the Homebrew CLI, and with PATH emptied it falls back to the app
+bundle.
+
+## Follow-up: Windows is served, from its own URL
+
+Previously the page admitted Windows wasn't supported, which was honest
+but not useful. `/api/enroll/<token>/windows` now serves PowerShell that
+downloads the per-architecture MSI from the `latest` alias on
+pkgs.tailscale.com (verified to resolve to a real signed installer,
+`application/x-msi`, ~38MB - not assumed), installs it silently, and
+authenticates with the same token the POSIX route redeems.
+
+It is a separate URL rather than content negotiation because `irm` and
+`curl` send an identical wildcard Accept header; there is nothing to
+negotiate on, and a wrong guess hands a Windows box a POSIX script.
+
+Two faults were caught by reading the served bytes rather than the source:
+a `#Requires` line that `iex` silently ignores (removed, because it looked
+like a guarantee and asserted nothing), and `Test-Path $exe` running when
+`$exe` was `$null` - which throws under `ErrorActionPreference = 'Stop'`
+and would have aborted on exactly the machines the install branch exists
+for. The exe is now resolved by probing `ProgramW6432`, `ProgramFiles`,
+`ProgramFiles(x86)` and PATH, before and again after the install.
+
+**The PowerShell has never run on Windows.** There is no Windows machine
+here and no PowerShell to parse it with. It is covered by unit tests
+asserting the properties that broke the macOS path, and by review, and
+that is all - it needs one real run on a real Windows box before anyone
+should trust it.
+
+## Follow-up: the page is platform-aware
+
+`/connect/<token>` now detects the platform from the User-Agent and
+defaults to that tab, with macOS / Linux / Windows switchable by hand -
+links get opened on a phone and forwarded to whoever owns the machine far
+more often than a detected-and-locked UI would survive.
+
+## Tests
+
+`tests/enrollment-scripts.test.ts` covers both scripts, including running
+the POSIX one through `sh -n`. The scripts run on machines this repo is
+never built on, so the properties that caused the real failures are
+asserted rather than trusted.
+
+Twice while writing those tests an assertion matched the script's own
+explanatory comments instead of its code and passed for the wrong reason.
+Both now go through a `codeOnly()` helper that strips comment lines first.

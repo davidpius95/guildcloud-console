@@ -1,18 +1,34 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Card, Note } from "@/components/ui";
-import { CopyField } from "@/components/copy-field";
+import { ConnectInstructions } from "@/components/connect-instructions";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteUrl } from "@/lib/site-url";
+import { enrollmentCommand, type Platform } from "@/lib/enrollment-scripts";
 
 // The browser half of an enrollment link. /api/enroll/<token> serves the
 // install script to a shell and redirects here when the same URL is pasted
 // into an address bar - which people do, because it looks like a link.
 //
 // This page never redeems the token. It reads only the link's public
-// description (VM name, expiry) and hands back the same command the
+// description (VM name, expiry) and hands back the same commands the
 // console shows, so the credential stays where it belongs: in the shell
 // that the person deliberately ran it in.
+
+// Best-effort, and only ever a default - the switcher decides what is
+// actually shown. Worth doing anyway: most people open the link on the
+// machine they mean to connect, and handing them the wrong shell's command
+// is how the Windows case failed before there was a Windows command at all.
+function detectPlatform(userAgent: string | null): Platform {
+  const ua = (userAgent ?? "").toLowerCase();
+  if (ua.includes("windows")) return "windows";
+  if (ua.includes("mac os") || ua.includes("macintosh") || ua.includes("iphone") || ua.includes("ipad")) {
+    return "macos";
+  }
+  return "linux";
+}
+
 export default async function ConnectDevicePage({
   params,
 }: {
@@ -29,7 +45,14 @@ export default async function ConnectDevicePage({
   // than the 200-with-an-error-card this used to return.
   if (!link) notFound();
 
-  const command = `curl -fsSL ${await getSiteUrl()}/api/enroll/${token} | sh`;
+  const baseUrl = await getSiteUrl();
+  const commands = {
+    macos: enrollmentCommand("macos", baseUrl, token),
+    linux: enrollmentCommand("linux", baseUrl, token),
+    windows: enrollmentCommand("windows", baseUrl, token),
+  };
+  const detected = detectPlatform((await headers()).get("user-agent"));
+
   const expires = new Date(link.expires_at).toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
@@ -55,20 +78,13 @@ export default async function ConnectDevicePage({
 
       <div className="mt-5 space-y-4">
         {/* A browser cannot join a device to the private network on its own -
-            connecting is a change to the operating system, which only the
-            device's own shell can make. So the honest job of this page is to
-            hand over the command and say plainly where to run it, rather
-            than implying a click here would be enough. */}
-        <p className="text-sm text-ink-700">
-          Copy this command and run it in a terminal on the device you want to
-          connect (macOS or Linux). It installs the private-network client if
-          it isn&rsquo;t already there, then authenticates this device.
-        </p>
-        <CopyField label="Command" value={command} />
-        <Note>
-          Valid until {expires}, and reusable on your own devices. Windows
-          isn&rsquo;t supported by this command yet.
-        </Note>
+            connecting installs software and reconfigures the network, which
+            only the device's own shell can do. So the honest job of this page
+            is to hand over the right command for the right machine and say
+            plainly where to run it, rather than implying a click would be
+            enough. */}
+        <ConnectInstructions detected={detected} commands={commands} />
+        <Note>Valid until {expires}, and reusable on your own devices.</Note>
       </div>
 
       <Link
