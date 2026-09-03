@@ -1,0 +1,13 @@
+[Unit]
+Description=Check every minute that this site can still create instances
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=1min
+# Kuma's monitor interval is 180s, so a single missed run is tolerated and two
+# consecutive failures raise the alert. Tight enough to catch an outage in
+# minutes, loose enough not to flap on one slow NFS round-trip.
+Unit=guildcloud-provisioning-probe.service
+
+[Install]
+WantedBy=timers.target

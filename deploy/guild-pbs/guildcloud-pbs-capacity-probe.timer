@@ -1,0 +1,12 @@
+[Unit]
+Description=Check guild-pbs datastore capacity every 10 minutes
+
+[Timer]
+OnBootSec=2min
+# Kuma's monitor interval for this one is 15 minutes: a backup volume fills over
+# hours, not seconds, and a tighter loop would only add noise.
+OnUnitActiveSec=10min
+Unit=guildcloud-pbs-capacity-probe.service
+
+[Install]
+WantedBy=timers.target
