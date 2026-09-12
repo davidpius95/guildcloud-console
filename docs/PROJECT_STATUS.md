@@ -176,16 +176,35 @@ build, audit, accessibility) and **passes as of 2026-08-29**; it had failed on e
 run since being introduced, because `npm ci` exited on a dependency conflict before
 reaching a test, so the gate was decorative until PR #14 repaired it.
 
-**One gap remains in the new setup:** Vercel builds independently of GitHub Actions,
-so a commit whose tests fail but whose `next build` succeeds will still deploy. A
-broken build cannot reach production (Vercel runs `npm run build` itself), but a
-failing test suite does not block a deploy. Closing that needs a GitHub Actions job
-holding a `VERCEL_TOKEN` and promoting to production only after CI is green — worth
-doing, and it requires creating that token. Superseded text below: `vercel --prod` was run manually
-from a session, so `main` and production can still drift if someone pushes
-without redeploying. Worth wiring a GitHub → Vercel git integration (or a
-GitHub Actions step) so every merge to `main` auto-deploys, rather than
-relying on someone remembering to run `vercel --prod`.
+**What actually deploys production (re-verified 2026-09-12):** Vercel's Git
+integration, and only that. Merging PR #81 triggered a production build that
+reached Ready in 22s with no manual step — and it was the first production
+deploy in nine days, so `main` and production do still drift, just not for the
+reason the old note gave.
+
+**The CI gate on production is written but not in effect.**
+`.github/workflows/deploy.yml` exists and is correct: it waits for a green
+`GuildCloud CI` run on `main`, then builds and promotes the exact tested commit.
+It is also deliberately inert — its guard exits early unless `VERCEL_TOKEN` is
+set, precisely so it does not fill the Actions tab with red while it waits. Only
+`VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are configured; `VERCEL_TOKEN` has never
+been created.
+
+Two consequences, both live today:
+
+- A commit whose tests fail but whose `next build` succeeds **still reaches
+  production**, because Vercel builds independently of GitHub Actions. A broken
+  build cannot ship (Vercel runs `npm run build` itself); a failing test suite
+  does not stop anything.
+- The `deploy` check reports **success on every push to `main` without deploying
+  anything**. That is the workflow behaving as designed, but read casually it
+  looks like the CI-gated promotion is already running.
+
+Finishing it is the two-step sequence documented at the top of `deploy.yml`, in
+that order: create `VERCEL_TOKEN`, confirm one successful run, and only then set
+`{ "git": { "deploymentEnabled": { "main": false } } }` in `vercel.json` to stop
+Vercel deploying production a second time. Doing step 2 first leaves nothing
+deploying production at all.
 
 **Second public URL added 2026-08-27**: `cloud.guild-technologies.com` is
 now a Cloudflare-DNS custom domain pointed straight at this same Vercel
@@ -1064,11 +1083,16 @@ Older infrastructure backlog, unchanged:
 13. A deliberate, repeatable real UI end-to-end test (create → verify
    placement → full lifecycle → clean up) now that the infrastructure
    actually supports it without manual intervention.
-14. **Wire up CD for the production deployment** (test CI now exists, deploy
-    does not): right now `vercel --prod`
-   is a manual step run from a session — no GitHub → Vercel git integration,
-   no Actions workflow. `main` and production will drift again the moment
-   someone pushes without remembering to redeploy.
+14. **Put the production deploy behind CI** by creating the `VERCEL_TOKEN`
+    secret. CD itself is done: Vercel's Git integration auto-deploys `main`
+    (re-verified 2026-09-12, PR #81 → production Ready in 22s), so this is no
+    longer about drift or a manual `vercel --prod`.
+    `.github/workflows/deploy.yml` already implements the CI-gated promotion
+    but exits at its guard because the token was never created — so today a
+    commit with failing tests still reaches production, and the `deploy` check
+    goes green without deploying. Follow the two-step sequence in that file's
+    header, in order: create the token, confirm one green run, *then* disable
+    Vercel's own `main` production deploys in `vercel.json`.
 
 ---
 
