@@ -183,8 +183,12 @@ body {
 }
 
 /*
- * Console dark theme: scoped to .console-root so the marketing landing page
- * (which never mounts that wrapper) is unaffected by the toggle. Every
+ * Console dark theme: scoped to .console-root (and .auth-root, which the
+ * sign-in/enrollment layout mounts) so the marketing landing page - which
+ * mounts neither - is unaffected by the toggle. Before .auth-root existed the
+ * theme bootstrap still darkened `body` on those pages while leaving the ink
+ * tokens at their light values, so /connect/<token> rendered near-black
+ * headings on a near-black background. Every
  * bg-ink, text-ink, and border-ink utilities inside the console pick this up
  * automatically because Tailwind utilities reference these custom
  * properties directly — no per-component dark: variants needed.
@@ -201,11 +205,13 @@ body {
  * default even inside the scoped subtree, since body (not console-root)
  * would be where `color` is declared.
  */
-.console-root {
+.console-root,
+.auth-root {
   color: var(--color-ink-900);
 }
 
-.dark .console-root {
+.dark .console-root,
+.dark .auth-root {
   --color-ink-50: #0b0f20;
   --color-ink-100: #232a48;
   --color-ink-200: #2f3860;
@@ -220,11 +226,21 @@ body {
   --color-surface: #171d36;
 }
 
-.dark .console-root .bg-white {
+.dark :is(.console-root, .auth-root) .bg-white {
   background-color: var(--color-surface);
 }
-.dark .console-root .bg-white\/90 {
+/* Every translucent white surface needs its own rule - a utility this block
+   does not name keeps painting literal white, which is how the provisioning
+   panel (bg-white/70) and the sign-in feature cards (bg-white/80) stayed
+   bright white patches on an otherwise dark console. */
+.dark :is(.console-root, .auth-root) .bg-white\/90 {
   background-color: color-mix(in srgb, var(--color-surface) 92%, transparent);
+}
+.dark :is(.console-root, .auth-root) .bg-white\/80 {
+  background-color: color-mix(in srgb, var(--color-surface) 85%, transparent);
+}
+.dark :is(.console-root, .auth-root) .bg-white\/70 {
+  background-color: color-mix(in srgb, var(--color-surface) 78%, transparent);
 }
 
 .dark body {

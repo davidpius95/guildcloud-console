@@ -92,7 +92,7 @@ function FlowNode({
 export default function HowItWorksPage() {
   return (
     <div className="mx-auto max-w-6xl pb-8">
-      <section className="relative overflow-hidden rounded-3xl bg-ink-950 px-6 py-8 shadow-[0_24px_70px_rgba(14,18,38,0.2)] sm:px-9 sm:py-10">
+      <section className="relative overflow-hidden rounded-3xl bg-[#0e1226] px-6 py-8 shadow-[0_24px_70px_rgba(14,18,38,0.2)] sm:px-9 sm:py-10">
         <div className="absolute -right-24 -top-28 h-72 w-72 rounded-full bg-lemon-400/15 blur-3xl" />
         <div className="absolute -bottom-40 left-1/3 h-72 w-72 rounded-full bg-sky-400/10 blur-3xl" />
         <div className="relative max-w-3xl animate-fade-up">
@@ -145,7 +145,7 @@ export default function HowItWorksPage() {
             </div>
             <Button href="/console/networking" variant="secondary" className="mt-7">Manage private access <IconArrowRight className="h-4 w-4" /></Button>
           </div>
-          <div className="relative min-h-80 overflow-hidden bg-ink-950 p-6 sm:p-8">
+          <div className="relative min-h-80 overflow-hidden bg-[#0e1226] p-6 sm:p-8">
             <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,.35)_1px,transparent_1px)] [background-size:22px_22px]" />
             <div className="relative mx-auto mt-2 max-w-sm">
               <div className="rounded-2xl border border-sky-300/30 bg-sky-300/10 p-4 text-center"><IconShield className="mx-auto h-6 w-6 text-sky-200" /><p className="mt-2 text-sm font-semibold text-white">Your approved device</p><p className="mt-1 text-xs text-ink-300">Encrypted outbound connection</p></div>
@@ -175,7 +175,7 @@ export default function HowItWorksPage() {
               ["When Ready appears", "Enroll this computer", "Use the button below to get one command. It installs Tailscale if needed and joins this device to your private GuildCloud network."],
               ["After the command finishes", "Confirm your device", "The command ends with ‘Connected.’ You only do this once for each computer or phone you want to use."],
               ["Then connect", "Copy the SSH command", "Return to the instance’s Connect card, copy its private SSH command, and run it in your terminal."],
-            ].map(([when, title, detail], index) => <article key={title} className="relative z-10 rounded-2xl border border-ink-100 bg-ink-50/60 p-4"><span className="grid h-8 w-8 place-items-center rounded-full bg-ink-900 text-xs font-bold text-white">{index + 1}</span><p className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-ink-400">{when}</p><h3 className="mt-1 text-sm font-semibold text-ink-900">{title}</h3><p className="mt-2 text-xs leading-5 text-ink-500">{detail}</p></article>)}
+            ].map(([when, title, detail], index) => <article key={title} className="relative z-10 rounded-2xl border border-ink-100 bg-ink-50/60 p-4"><span className="grid h-8 w-8 place-items-center rounded-full bg-[#171d36] text-xs font-bold text-white">{index + 1}</span><p className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-ink-400">{when}</p><h3 className="mt-1 text-sm font-semibold text-ink-900">{title}</h3><p className="mt-2 text-xs leading-5 text-ink-500">{detail}</p></article>)}
           </div>
 
           <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-sky-200 bg-sky-50 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -197,7 +197,7 @@ export default function HowItWorksPage() {
             <ol className="mt-4 space-y-2 text-sm leading-6 text-ink-600"><li><span className="mr-2 font-semibold text-lemon-700">1.</span>Open <Link href="/console/settings" className="font-medium text-lemon-700 underline">Settings &amp; Keys</Link>.</li><li><span className="mr-2 font-semibold text-lemon-700">2.</span>Under <strong className="font-semibold text-ink-800">Sign-in security</strong>, select <strong className="font-semibold text-ink-800">Change console password</strong>.</li><li><span className="mr-2 font-semibold text-lemon-700">3.</span>Enter and confirm a new password of at least 12 characters.</li></ol>
             <p className="mt-4 rounded-xl bg-ink-50 p-3 text-xs leading-5 text-ink-500">This does not change the password inside any server. It only changes how you sign in to GuildCloud.</p>
           </article>
-          <article className="rounded-3xl bg-ink-950 p-6 text-white">
+          <article className="rounded-3xl bg-[#0e1226] p-6 text-white">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-300 text-amber-950"><IconServer className="h-5 w-5" /></div>
             <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-ink-400">Linux server password</p>
             <h3 className="mt-1 text-lg font-semibold">This is only for optional password SSH.</h3>
@@ -217,7 +217,7 @@ export default function HowItWorksPage() {
 
       <section className="pt-14">
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-3xl bg-ink-950 p-6 sm:p-8">
+          <div className="rounded-3xl bg-[#0e1226] p-6 sm:p-8">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-lemon-300">GuildCloud takes care of</p>
             <ul className="mt-5 space-y-3 text-sm leading-6 text-ink-200">
               <li className="flex gap-3"><span className="text-lemon-300">✓</span><span>Checking that an eligible site can run the request.</span></li>
