@@ -22,3 +22,9 @@ supabase/.temp/
 # Never commit them -- they authenticate a site worker to the control plane.
 worker-token-*.jwt
 *.jwt
+
+# Playwright output. `npx playwright test` writes these into the working
+# directory; they are run artifacts, not source.
+test-results/
+playwright-report/
+blob-report/

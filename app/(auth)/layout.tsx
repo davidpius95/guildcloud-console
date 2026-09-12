@@ -3,7 +3,7 @@ import { IconCloud } from "@/components/icons";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6 lg:px-8">
+    <div className="auth-root relative min-h-screen overflow-hidden px-4 py-8 sm:px-6 lg:px-8">
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-0 h-80 w-80 -translate-x-1/2 rounded-full bg-lemon-200/50 blur-3xl animate-float-soft"
